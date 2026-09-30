@@ -1,0 +1,140 @@
+package cc.ginpika.minis.ai.memory.recall;
+
+import cc.ginpika.minis.ai.llm.EmbeddingClient;
+import cc.ginpika.minis.ai.memory.store.MemoryEventEmbeddingStore;
+import cc.ginpika.minis.ai.memory.store.MemoryEventStore;
+import cc.ginpika.minis.ai.memory.store.MemoryVecMath;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/**
+ * 记忆召回的融合读侧：时间窗收敛候选 → 窗口内向量余弦打分 → 返回融合结果。
+ *
+ * <p>两轴各司其职，绝不混淆量纲：
+ * <ul>
+ *   <li><b>时序轴只过滤</b>——since/until/kind/actor 收窄候选集（上限 {@link #CANDIDATE_LIMIT} 条，
+ *       不做全表暴力扫），时间序不进任何打分公式（把「最新」当「最相关」是 rank 融合的设计错误，
+ *       见 FastSearchService.rrf 的注释）；</li>
+ *   <li><b>向量轴只打分</b>——query 向量化后在窗口内算同模型余弦，按分降序、同分保持时间倒序。
+ *       查询向量拿不到（embedding 未配置 / 调用失败 / query 为空）一律退化为纯时间序——
+ *       读路径永不因向量服务抖动而空手而归（降级语义同 Reranker）。</li>
+ * </ul>
+ *
+ * <p>消费方：recall_memory 工具（模型主动查记忆）与潜意识 "memory" 注入器（素材注入）。
+ */
+@Component
+public class MemoryRecall {
+
+    private static final Logger log = LoggerFactory.getLogger(MemoryRecall.class);
+
+    /** 时间窗收敛后的候选上限：余弦只在这批候选内算，事件流涨大也不许退化为全表扫 */
+    private static final int CANDIDATE_LIMIT = 200;
+
+    /** 单次召回条数上限（与注入器/工具面的 clamp 一致） */
+    private static final int LIMIT_MAX = 50;
+
+    private static final DateTimeFormatter STAMP =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+
+    /** 一条召回结果：score 为与 query 的余弦（≥0）；无向量/无查询向量时为 0（此时序即结果序） */
+    public record Hit(MemoryEventStore.EventRow event, float score) {
+    }
+
+    private final MemoryEventStore events;
+    private final MemoryEventEmbeddingStore vectors;
+    private final EmbeddingClient embedding;
+
+    public MemoryRecall(MemoryEventStore events, MemoryEventEmbeddingStore vectors,
+                        EmbeddingClient embedding) {
+        this.events = events;
+        this.vectors = vectors;
+        this.embedding = embedding;
+    }
+
+    /**
+     * 融合召回：时间窗（可单侧开放）+ kind/actor 过滤收敛候选，再在窗口内按与 query 的
+     * 语义相关度排序（拿不到查询向量时就是纯时间倒序）。limit 上限 50。
+     */
+    public List<Hit> recall(String query, Long sinceMs, Long untilMs, String kind, String actor,
+                            int limit) {
+        int cap = Math.max(1, Math.min(limit, LIMIT_MAX));
+        List<MemoryEventStore.EventRow> candidates =
+                events.window(sinceMs, untilMs, kind, actor, CANDIDATE_LIMIT);
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+        float[] qvec = queryVector(query);
+        Map<Long, float[]> vecs = qvec == null ? Map.of()
+                : vectors.byEventIds(embedding.model(), candidates.stream()
+                        .map(MemoryEventStore.EventRow::id).toList());
+        List<Hit> hits = new ArrayList<>(candidates.size());
+        for (MemoryEventStore.EventRow e : candidates) {
+            float[] v = vecs.get(e.id());
+            /* 候选没向量（欠账/旧模型）＝无分，跟在全分事件之后按时间序垫底 */
+            float score = qvec == null || v == null ? 0f
+                    : Math.max(0f, MemoryVecMath.cosine(qvec, v));
+            hits.add(new Hit(e, score));
+        }
+        if (qvec != null) {
+            /* 稳定排序：同分（含全零分）保持 SQL 给的时间倒序——退化路径零成本成立 */
+            hits.sort((a, b) -> Float.compare(b.score(), a.score()));
+        }
+        return hits.size() <= cap ? hits : new ArrayList<>(hits.subList(0, cap));
+    }
+
+    /** 查询向量：未配置/空 query/调用失败一律 null（= 无向量轴，退化为时间序），不抛错 */
+    private float[] queryVector(String query) {
+        if (query == null || query.isBlank() || !embedding.configured()) {
+            return null;
+        }
+        try {
+            return embedding.embed(query).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("记忆查询向量化失败（退化为时间序）：{}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 召回结果 → 注入/工具共用的可读文本：一行一条「时间〔谁·在哪〕正文开头」；空结果空串 */
+    public static String hitsText(List<Hit> hits) {
+        if (hits == null || hits.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Hit h : hits) {
+            MemoryEventStore.EventRow r = h.event();
+            sb.append("- ").append(STAMP.format(Instant.ofEpochMilli(r.createdAt())))
+                    .append("〔").append(actorText(r.actor()));
+            if (r.title() != null && !r.title().isBlank()) {
+                sb.append("·").append(r.title().trim());
+            }
+            sb.append("〕").append(head(r.payload(), 160)).append('\n');
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    /** 事件主角 → 人话（注入侧认得出「这条是谁干的」） */
+    static String actorText(String actor) {
+        return switch (actor == null ? "" : actor) {
+            case "user" -> "用户";
+            case "assistant" -> "我";
+            case "heartbeat" -> "心跳";
+            case "plan" -> "计划";
+            case "agent" -> "子代理";
+            default -> actor == null ? "?" : actor;
+        };
+    }
+
+    /** 压平空白并截头（记忆事件行只要「认得出这件事」，不是全文） */
+    private static String head(String s, int limit) {
+        String t = s == null ? "" : s.replaceAll("\\s+", " ").trim();
+        return t.length() > limit ? t.substring(0, limit) + "…" : t;
+    }
+}

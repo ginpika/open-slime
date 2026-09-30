@@ -1,0 +1,8 @@
+# 后端构建上下文瘦身；.env 不打进镜像（运行时由 compose env_file 注入）
+target/
+.env
+*.db
+*.db-wal
+*.db-shm
+.idea/
+*.iml

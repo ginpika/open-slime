@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title></title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fafafa;
+        --fg: #171717;
+        --muted: #6b7280;
+        --line: rgba(23, 23, 23, 0.12);
+        --card: #ffffff;
+        --accent: #0f9d58;
+        --danger: #c0392b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #121212;
+          --fg: #e5e5e5;
+          --muted: #9ca3af;
+          --line: rgba(229, 229, 229, 0.14);
+          --card: #1b1b1b;
+          --accent: #32f08c;
+          --danger: #e8463a;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/20px "PingFang SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { width: 460px; padding: 32px; }
+      h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; letter-spacing: 0.02em; }
+      .sub { margin: 0 0 24px; color: var(--muted); font-size: 12px; }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 20px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--card);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); flex: none; }
+      body[data-phase="error"] .dot { background: var(--danger); }
+      body[data-phase="boot"] .dot { animation: pulse 1.2s ease-in-out infinite; }
+      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+      section {
+        margin-bottom: 16px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--card);
+      }
+      section h2 { margin: 0 0 4px; font-size: 14px; font-weight: 500; }
+      section p { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+      .row { display: flex; gap: 8px; }
+      input {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        font-size: 13px;
+      }
+      button {
+        padding: 8px 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      button.primary { border-color: var(--accent); color: var(--accent); }
+      /* 上次用过的那个高亮一下，方便直接回车 */
+      body[data-mode="local"] #card-local,
+      body[data-mode="remote"] #card-remote { border-color: var(--accent); }
+      .error { min-height: 20px; margin: 0; color: var(--danger); font-size: 12px; }
+
+      /* ---- 左下角用户按钮 + 用户菜单 ---- */
+      .user { position: fixed; left: 20px; bottom: 20px; z-index: 20; }
+      .user-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 260px;
+        padding: 6px 14px 6px 6px;
+        border-radius: 999px;
+        background: var(--card);
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+      }
+      .user-btn .user-name {
+        max-width: 160px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .avatar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--line);
+        color: var(--muted);
+        font-weight: 600;
+        line-height: 1;
+      }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .avatar.sm { width: 28px; height: 28px; font-size: 12px; }
+      .avatar.md { width: 36px; height: 36px; font-size: 14px; }
+      .avatar.lg { width: 40px; height: 40px; font-size: 16px; }
+      .user-menu {
+        position: absolute;
+        left: 0;
+        bottom: calc(100% + 10px);
+        width: 320px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--card);
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.18);
+      }
+      .user-head { display: flex; align-items: center; gap: 12px; }
+      .user-meta { min-width: 0; }
+      .user-name { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg); }
+      .user-sub { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+      .user-sec { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+      .user-sec h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+      .user-sec .hint { margin: 0 0 10px; color: var(--muted); font-size: 11px; }
+      .user-sec > input { width: 100%; margin-bottom: 8px; }
+      .user-sec > button { width: 100%; }
+      .avatar-pick {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .msg { min-height: 16px; margin: 8px 0 0; font-size: 11px; color: var(--muted); }
+      .msg[data-kind="error"] { color: var(--danger); }
+
+      /* 身份列表：本地用户 / hostid SSO 用户，点击切换当前用户 */
+      .ids { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+      .id-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: transparent;
+        text-align: left;
+      }
+      .id-row:not(.active):not(:disabled):hover { border-color: var(--line); }
+      .id-row.active { border-color: var(--accent); }
+      .id-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+      .id-name { font-size: 13px; font-weight: 600; color: var(--fg); }
+      .id-sub {
+        font-size: 11px;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .id-mark { flex: none; font-size: 11px; color: var(--accent); }
+
+      /* 会话失效提示条：启动校验 hostid 会话失败时，页面顶部弹出 */
+      .banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--card);
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+        font-size: 13px;
+      }
+      .banner[hidden] { display: none; }
+      .banner-text { flex: 1; color: var(--danger); }
+      .banner-x {
+        padding: 2px 8px;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1;
+      }
+    </style>
+  </head>
+  <body data-phase="idle">
+    <!-- 会话失效提示：启动校验 hostid 会话失败时，页面顶部弹出，要求重新登录 -->
+    <div class="banner" id="session-banner" hidden>
+      <span class="banner-text">hostid 会话已失效，请重新登录。</span>
+      <button id="session-relogin" class="primary">重新登录</button>
+      <button id="session-dismiss" class="banner-x" aria-label="关闭">×</button>
+    </div>
+
+    <main>
+      <h1></h1>
+      <p class="sub"></p>
+
+      <div class="status"><span class="dot"></span><span id="detail">正在准备…</span></div>
+
+      <section id="card-local">
+        <h2>本地服务器</h2>
+        <p>数据存在本机，固定单用户，不需要登录。</p>
+        <button id="choose-local" class="primary">启动本地服务器</button>
+      </section>
+
+      <section id="card-remote">
+        <h2>远程后端</h2>
+        <p>使用服务端的数据，按 hostid SSO 登录。</p>
+        <div class="row">
+          <input id="remote-url" type="url" placeholder="https://minis.example.com" spellcheck="false" />
+          <button id="choose-remote">连接</button>
+        </div>
+      </section>
+
+      <p class="error" id="error"></p>
+    </main>
+
+    <!-- 左下角用户按钮：显示当前用户，点开是用户菜单（本地用户 / 登录 hostid 实例） -->
+    <div class="user" id="user">
+      <div class="user-menu" id="user-menu" hidden>
+        <div class="user-head">
+          <span class="avatar lg" id="menu-avatar"></span>
+          <div class="user-meta">
+            <p class="user-name" id="menu-name">本地用户</p>
+            <p class="user-sub" id="menu-sub">当前用户</p>
+          </div>
+        </div>
+
+        <!-- 身份列表：本地用户 / hostid SSO 用户，点击切换当前用户 -->
+        <div class="ids" id="user-ids"></div>
+
+        <div class="user-sec">
+          <h3>本地用户</h3>
+          <p class="hint">设置用户名与头像，进入本地服务器后由后端按它渲染。</p>
+          <label class="avatar-pick">
+            <input id="avatar-file" type="file" accept="image/*" hidden />
+            <span class="avatar md" id="pick-avatar"></span>
+            <span>选择头像</span>
+          </label>
+          <input id="local-name" type="text" placeholder="用户名" spellcheck="false" />
+          <button id="save-local" class="primary">保存本地用户</button>
+          <p class="msg" id="local-msg"></p>
+        </div>
+
+        <div class="user-sec">
+          <h3>登录 hostid</h3>
+          <p class="hint">输入 hostid 服务端地址，将弹出一个专用窗口完成登录；本界面不受影响。</p>
+          <div class="row">
+            <input id="hostid-url" type="url" placeholder="https://hostid.example.com" spellcheck="false" />
+            <button id="login-hostid">登录</button>
+          </div>
+          <p class="msg" id="hostid-msg"></p>
+        </div>
+      </div>
+
+      <button id="user-btn" class="user-btn" aria-haspopup="true" aria-expanded="false" title="用户">
+        <span class="avatar sm" id="btn-avatar"></span>
+        <span class="user-name" id="btn-name">本地用户</span>
+      </button>
+    </div>
+
+    <script>
+      // 品牌名由壳启动时注入（见 desktop/src/main.rs 的 initialization_script），源自根 branding.json
+      ;(function () {
+        var b = window.__BRAND__ || {}
+        var h1 = document.querySelector('main h1')
+        if (b.name) {
+          document.title = b.name
+          if (h1) h1.textContent = b.name
+        }
+        if (b.tagline) {
+          var sub = document.querySelector('main .sub')
+          if (sub) sub.textContent = b.tagline
+        }
+        if (b.slug) {
+          var remote = document.getElementById('remote-url')
+          if (remote) remote.placeholder = 'https://' + b.slug + '.example.com'
+        }
+      })()
+    </script>
+
+    <script>
+      // 引导页跑在壳自带的资源上（tauri:// 源），可以使用 IPC；跳到 HTTP 源后本页即卸载。
+      const { invoke } = window.__TAURI__.core
+      const { listen } = window.__TAURI__.event
+
+      const detailEl = document.getElementById('detail')
+      const errorEl = document.getElementById('error')
+      const remoteInput = document.getElementById('remote-url')
+      const localBtn = document.getElementById('choose-local')
+      const remoteBtn = document.getElementById('choose-remote')
+
+      const LABELS = {
+        idle: '请选择要连接的后端',
+        boot: '正在启动本地服务器…',
+        ready: '已就绪',
+        remote: '远程模式',
+        error: '启动失败',
+      }
+
+      /** 启动中禁用两个按钮：本机模式要等后端 READY，期间别让重复点 */
+      function setBusy(busy) {
+        localBtn.disabled = busy
+        remoteBtn.disabled = busy
+        localBtn.textContent = busy ? '启动中…' : '启动本地服务器'
+      }
+
+      function render(state) {
+        document.body.dataset.phase = state.phase
+        if (state.mode) document.body.dataset.mode = state.mode
+        detailEl.textContent = state.detail || LABELS[state.phase] || state.phase
+        if (state.remoteBaseUrl && !remoteInput.value) {
+          remoteInput.value = state.remoteBaseUrl
+        }
+        setBusy(state.phase === 'boot')
+      }
+
+      invoke('desktop_state').then(render).catch((e) => (errorEl.textContent = String(e)))
+      listen('minis://status', (event) => render(event.payload))
+
+      localBtn.addEventListener('click', async () => {
+        errorEl.textContent = ''
+        setBusy(true)
+        try {
+          await invoke('desktop_choose_local')
+        } catch (e) {
+          errorEl.textContent = String(e)
+          setBusy(false)
+        }
+      })
+
+      remoteBtn.addEventListener('click', async () => {
+        errorEl.textContent = ''
+        try {
+          await invoke('desktop_choose_remote', { url: remoteInput.value })
+        } catch (e) {
+          errorEl.textContent = String(e)
+        }
+      })
+
+      /* ---------- 左下角用户按钮：本地用户 / 登录 hostid 实例 ---------- */
+
+      const userBtn = document.getElementById('user-btn')
+      const userMenu = document.getElementById('user-menu')
+      const userNameEl = document.getElementById('btn-name')
+      const menuNameEl = document.getElementById('menu-name')
+      const menuSubEl = document.getElementById('menu-sub')
+      const idsEl = document.getElementById('user-ids')
+      const localNameEl = document.getElementById('local-name')
+      const localMsgEl = document.getElementById('local-msg')
+      const hostidUrlEl = document.getElementById('hostid-url')
+      const hostidMsgEl = document.getElementById('hostid-msg')
+
+      /** 身份视图：current="local"|"sso"；local/sso 各含 name/avatar，sso 未登录为 null */
+      let users = { current: 'local', local: { name: '', avatar: '' }, sso: null }
+      /** 菜单里刚选中、尚未保存的本地头像；null = 没动过，沿用已保存的 */
+      let pendingAvatar = null
+
+      /** 头像位渲染：有图贴图，无图用首字母兜底 */
+      function paintAvatar(el, name, avatar) {
+        el.textContent = ''
+        if (avatar) {
+          const img = document.createElement('img')
+          img.src = avatar
+          img.alt = name || '用户'
+          el.appendChild(img)
+        } else {
+          el.textContent = (name || '?').trim().charAt(0).toUpperCase() || '?'
+        }
+      }
+
+      /** 当前选中身份的展示信息 */
+      function currentIdentity() {
+        if (users.current === 'sso' && users.sso) {
+          return { name: users.sso.name, avatar: users.sso.avatar, sub: users.sso.email || 'hostid SSO' }
+        }
+        return { name: users.local.name || '本地用户', avatar: users.local.avatar, sub: '本地用户' }
+      }
+
+      /** 一行身份（本地 / hostid），点击切换当前用户 */
+      function idRow(kind, name, avatar, sub) {
+        const row = document.createElement('button')
+        row.type = 'button'
+        row.className = 'id-row' + (users.current === kind ? ' active' : '')
+        const av = document.createElement('span')
+        av.className = 'avatar sm'
+        paintAvatar(av, name, avatar)
+        const meta = document.createElement('span')
+        meta.className = 'id-meta'
+        const n = document.createElement('span')
+        n.className = 'id-name'
+        n.textContent = name
+        const s = document.createElement('span')
+        s.className = 'id-sub'
+        s.textContent = sub
+        meta.appendChild(n)
+        meta.appendChild(s)
+        const mark = document.createElement('span')
+        mark.className = 'id-mark'
+        mark.textContent = users.current === kind ? '当前' : ''
+        row.appendChild(av)
+        row.appendChild(meta)
+        row.appendChild(mark)
+        row.addEventListener('click', () => switchUser(kind))
+        return row
+      }
+
+      function renderUsers() {
+        const cur = currentIdentity()
+        const name = cur.name || '本地用户'
+        paintAvatar(document.getElementById('btn-avatar'), cur.name, cur.avatar)
+        paintAvatar(document.getElementById('menu-avatar'), cur.name, cur.avatar)
+        userNameEl.textContent = name
+        menuNameEl.textContent = name
+        menuSubEl.textContent = cur.sub
+        paintAvatar(
+          document.getElementById('pick-avatar'),
+          users.local.name,
+          pendingAvatar !== null ? pendingAvatar : users.local.avatar,
+        )
+        idsEl.innerHTML = ''
+        idsEl.appendChild(idRow('local', users.local.name || '本地用户', users.local.avatar, '本机模式使用'))
+        if (users.sso) {
+          idsEl.appendChild(idRow('sso', users.sso.name, users.sso.avatar, users.sso.email || 'hostid SSO'))
+        }
+      }
+
+      async function switchUser(kind) {
+        if (users.current === kind) return
+        try {
+          users = await invoke('desktop_switch_user', { kind })
+          renderUsers()
+        } catch (e) {
+          /* 例如尚未登录 hostid：保持原样 */
+        }
+      }
+
+      function setMenuOpen(open) {
+        userMenu.hidden = !open
+        userBtn.setAttribute('aria-expanded', String(open))
+      }
+
+      /** 图片压到 128px 正方形（居中裁切）后转 JPEG data URL，控制体积以便经环境变量注入 */
+      function shrinkAvatar(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onerror = () => reject(new Error('读取图片失败'))
+          reader.onload = () => {
+            const img = new Image()
+            img.onerror = () => reject(new Error('不支持的图片格式'))
+            img.onload = () => {
+              const size = 128
+              const canvas = document.createElement('canvas')
+              canvas.width = size
+              canvas.height = size
+              const side = Math.min(img.width, img.height)
+              canvas
+                .getContext('2d')
+                .drawImage(
+                  img,
+                  (img.width - side) / 2,
+                  (img.height - side) / 2,
+                  side,
+                  side,
+                  0,
+                  0,
+                  size,
+                  size,
+                )
+              resolve(canvas.toDataURL('image/jpeg', 0.8))
+            }
+            img.src = reader.result
+          }
+          reader.readAsDataURL(file)
+        })
+      }
+
+      function setMsg(el, text, kind) {
+        el.textContent = text
+        if (kind) el.dataset.kind = kind
+        else delete el.dataset.kind
+      }
+
+      invoke('desktop_users')
+        .then((u) => {
+          users = u
+          localNameEl.value = (u.local && u.local.name) || ''
+          renderUsers()
+        })
+        .catch(() => renderUsers())
+
+      // 登录窗口取回 hostid 用户、或当前用户被切换后，壳会推一份新的身份视图
+      listen('minis://user', (event) => {
+        users = event.payload
+        renderUsers()
+      })
+
+      userBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        setMenuOpen(userMenu.hidden)
+      })
+      document.addEventListener('click', (e) => {
+        if (!document.getElementById('user').contains(e.target)) setMenuOpen(false)
+      })
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setMenuOpen(false)
+      })
+
+      document.getElementById('avatar-file').addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0]
+        if (!file) return
+        try {
+          pendingAvatar = await shrinkAvatar(file)
+          paintAvatar(document.getElementById('pick-avatar'), localNameEl.value, pendingAvatar)
+          setMsg(localMsgEl, '头像已选，点「保存本地用户」生效', '')
+        } catch (err) {
+          setMsg(localMsgEl, String(err.message || err), 'error')
+        }
+      })
+
+      document.getElementById('save-local').addEventListener('click', async () => {
+        const name = localNameEl.value.trim()
+        const avatar = pendingAvatar !== null ? pendingAvatar : users.local.avatar
+        try {
+          await invoke('desktop_save_local_user', { name, avatar })
+          pendingAvatar = null
+          users.local = { name, avatar }
+          renderUsers()
+          setMsg(localMsgEl, '已保存；下次启动本地服务器时生效', '')
+        } catch (e) {
+          setMsg(localMsgEl, String(e), 'error')
+        }
+      })
+
+      document.getElementById('login-hostid').addEventListener('click', async () => {
+        setMsg(hostidMsgEl, '', '')
+        try {
+          await invoke('desktop_login_hostid', { url: hostidUrlEl.value })
+          setMsg(hostidMsgEl, '已打开登录窗口，请在其中完成 hostid 登录')
+        } catch (e) {
+          setMsg(hostidMsgEl, String(e), 'error')
+        }
+      })
+
+      /* ---------- 启动校验 hostid 会话：失效则在顶部弹出提示 ---------- */
+
+      const sessionBanner = document.getElementById('session-banner')
+
+      // 预填上次用过的 hostid 地址
+      invoke('desktop_hostid_base')
+        .then((base) => {
+          if (base && !hostidUrlEl.value) hostidUrlEl.value = base
+        })
+        .catch(() => {})
+
+      // 让壳在后台校验当前 hostid 会话；结果经 minis://session 推回
+      invoke('desktop_check_session').catch(() => {})
+
+      listen('minis://session', (event) => {
+        const st = event.payload
+        sessionBanner.hidden = !(st && st.applicable && !st.valid)
+      })
+
+      document.getElementById('session-dismiss').addEventListener('click', () => {
+        sessionBanner.hidden = true
+      })
+
+      document.getElementById('session-relogin').addEventListener('click', async () => {
+        sessionBanner.hidden = true
+        try {
+          await invoke('desktop_relogin_hostid')
+          setMsg(hostidMsgEl, '已打开登录窗口，请在其中完成 hostid 登录')
+        } catch (e) {
+          setMsg(hostidMsgEl, String(e), 'error')
+        }
+      })
+    </script>
+  </body>
+</html>

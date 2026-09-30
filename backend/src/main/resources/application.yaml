@@ -1,0 +1,76 @@
+# minis 后端 M0 配置（占位）。
+# 参数经 .env 注入（backend/.env，模板见 .env.example；真实环境变量优先于 .env）。
+# 可覆盖项：MINIS_PORT / MINIS_DB_PATH / MINIS_PUBLIC_BASE / MINIS_LOG_FILE / SSO_SERVER_URL /
+#   SSO_COOKIE_NAME / LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL / LLM_SYSTEM_PROMPT /
+#   LLM_CONTEXT_WINDOW / EMBEDDING_MODEL / RERANK_MODEL / FAST_WEB_ENABLED
+server:
+  port: ${MINIS_PORT:18081}
+
+spring:
+  # 应用名（spring.application.name）由 MinisApplication 从根目录 branding.json 注入，不在此写死
+  datasource:
+    url: jdbc:sqlite:${MINIS_DB_PATH:../data/minis.db}   # 相对 maven/docker 工作目录；生产用绝对路径或挂载卷
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+logging:
+  file:
+    name: ${MINIS_LOG_FILE:../data/logs/minis.log}   # 落文件便于回溯（相对 maven/docker 工作目录）
+  level:
+    cc.ginpika.minis: INFO
+
+minis:
+  public-base: ${MINIS_PUBLIC_BASE:http://localhost:18081}
+  article-dir: ${MINIS_ARTICLE_DIR:../data/article}   # markdown 文章目录（相对 maven 工作目录）
+  # 桌面壳（Tauri）：壳以 MINIS_DESKTOP=1 拉起后端并注入一次性令牌，此时 /api/** 需带
+  # X-Minis-Token；静态资源与页面不校验。Web 部署保持关闭（默认），行为不变。
+  desktop:
+    enabled: ${MINIS_DESKTOP:false}
+    local-token: ${MINIS_LOCAL_TOKEN:}                # 壳每次启动生成的随机值；空 = 不校验
+    local-user-name: ${MINIS_LOCAL_USER_NAME:}        # 壳注入的本地用户名；本机模式顶替 local-dev
+    local-user-avatar: ${MINIS_LOCAL_USER_AVATAR:}    # 壳注入的本地用户头像（data URL）；空 = 无
+  sso:
+    server-url: ${SSO_SERVER_URL:}                    # hostid 生产地址，由使用者填入（§9-3）
+    cookie-name: ${SSO_COOKIE_NAME:sso_token}
+    token-ttl: 5m
+    # /api/admin/** 白名单（role=admin 恒放行；空表时仅 SSO 关闭的 dev 可用）
+    admin-usernames: [ginpika]
+  llm:
+    base-url: ${LLM_BASE_URL:}                        # 带版本前缀，如 https://api.openai.com/v1
+    api-key: ${LLM_API_KEY:}
+    chat-model: ${LLM_CHAT_MODEL:}                    # AI 会话模型（/chat/completions）
+    system-prompt: ${LLM_SYSTEM_PROMPT:}              # 可选：聊天默认 system prompt
+    context-window: ${LLM_CONTEXT_WINDOW:262144}      # 内置模型上下文窗口（token 数）；会话页上下文占比用
+    embedding-model: ${EMBEDDING_MODEL:}              # 固定供应商+模型；换模型需全库重嵌
+    rerank-model: ${RERANK_MODEL:}                    # 精排模型（复用 base-url/api-key）；空则 RAG 保持 RRF 序
+    timeout-ms: 30000                                 # 读超时：embedding/rerank 整次请求（聊天走 chat-timeout-ms）
+    chat-timeout-ms: ${LLM_CHAT_TIMEOUT_MS:180000}    # 聊天读超时：流式语义=相邻 chunk 最大间隔（含首包等待），摘要长文需更宽
+  fast:
+    web:
+      enabled: ${FAST_WEB_ENABLED:false}              # 默认关：纯私域
+      top-k: 10
+      cache-ttl: 10m
+    keyword-top-k: 20
+    vector-top-k: 20
+    graph-hops: 2
+    rrf-k: 60
+    rerank-candidate: 20                              # RAG 精排候选池：RRF 后送 rerank 的前 N 条
+  subconscious:
+    enabled: ${SUBCONSCIOUS_ENABLED:false}            # 心跳常驻开关：默认关，启动后需在潜意识页手动开启（置 true 可让启动即开始敲）
+    tick-ms: ${SUBCONSCIOUS_TICK_MS:60000}            # 心跳间隔（毫秒）
+    max-agents-per-beat: ${SUBCONSCIOUS_MAX_AGENTS_PER_BEAT:8} # 单拍派活上限：主会话一拍最多派出几个子代理
+    max-tool-rounds: ${SUBCONSCIOUS_MAX_TOOL_ROUNDS:3} # 单个 sub-agent 工具往返上限
+    initial-delay-ms: 15000                            # 启动后到第一次心跳的延迟
+  # 命令行终端（run_command / list_terminals）：让模型直接控制目标环境。
+  # 目标清单（docker 容器 / SSH 服务器与凭证）不在这里，而在库表 term_target，由工作空间页维护；
+  # 这里只是全局护栏（超时 / 输出上限）。没有总开关：能不能用只看逐目标的 enabled，
+  # 所以新增的工作空间默认关，想让模型用哪台就在页面上开哪台。
+  terminal:
+    default-timeout-ms: ${TERMINAL_TIMEOUT_MS:60000}  # 单条命令默认超时（毫秒）
+    max-timeout-ms: 600000                            # 超时上限（毫秒）：目标自配的值夹取到这里
+    max-output-chars: ${TERMINAL_MAX_OUTPUT:20000}    # 回给模型的输出上限（字符，stdout/stderr 各自计）
+    max-output-chars-cap: 200000                      # 输出上限的上限（字符）
+    audit-keep: 1000                                  # term_command 审计保留条数，超出裁掉最旧的

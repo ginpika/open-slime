@@ -1,0 +1,140 @@
+@import 'tailwindcss';
+
+/*
+ * 语义令牌 → Tailwind 工具类映射（Tailwind v4 @theme inline）。
+ * --c-* 由主题系统在运行时写入 :root（见 src/theme/apply.ts），
+ * 生成 bg-bg / text-fg / border-line / bg-accent / text-hint 等工具类。
+ * 角色分工：底色=背景，主色=文字，辅色=线条，点缀色=按钮/链接/提示。
+ */
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-primary: var(--c-primary);
+  --color-primary-fg: var(--c-primary-fg);
+  --color-secondary: var(--c-secondary);
+  --color-accent: var(--c-accent);
+  --color-accent-fg: var(--c-accent-fg);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-hint: var(--c-hint);
+  --color-mark: var(--c-mark);
+  --color-entity-1: var(--c-entity-1);
+  --color-entity-2: var(--c-entity-2);
+  --color-entity-3: var(--c-entity-3);
+  --color-entity-4: var(--c-entity-4);
+  /* MD3 角色（由三色派生，见 theme/apply.ts）：surface 阶梯 / on-surface / outline */
+  --color-surface-container-lowest: var(--c-surface-container-lowest);
+  --color-surface-container-low: var(--c-surface-container-low);
+  --color-surface-container: var(--c-surface-container);
+  --color-surface-container-high: var(--c-surface-container-high);
+  --color-surface-container-highest: var(--c-surface-container-highest);
+  --color-surface-variant: var(--c-surface-variant);
+  --color-on-surface: var(--c-on-surface);
+  --color-on-surface-variant: var(--c-on-surface-variant);
+  --color-outline: var(--c-outline);
+  --color-outline-variant: var(--c-outline-variant);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--c-bg, #ffffff);
+  color: var(--c-fg, #0f0f0f);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+}
+
+/* 所有按钮统一指针光标（Tailwind v4 preflight 将按钮光标重置为 default，此处全局改回 pointer） */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/* 隐藏滚动条但保留滚动能力（首页两页模式、对话页内部滚动） */
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* 细滚动条（搜索结果内容区）：透明槽 + 圆角半透明滑块，hover 加深 */
+@utility scrollbar-slim {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--c-fg, #0f0f0f) 20%, transparent) transparent;
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--c-fg, #0f0f0f) 18%, transparent);
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--c-fg, #0f0f0f) 32%, transparent);
+  }
+}
+
+/* 点缀色细滚动条（文档详情页文章容器）：透明槽 + 圆角点缀色滑块，悬停加深 */
+@utility scrollbar-accent {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--c-accent, #0f0f0f) 50%, transparent) transparent;
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--c-accent, #0f0f0f) 50%, transparent);
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--c-accent, #0f0f0f) 75%, transparent);
+  }
+}
+
+::selection {
+  background: var(--c-fg, #0f0f0f);
+  color: var(--c-bg, #ffffff);
+}
+
+/* ---------------------------------------------------------------------------
+ * MD3 风格「色调便签」（surface container）：提示词页把上下文的不同部分做成便签，
+ * 以低彩度色调区分角色。底色一律由主题令牌现混（——色相取自角色色、明度贴近底色），
+ * 因此浅色/深色/任意自定义主题都自适应，无需为每个主题单独定义。
+ *   accent  = 点缀色调（主提示词位）
+ *   secondary = 辅色调（同上下文内第二个提示词位）
+ *   primary = 主色调（第三个及以后，数量上目前用不到，留作扩展）
+ *   neutral = 中性调（只读的运行时素材）
+ * ------------------------------------------------------------------------- */
+@utility note-tone-accent {
+  background-color: color-mix(in srgb, var(--c-accent, #888888) 11%, var(--c-bg, #ffffff));
+}
+
+@utility note-tone-secondary {
+  background-color: color-mix(in srgb, var(--c-secondary, #0f0f0f) 13%, var(--c-bg, #ffffff));
+}
+
+@utility note-tone-primary {
+  background-color: color-mix(in srgb, var(--c-primary, #0f0f0f) 7%, var(--c-bg, #ffffff));
+}
+
+@utility note-tone-neutral {
+  background-color: color-mix(in srgb, var(--c-fg, #0f0f0f) 4%, var(--c-bg, #ffffff));
+}

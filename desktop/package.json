@@ -1,0 +1,16 @@
+{
+  "name": "minis-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "brand:sync": "node ../scripts/brand-sync.mjs",
+    "predev": "npm run brand:sync",
+    "prebuild": "npm run brand:sync",
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

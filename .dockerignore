@@ -1,0 +1,24 @@
+# Docker 构建上下文为仓库根目录：排除各端构建产物、本地数据与仓库元数据，控制上下文体积。
+# （原先的 frontend/.dockerignore 与 backend/.dockerignore 在根上下文下不再生效，保留仅为子目录单独构建时参考。）
+**/node_modules/
+**/dist/
+**/.vite/
+backend/target/
+desktop/target/
+desktop/node_modules/
+desktop/runtime/
+desktop/gen/
+data/
+*.db
+*.db-wal
+*.db-shm
+.git/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+.env
+backend/.env
+docs/
+*.md

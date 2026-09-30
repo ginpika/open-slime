@@ -1,0 +1,33 @@
+# 构建产物
+backend/target/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 桌面端（Tauri 壳）：运行时由 desktop/scripts/assemble-runtime.* 组装，不入库
+desktop/target/
+desktop/node_modules/
+desktop/runtime/
+desktop/gen/
+
+# 本地数据
+data/
+*.db
+*.db-wal
+*.db-shm
+
+/*.md
+# 例外：品牌配置说明文档需要入库
+!/BRANDING.md
+
+# 密钥（本地环境参数，模板见 backend/.env.example）
+.env
+
+# 编辑器/系统
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+.vscode/
+
+backend/.env

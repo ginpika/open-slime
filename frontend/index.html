@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/icon-48x48.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/icon-64x64.png" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/icon-128x128.png" />
+    <link rel="icon" type="image/png" sizes="256x256" href="/icon-256x256.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>__BRAND_TITLE__</title>
+    <script>
+      // 防闪烁（FOUC）：React 挂载前把持久化的主题变量写入 :root
+      ;(function () {
+        try {
+          var raw = localStorage.getItem('minis.theme.v3')
+          if (!raw) return
+          var vars = JSON.parse(raw).vars
+          if (!vars || typeof vars !== 'object') return
+          var s = document.documentElement.style
+          for (var k in vars) {
+            if (Object.prototype.hasOwnProperty.call(vars, k)) s.setProperty(k, vars[k])
+          }
+        } catch (e) {
+          /* 忽略损坏数据 */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

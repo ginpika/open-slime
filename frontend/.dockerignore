@@ -1,0 +1,6 @@
+# 前端静态产物构建瘦身
+node_modules/
+dist/
+.vite/
+.idea/
+*.iml
