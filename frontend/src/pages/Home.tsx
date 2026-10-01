@@ -596,6 +596,9 @@ export default function Home({ connErr }: Props) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
+  /* 滑块切入会话模式时抽屉以 fadeIn 亮相（挂载即开没有 transition 起点，会硬闪）；
+     仅首挂载播一次，之后拉手开合仍走原滑动 transition */
+  const [panelMountFade, setPanelMountFade] = useState(false)
 
   /* 会话视图激活态：新建会话后即使尚无消息也直接展示对话页（而非搜索页） */
   const [sessionActive, setSessionActive] = useState(false)
@@ -755,10 +758,36 @@ export default function Home({ connErr }: Props) {
     return () => setActiveChatSession(null)
   }, [chatMode, sessionActive, sessionId])
 
-  /* 两页模式：有新消息/新建会话（或带着记录切回会话模式）时，把内容滚到第 2 页对话页 */
+  /* 跨页滚动时间窗：进入会话发起 main 平滑滚动的时刻 + 余量。贴底 effect 据此知道
+     main 还在滚——滚动期间 content-visibility 只逐步补齐真实高度，此刻的贴底是
+     假象，不能据此收工；滚完且连续几帧都贴底后才算到位 */
+  const mainScrollUntilRef = useRef(0)
+
+  /* 两页模式：进入会话（或带着记录切回会话模式）时把内容滚到第 2 页对话页 */
+  useEffect(() => {
+    if (hasChat) {
+      mainScrollUntilRef.current = performance.now() + 900
+      chatPageRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [chatMode, sessionActive])
+
+  /* 有新消息时保持对话页在场（会话内小滚动，滚动条照常） */
   useEffect(() => {
     if (hasChat) chatPageRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [view.length, chatMode, sessionActive])
+  }, [view.length])
+
+  /* 两页模式下 main 的滚动条永久隐去（槽保留，宽度恒定无抖动）：滚轮锁已把 main
+     变成纯「页面传送带」，露出滚动条就穿帮「其实是一个长页面在滚」的把戏；
+     会话内容的长列表滚动走对话页内层（scrollbar-hide），main 的滚动条没有存在价值。
+     仅在首页挂载期间生效，切到别的页面照常恢复 */
+  useEffect(() => {
+    const mainEl = searchPageRef.current?.closest('main')
+    if (!mainEl) return
+    mainEl.classList.add('scrollbar-stealth')
+    return () => {
+      mainEl.classList.remove('scrollbar-stealth')
+    }
+  }, [])
 
   /* 子代理的结论是异步投回的（后端跑完才把它作为一条新消息落库并打未读点）：派过活之后
      轮询会话列表，等本会话出现未读——那说明结论到了，重新拉一次消息把它刷出来。
@@ -879,25 +908,41 @@ export default function Home({ connErr }: Props) {
     }
     el.addEventListener('wheel', yieldToUser, { passive: true })
     el.addEventListener('touchstart', yieldToUser, { passive: true })
+    /* main 一滚就重置稳定计数：时间窗只是估的余量，实际滚动更长时由事件兜底 */
+    const mainEl = el.closest('main')
+    const onMainScroll = () => {
+      stable = 0
+    }
+    mainEl?.addEventListener('scroll', onMainScroll, { passive: true })
     const settle = () => {
       raf = 0
       if (stopped) return
+      /* main 跨页滚动时间窗内：content-visibility 只逐步补齐真实高度，此刻的
+         贴底是假象——不累计稳定计数、不消耗帧数预算，滚完后再按常规收工 */
+      const inWindow = performance.now() < mainScrollUntilRef.current
       const max = el.scrollHeight - el.clientHeight
       if (el.scrollTop < max) {
         /* 高度又长出来了（刚补齐的这几屏比占位高）：再贴一次 */
         el.scrollTop = max
         stable = 0
-      } else if (++stable >= 3) {
+      } else if (!inWindow && ++stable >= 3) {
         return
       }
-      if (++frames >= 45) return
+      if (!inWindow && ++frames >= 90) return
       raf = requestAnimationFrame(settle)
     }
-    el.scrollTop = el.scrollHeight
-    raf = requestAnimationFrame(settle)
+    const begin = () => {
+      if (stopped) return
+      el.scrollTop = el.scrollHeight
+      raf = requestAnimationFrame(settle)
+    }
+    /* 立即贴底：进入会话时列表还在视口外（main 刚起滚），这次瞬移不会被看见，
+       用户随 main 的平滑滚动一路看到的就是列表底部；滚动期间每帧校正新补齐的高度 */
+    begin()
     return () => {
       el.removeEventListener('wheel', yieldToUser)
       el.removeEventListener('touchstart', yieldToUser)
+      mainEl?.removeEventListener('scroll', onMainScroll)
       if (raf) cancelAnimationFrame(raf)
     }
   }, [view, busy])
@@ -1233,12 +1278,14 @@ export default function Home({ connErr }: Props) {
       /* 切入会话模式：自动拉开左侧抽屉并刷新会话列表，省去再点箭头的一步 */
       setChatMode(true)
       setPanelOpen(true)
+      setPanelMountFade(true)
       void refreshSessions()
     } else {
       /* 切回检索模式：清空会话上下文，避免再次切入会话模式时自动恢复
          上次的对话——历史会话的唯一入口是左侧抽屉；身份钉住一并清除，
          新会话回到跟随提示词页绑定 */
       setChatMode(false)
+      setPanelMountFade(false)
       setSessionActive(false)
       setMsgs([])
       setSessionId(null)
@@ -1266,17 +1313,25 @@ export default function Home({ connErr }: Props) {
         className="flex min-h-[calc(100dvh-8.5rem)] flex-col"
       >
         {/* 标题到搜索框的整体区域，在 content 内垂直居中 */}
-        <div className="my-auto">
-          <h1 className="text-center text-4xl font-semibold tracking-tight text-fg">
-            欢迎回来, 我的朋友!
-          </h1>
-          <p className="mt-2.5 text-center text-[12px] text-faint">
-            点击搜索框左侧图标或是下方按钮，可在检索与会话模式间切换
-          </p>
+        <div className="relative my-auto">
+          {/* 净空层：标题区压一记底色光晕，把背景层的网格/全息噪声让开，裸排文本才有层级 */}
+          <div
+            className="sh-clear pointer-events-none absolute -inset-y-14 inset-x-0"
+            aria-hidden="true"
+          />
+          <div className="relative">
+            <p className="ui-label text-center">// SYSTEM ONLINE</p>
+            <h1 className="ui-heading mt-2 text-center text-4xl tracking-tight">
+              欢迎回来, 我的朋友!
+            </h1>
+            <p className="mt-2.5 text-center text-[12px] text-faint">
+              点击搜索框左侧图标或是下方按钮，可在检索与会话模式间切换
+            </p>
+          </div>
 
           <div className="mx-auto mt-7 w-full max-w-2xl">
             <form onSubmit={submit}>
-              <div className="flex items-center gap-2 rounded-full border border-line bg-bg py-1.5 pl-5 pr-1.5 transition hover:border-line-strong focus-within:border-secondary">
+              <div className="ui-surface flex items-center gap-2 rounded-full border border-line py-1.5 pl-5 pr-1.5 shadow-md transition hover:border-line-strong focus-within:border-accent">
                 <button
                   type="button"
                   onClick={() => switchMode(!chatMode)}
@@ -1400,7 +1455,7 @@ export default function Home({ connErr }: Props) {
             {/* 模式滑块：与搜索框左侧图标按钮同步切换检索/会话模式；
                 「搜索」按钮双击为测试暗门：进入 RAG 模式搜索页（只返回 chunk 命中） */}
             <div className="mt-4 flex justify-center">
-              <div className="flex items-center rounded-full border border-line bg-bg p-1 shadow-sm">
+              <div className="ui-surface flex items-center rounded-full border border-line p-1 shadow-md">
                 <button
                   type="button"
                   onClick={() => switchMode(false)}
@@ -1571,7 +1626,7 @@ export default function Home({ connErr }: Props) {
                 </svg>
               </button>
               <form onSubmit={chatSubmit} className="min-w-0 flex-1">
-                <div className="relative flex items-center gap-2 rounded-full border border-line bg-bg py-1 pl-5 pr-1 transition hover:border-line-strong focus-within:border-secondary">
+                <div className="ui-surface relative flex items-center gap-2 rounded-full border border-line py-1 pl-5 pr-1 shadow-md transition hover:border-line-strong focus-within:border-accent">
                   <DecoupledInput
                     ref={chatInputRef}
                     placeholder="继续输入…"
@@ -1880,7 +1935,7 @@ export default function Home({ connErr }: Props) {
                     <button
                       type="button"
                       onClick={stop}
-                      className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-accent-fg transition hover:bg-accent-hover"
+                      className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-accent-fg shadow-md transition hover:bg-accent-hover"
                     >
                       <svg
                         className="h-3 w-3"
@@ -1896,7 +1951,7 @@ export default function Home({ connErr }: Props) {
                     <button
                       type="submit"
                       disabled={!hasText}
-                      className="flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
+                      className="flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-accent-fg shadow-md transition enabled:hover:bg-accent-hover disabled:opacity-40"
                     >
                       <svg
                         className="h-3.5 w-3.5"
@@ -1928,6 +1983,8 @@ export default function Home({ connErr }: Props) {
           <aside
             aria-label="最近会话"
             className={`w-64 shrink-0 rounded-r-xl border-y border-r border-line bg-bg p-2 shadow-xl transition-all duration-300 ease-out ${
+              panelMountFade ? 'panel-fade-in' : ''
+            } ${
               panelOpen
                 ? 'opacity-100'
                 : 'pointer-events-none invisible -ml-64 opacity-0'
@@ -2039,7 +2096,9 @@ export default function Home({ connErr }: Props) {
             title={panelOpen ? '收起会话列表' : '展开会话列表'}
             aria-label={panelOpen ? '收起会话列表' : '展开会话列表'}
             aria-expanded={panelOpen}
-            className="flex h-12 w-6 cursor-pointer items-center justify-center rounded-r-md bg-accent text-accent-fg shadow-lg transition-all duration-300 ease-out hover:bg-accent-hover"
+            className={`relative z-10 flex h-12 w-6 cursor-pointer items-center justify-center rounded-r-md bg-accent text-accent-fg shadow-lg transition-all duration-300 ease-out hover:bg-accent-hover ${
+              panelMountFade ? 'panel-fade-in' : ''
+            }`}
           >
             <svg
               className={`h-4 w-4 transition-transform duration-300 ease-out ${

@@ -20,13 +20,14 @@ import FloatWindow from '../components/FloatWindow'
 import Toast from '../components/Toast'
 import ExtractStep, { type ExtractCtx } from './ExtractStep'
 import EnhanceStep, { type EnhanceCtx } from './EnhanceStep'
+import { usePageKit } from '../kit'
 
 /**
  * 文档分析页：三步工作流 —— 选择 Chunk → 知识提取 → Chunk 增强。
- * stack 布局：顶部为圆形图标步骤条（仅展示进度，不可点击跳转），其下为当前步骤内容。
- * 工作流仅能经 chunk 行「知识提取」逐步推进（提交后进入增强），不提供跳步入口。
- * 步骤 1 是文档折叠表（展开列出其下 chunk）；「新建文档」跳转文档导入页（发布即自动分块）。
- * 文档与 chunk 的父子关系由后端双向维护（chunks.doc_id + 文档侧聚合统计）。
+ *
+ * <p>本页持有工作流时序与全部数据操作；步骤条、状态徽章、空态、面板与表格外壳
+ * 全部来自 PageKit —— 于是同一套工作流在 flat 下是「表单式的表格页」、
+ * 在 Endfield 下是「切角仪表盘 + 等宽读数」、在 BlueArchive 下是「窄栏卡片流」。
  */
 
 function fmtTime(ts: number): string {
@@ -35,87 +36,24 @@ function fmtTime(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-/** 步骤条：圆形图标（当前步实底、已完成打勾、未到达描边）+ 横向连线；仅展示进度，不可点击跳转 */
-function Steps({ current }: { current: number }) {
-  const labels = ['选择 Chunk', '知识提取', 'Chunk 增强']
-  return (
-    <ol className="flex items-center gap-4">
-      {labels.map((label, i) => {
-        const n = i + 1
-        const state = n === current ? 'cur' : n < current ? 'done' : 'todo'
-        return (
-          <li key={label} className="flex items-center gap-4">
-            {i > 0 && <span aria-hidden="true" className="h-px w-8 bg-line" />}
-            <span className="flex items-center gap-2.5">
-              <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-                  state === 'cur'
-                    ? 'bg-accent text-accent-fg'
-                    : state === 'done'
-                      ? 'border border-secondary text-secondary'
-                      : 'border border-line text-faint'
-                }`}
-              >
-                {state === 'done' ? (
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-                    <path
-                      d="M5 13l4 4L19 7"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  n
-                )}
-              </span>
-              <span
-                className={
-                  state === 'cur'
-                    ? 'text-sm font-medium text-fg'
-                    : state === 'done'
-                      ? 'text-sm text-muted'
-                      : 'text-sm text-faint'
-                }
-              >
-                {label}
-              </span>
-            </span>
-          </li>
-        )
-      })}
-    </ol>
-  )
-}
-
-/** 状态徽章：圆点 + 文案（faint=未分析 / ok=已分析·启用 / off=禁用） */
-const TONES = {
-  faint: { dot: 'bg-faint', text: 'text-faint' },
-  ok: { dot: 'bg-secondary', text: 'text-secondary' },
-  off: { dot: 'bg-hint', text: 'text-hint' },
-} as const
-
-function StatusBadge({ label, tone }: { label: string; tone: keyof typeof TONES }) {
-  return (
-    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs ${TONES[tone].text}`}>
-      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TONES[tone].dot}`} />
-      {label}
-    </span>
-  )
-}
+/** 工作流三步标签（顺序即流程） */
+const STEP_LABELS = ['选择 Chunk', '知识提取', 'Chunk 增强']
 
 /** 文档状态：全部 chunk 均已分析（且至少一块）即「已分析」 */
 function DocStatusBadge({ doc }: { doc: DocItem }) {
+  const kit = usePageKit()
   const analyzed = doc.chunkCount > 0 && doc.analyzedCount >= doc.chunkCount
   return (
     <span title={`已分析 ${doc.analyzedCount} / ${doc.chunkCount} 块`}>
-      <StatusBadge label={analyzed ? '已分析' : '未分析'} tone={analyzed ? 'ok' : 'faint'} />
+      <kit.Badge tone={analyzed ? 'ok' : 'default'}>{analyzed ? '已分析' : '未分析'}</kit.Badge>
     </span>
   )
 }
 
-/** 文档类型标签（摘要生成时 LLM 判定）：分类色板取色；未判定（null）不渲染 */
+/**
+ * 文档类型标签（摘要生成时 LLM 判定）：取分类色板取色。
+ * 这里刻意保留彩色：它是**语义色**（类型区分），不是装饰，所以不并入 kit.Badge 的通用色调。
+ */
 const DOC_TYPE_META: Record<DocType, { tip: string; cls: string }> = {
   TECHNICAL: {
     tip: '技术手册、规范、严谨知识',
@@ -137,7 +75,7 @@ function DocTypeBadge({ type }: { type: DocType | null }) {
   return (
     <span
       title={`文档类型：${meta.tip}`}
-      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${meta.cls}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-2xs leading-none font-medium ${meta.cls}`}
     >
       {type}
     </span>
@@ -145,9 +83,10 @@ function DocTypeBadge({ type }: { type: DocType | null }) {
 }
 
 function ChunkStatusBadge({ status }: { status: ChunkItem['status'] }) {
-  if (status === 'enabled') return <StatusBadge label="启用" tone="ok" />
-  if (status === 'disabled') return <StatusBadge label="禁用" tone="off" />
-  return <StatusBadge label="未分析" tone="faint" />
+  const kit = usePageKit()
+  if (status === 'enabled') return <kit.Badge tone="ok">启用</kit.Badge>
+  if (status === 'disabled') return <kit.Badge tone="default">禁用</kit.Badge>
+  return <kit.Badge tone="default">未分析</kit.Badge>
 }
 
 /** 展开指示箭头（展开时旋转 90°） */
@@ -173,7 +112,7 @@ function Chevron({ open }: { open: boolean }) {
 /** chunk 关联实体：pill 列表（超 3 个折叠为 +N，type 作悬浮提示） */
 function EntityPills({ entities }: { entities: ChunkEntityItem[] }) {
   if (entities.length === 0) {
-    return <span className="text-xs text-faint">—</span>
+    return <span className="text-sm text-faint">—</span>
   }
   const shown = entities.slice(0, 3)
   return (
@@ -182,13 +121,19 @@ function EntityPills({ entities }: { entities: ChunkEntityItem[] }) {
         <span
           key={e.id}
           title={`${e.type} · ${e.name}`}
-          className="max-w-[9rem] truncate rounded-sm bg-fg/[0.04] px-1.5 py-0.5 text-xs text-muted"
+          className="max-w-[9rem] truncate rounded-sm bg-fg/[0.04] px-1.5 py-0.5 text-sm text-muted"
         >
           {e.name}
         </span>
       ))}
       {entities.length > shown.length && (
-        <span title={entities.slice(3).map((e) => e.name).join('、')} className="text-xs text-faint">
+        <span
+          title={entities
+            .slice(3)
+            .map((e) => e.name)
+            .join('、')}
+          className="text-sm text-faint"
+        >
           +{entities.length - shown.length}
         </span>
       )}
@@ -199,17 +144,21 @@ function EntityPills({ entities }: { entities: ChunkEntityItem[] }) {
 /** chunk 关联关系：紧凑三元组列表（主 —谓→ 宾），超 2 条折叠 */
 function RelationList({ relations }: { relations: ChunkRelationItem[] }) {
   if (relations.length === 0) {
-    return <span className="text-xs text-faint">—</span>
+    return <span className="text-sm text-faint">—</span>
   }
   const shown = relations.slice(0, 2)
   return (
     <span className="flex flex-col items-start gap-1">
       {shown.map((r) => (
-        <span key={r.id} className="flex w-full min-w-0 items-baseline gap-1 text-xs leading-snug">
+        <span key={r.id} className="flex w-full min-w-0 items-baseline gap-1 text-sm leading-snug">
           <span className="min-w-0 truncate text-fg">{r.subject}</span>
-          <span aria-hidden="true" className="shrink-0 text-faint">—</span>
+          <span aria-hidden="true" className="shrink-0 text-faint">
+            —
+          </span>
           <span className="shrink-0 rounded-sm bg-fg/[0.04] px-1 text-muted">{r.predicate}</span>
-          <span aria-hidden="true" className="shrink-0 text-faint">→</span>
+          <span aria-hidden="true" className="shrink-0 text-faint">
+            →
+          </span>
           <span className="min-w-0 truncate text-fg">{r.object}</span>
         </span>
       ))}
@@ -219,7 +168,7 @@ function RelationList({ relations }: { relations: ChunkRelationItem[] }) {
             .slice(2)
             .map((r) => `${r.subject} —${r.predicate}→ ${r.object}`)
             .join('\n')}
-          className="text-xs text-faint"
+          className="text-sm text-faint"
         >
           +{relations.length - shown.length} 条
         </span>
@@ -227,6 +176,12 @@ function RelationList({ relations }: { relations: ChunkRelationItem[] }) {
     </span>
   )
 }
+
+/**
+ * 表头单元格：用 .ui-label 让「全大写 + 大字距」由主题排印层决定
+ * （Endfield 会变成等宽全大写的仪器表头，flat / BA 保持常规小标签）。
+ */
+const TH = 'ui-label px-4 py-2.5 text-left'
 
 /** chunk 子表：ID / 创建时间 / 状态 / 实体 / 关系 / 操作 */
 function ChunkTable({
@@ -247,105 +202,112 @@ function ChunkTable({
   onDelete: (chunk: ChunkItem) => void
 }) {
   if (loading && !chunks) {
-    return <p className="py-6 text-center text-xs text-faint">加载 chunk …</p>
+    return <p className="py-6 text-center text-sm text-faint">加载 chunk …</p>
   }
   if (!chunks || chunks.length === 0) {
-    return <p className="py-6 text-center text-xs text-faint">该文档下没有 chunk</p>
+    return <p className="py-6 text-center text-sm text-faint">该文档下没有 chunk</p>
   }
   return (
-    <table className="w-full table-fixed text-left text-xs">
-      <colgroup>
-        <col className="w-14" />
-        <col className="w-36" />
-        <col className="w-20" />
-        <col className="w-[24%]" />
-        <col className="w-[28%]" />
-        <col className="w-72" />
-      </colgroup>
-      <thead>
-        <tr className="border-b border-line bg-fg/[0.03] text-faint">
-          <th className="py-2 pr-3 pl-4 font-medium">ID</th>
-          <th className="py-2 px-3 font-medium">创建时间</th>
-          <th className="py-2 px-3 font-medium">状态</th>
-          <th className="py-2 px-3 font-medium">实体</th>
-          <th className="py-2 px-3 font-medium">关系</th>
-          <th className="py-2 pr-4 text-right font-medium">操作</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-line">
-        {chunks.map((c) => (
-          <tr key={c.id} className={`align-top ${c.status === 'disabled' ? 'opacity-50' : ''}`}>
-            <td className="py-2.5 pr-3 pl-4 font-mono text-faint" title={c.title ?? undefined}>
-              {c.id}
-            </td>
-            <td className="py-2.5 px-3 font-mono text-muted">{fmtTime(c.createdAt)}</td>
-            <td className="py-2.5 px-3">
-              <ChunkStatusBadge status={c.status} />
-            </td>
-            <td className="py-2.5 px-3">
-              <EntityPills entities={c.entities} />
-            </td>
-            <td className="py-2.5 px-3">
-              <RelationList relations={c.relations} />
-            </td>
-            <td className="py-2.5 pr-4 text-right">
-              <span className="inline-flex items-center justify-end gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onInspect(c)}
-                  title="查看 chunk 原文"
-                  className={miniBtn}
-                >
-                  查看
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onExtract(c)}
-                  title="进入步骤 2：对该 chunk 做知识提取（已分析块可重新提取）"
-                  className={miniBtn}
-                >
-                  知识提取
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onToggleStatus(c)}
-                  disabled={busyId === c.id || c.status === 'unanalyzed'}
-                  title={
-                    c.status === 'unanalyzed'
-                      ? '未分析块需先完成步骤 2 知识提取与步骤 3 增强'
-                      : c.status === 'enabled'
-                        ? '禁用该 chunk（检索时跳过）'
-                        : '启用该 chunk'
-                  }
-                  className={miniBtn}
-                >
-                  {busyId === c.id ? '…' : c.status === 'enabled' ? '禁用' : '启用'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(c)}
-                  title="删除 chunk（连带其承载的关系与向量/实体链接）"
-                  className={`${miniBtn} border-transparent text-hint hover:border-hint/40 hover:bg-hint/5 hover:text-hint`}
-                >
-                  删除
-                </button>
-              </span>
-            </td>
+    <div className="scrollbar-slim overflow-x-auto">
+      <table className="w-full table-fixed text-left text-sm">
+        <colgroup>
+          <col className="w-14" />
+          <col className="w-36" />
+          <col className="w-20" />
+          <col className="w-[24%]" />
+          <col className="w-[28%]" />
+          <col className="w-72" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-line">
+            <th className={TH}>ID</th>
+            <th className={TH}>创建时间</th>
+            <th className={TH}>状态</th>
+            <th className={TH}>实体</th>
+            <th className={TH}>关系</th>
+            <th className={`${TH} text-right`}>操作</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {chunks.map((c) => (
+            <tr
+              key={c.id}
+              className={`align-top transition hover:bg-accent-soft ${
+                c.status === 'disabled' ? 'opacity-50' : ''
+              }`}
+            >
+              <td className="mono py-2.5 pr-3 pl-4 text-faint" title={c.title ?? undefined}>
+                {c.id}
+              </td>
+              <td className="mono py-2.5 px-3 text-muted">{fmtTime(c.createdAt)}</td>
+              <td className="py-2.5 px-3">
+                <ChunkStatusBadge status={c.status} />
+              </td>
+              <td className="py-2.5 px-3">
+                <EntityPills entities={c.entities} />
+              </td>
+              <td className="py-2.5 px-3">
+                <RelationList relations={c.relations} />
+              </td>
+              <td className="py-2.5 pr-4 text-right">
+                <span className="inline-flex items-center justify-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onInspect(c)}
+                    title="查看 chunk 原文"
+                    className={miniBtn}
+                  >
+                    查看
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onExtract(c)}
+                    title="进入步骤 2：对该 chunk 做知识提取（已分析块可重新提取）"
+                    className={miniBtn}
+                  >
+                    知识提取
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleStatus(c)}
+                    disabled={busyId === c.id || c.status === 'unanalyzed'}
+                    title={
+                      c.status === 'unanalyzed'
+                        ? '未分析块需先完成步骤 2 知识提取与步骤 3 增强'
+                        : c.status === 'enabled'
+                          ? '禁用该 chunk（检索时跳过）'
+                          : '启用该 chunk'
+                    }
+                    className={miniBtn}
+                  >
+                    {busyId === c.id ? '…' : c.status === 'enabled' ? '禁用' : '启用'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(c)}
+                    title="删除 chunk（连带其承载的关系与向量/实体链接）"
+                    className={`${miniBtn} border-transparent text-hint hover:border-hint/40 hover:bg-hint/5 hover:text-hint`}
+                  >
+                    删除
+                  </button>
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
-/** chunk 原文 markdown 元素映射：紧凑排版贴合浮窗宽度（主题令牌随主题切换） */
+/** chunk 原文 markdown 元素映射：字号改用语义刻度（不再写死 px），随主题字号谱系 */
 const MD_COMPONENTS = {
-  h1: (p: object) => <h1 className="mb-2 mt-4 text-[15px] font-semibold first:mt-0" {...p} />,
-  h2: (p: object) => <h2 className="mb-2 mt-4 text-[14.5px] font-semibold first:mt-0" {...p} />,
-  h3: (p: object) => <h3 className="mb-2 mt-4 text-[14px] font-semibold first:mt-0" {...p} />,
-  h4: (p: object) => <h4 className="mb-1.5 mt-3 text-[13.5px] font-semibold first:mt-0" {...p} />,
-  h5: (p: object) => <h5 className="mb-1.5 mt-3 text-[13px] font-semibold first:mt-0" {...p} />,
-  h6: (p: object) => <h6 className="mb-1.5 mt-3 text-[13px] font-semibold first:mt-0" {...p} />,
+  h1: (p: object) => <h1 className="ui-heading mt-4 mb-2 text-md first:mt-0" {...p} />,
+  h2: (p: object) => <h2 className="ui-heading mt-4 mb-2 text-md first:mt-0" {...p} />,
+  h3: (p: object) => <h3 className="ui-heading mt-4 mb-2 text-base first:mt-0" {...p} />,
+  h4: (p: object) => <h4 className="ui-heading mt-3 mb-1.5 text-base first:mt-0" {...p} />,
+  h5: (p: object) => <h5 className="ui-heading mt-3 mb-1.5 text-sm first:mt-0" {...p} />,
+  h6: (p: object) => <h6 className="ui-heading mt-3 mb-1.5 text-sm first:mt-0" {...p} />,
   p: (p: object) => <p className="my-2 first:mt-0 last:mb-0" {...p} />,
   a: (p: object) => (
     <a
@@ -364,22 +326,22 @@ const MD_COMPONENTS = {
   ),
   code: ({ className, children, ...rest }: { className?: string; children?: React.ReactNode }) =>
     className?.includes('language-') ? (
-      <code className="font-mono text-[12.5px] leading-6" {...rest}>
+      <code className="font-mono text-sm leading-6" {...rest}>
         {children}
       </code>
     ) : (
-      <code className="bg-fg/5 px-1 py-0.5 font-mono text-[12px]" {...rest}>
+      <code className="rounded-sm bg-fg/5 px-1 py-0.5 font-mono text-sm" {...rest}>
         {children}
       </code>
     ),
   pre: (p: object) => (
     <pre
-      className="scrollbar-slim my-2 overflow-x-auto border border-line bg-fg/[0.03] p-3 font-mono text-[12.5px] leading-6 first:mt-0 last:mb-0"
+      className="scrollbar-slim my-2 overflow-x-auto rounded-sm border border-line bg-fg/[0.03] p-3 font-mono text-sm leading-6 first:mt-0 last:mb-0"
       {...p}
     />
   ),
   table: (p: object) => (
-    <table className="my-2 w-full border-collapse text-[13px] first:mt-0 last:mb-0" {...p} />
+    <table className="my-2 w-full border-collapse text-base first:mt-0 last:mb-0" {...p} />
   ),
   th: (p: object) => (
     <th className="border border-line bg-fg/5 px-2 py-1 text-left font-semibold" {...p} />
@@ -396,13 +358,13 @@ function ChunkInspector({ chunk, onClose }: { chunk: ChunkItem; onClose: () => v
   return (
     <FloatWindow title={`chunk #${chunk.id} · ${chunk.title ?? ''}`} onClose={onClose}>
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-faint">
           <ChunkStatusBadge status={chunk.status} />
-          <span className="font-mono">{fmtTime(chunk.createdAt)}</span>
+          <span className="mono">{fmtTime(chunk.createdAt)}</span>
           <span>父文档 #{chunk.docId}</span>
           <span>{chunk.content.length} 字</span>
         </div>
-        <div className="break-words text-sm leading-relaxed text-fg">
+        <div className="text-base leading-relaxed break-words text-fg">
           <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MD_COMPONENTS}>
             {chunk.content}
           </ReactMarkdown>
@@ -421,6 +383,7 @@ type SummaryState = {
 
 /** 全文概述查看窗：加载中显示 spinner，完成后展示 100~200 字概述（存 documents.contextualizing） */
 function SummaryWindow({ state, onClose }: { state: SummaryState; onClose: () => void }) {
+  const kit = usePageKit()
   return (
     <FloatWindow title={`全文概述 · ${state.doc.title}`} onClose={onClose}>
       {state.loading ? (
@@ -439,16 +402,17 @@ function SummaryWindow({ state, onClose }: { state: SummaryState; onClose: () =>
               strokeLinecap="round"
             />
           </svg>
-          <p className="text-xs">正在通过大模型总结全文 …</p>
+          <p className="text-sm">正在通过大模型总结全文 …</p>
         </div>
       ) : (
-        <p className="text-sm leading-relaxed text-fg">{state.contextualizing}</p>
+        <kit.Note>{state.contextualizing}</kit.Note>
       )}
     </FloatWindow>
   )
 }
 
 export default function Analyze() {
+  const kit = usePageKit()
   const [step, setStep] = useState<1 | 2 | 3>(1)
   /** 步骤 2 上下文（选中 chunk + 父文档标题/概述） */
   const [extractCtx, setExtractCtx] = useState<ExtractCtx | null>(null)
@@ -697,28 +661,37 @@ export default function Analyze() {
   }
 
   return (
-    /* stack 布局：步骤条 → 当前步骤内容（页面标题由导航提供，不再重复） */
-    <section className="flex flex-col gap-6 py-8">
+    <kit.Page
+      title="文档分析"
+      en="ANALYZE"
+      meta={<span className="text-sm text-muted">{docs?.length ?? 0} 篇文档</span>}
+    >
       {/* 错误轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
-      <Steps current={step} />
+
+      {/* 步骤条：形态由 kit 决定（圆点连线 / 斜切编号牌 / 发光胶囊链） */}
+      <kit.Steps
+        items={STEP_LABELS.map((label, i) => ({
+          label,
+          state:
+            i + 1 === step ? ('current' as const) : i + 1 < step ? ('done' as const) : ('todo' as const),
+        }))}
+      />
 
       {/* 步骤 1：选择 Chunk */}
       {step === 1 && (
         <div className="flex flex-col gap-4">
-          {/* 工具行：说明 + 新建文档（跳转文档导入页） */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs leading-relaxed text-faint">
-              文档发布后按 markdown 标题与段落自动分块（约 500~800 字，最长 1200），超长段落由 AI
-              语义切分，chunk 初始状态为「未分析」。
-            </p>
-            <a href="#/import" className={btnPrimary('rounded-md')}>
-              新建文档
-            </a>
-          </div>
+          <kit.Toolbar
+            left="文档发布后按 markdown 标题与段落自动分块（约 500~800 字，最长 1200），超长段落由 AI 语义切分，chunk 初始状态为「未分析」。"
+            right={
+              <a href="#/import" className={btnPrimary('rounded-md')}>
+                新建文档
+              </a>
+            }
+          />
 
           {summaryPending !== null && (
-            <p className="flex items-center gap-2 text-xs text-muted">
+            <p className="flex items-center gap-2 text-sm text-muted">
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -738,97 +711,97 @@ export default function Analyze() {
           )}
 
           {docs && docs.length === 0 && (
-            <div className="rounded-md border border-dashed border-line px-6 py-12 text-center">
-              <p className="text-sm text-faint">还没有文档</p>
-              <p className="mt-1.5 text-xs leading-relaxed text-faint">
-                点击右上「新建文档」前往导入页发布，系统将自动分块并建立文档与 chunk 的父子关系。
-              </p>
-            </div>
+            <kit.Empty>
+              还没有文档 —— 点击右上「新建文档」前往导入页发布，系统将自动分块并建立文档与 chunk
+              的父子关系。
+            </kit.Empty>
           )}
 
           {docs && docs.length > 0 && (
-            <div className="scrollbar-slim overflow-x-auto rounded-md border border-line">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-line bg-fg/[0.03] text-xs text-faint">
-                    <th className="w-1/2 px-4 py-2.5 font-medium">标题</th>
-                    <th className="px-4 py-2.5 font-medium">状态</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Chunk 数</th>
-                    <th className="whitespace-nowrap px-4 py-2.5 text-right font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {docs.map((doc) => {
-                    const isOpen = !!openDocs[doc.id]
-                    return (
-                      <Fragment key={doc.id}>
-                        <tr
-                          onClick={() => toggleDoc(doc)}
-                          aria-expanded={isOpen}
-                          className="cursor-pointer transition hover:bg-fg/[0.03]"
-                        >
-                          <td className="px-4 py-3">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <Chevron open={isOpen} />
-                              <span className="truncate font-medium text-fg">{doc.title}</span>
-                              <DocTypeBadge type={doc.docType} />
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <DocStatusBadge doc={doc} />
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono text-xs text-muted">
-                            {doc.chunkCount}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className="inline-flex items-center justify-end gap-1.5">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void rechunkDocFlow(doc)
-                                }}
-                                disabled={rechunkBusy === doc.id}
-                                title="重新分块：已启用旧块先禁用并从向量库移除，再按当前规则重切"
-                                className={miniBtn}
-                              >
-                                {rechunkBusy === doc.id ? '…' : '重新分块'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void openSummary(doc)
-                                }}
-                                title="查看/生成全文摘要（100~200 字）与文档类型标签"
-                                className={miniBtn}
-                              >
-                                摘要
-                              </button>
-                            </span>
-                          </td>
-                        </tr>
-                        {isOpen && (
-                          <tr className="bg-fg/[0.02]">
-                            <td colSpan={4} className="p-0">
-                              <ChunkTable
-                                chunks={chunksCache[doc.id]}
-                                loading={loadingDoc === doc.id}
-                                busyId={busyChunk}
-                                onInspect={setInspect}
-                                onToggleStatus={(c) => void toggleChunkStatus(c)}
-                                onExtract={(c) => gotoExtract(c, doc)}
-                                onDelete={(c) => void removeChunk(c)}
-                              />
+            <kit.Panel title="文档列表" meta={`${docs.length} 篇`}>
+              <div className="scrollbar-slim -mx-3.5 overflow-x-auto">
+                <table className="w-full text-left text-base">
+                  <thead>
+                    <tr className="border-b border-line">
+                      <th className={`${TH} w-1/2`}>标题</th>
+                      <th className={TH}>状态</th>
+                      <th className={`${TH} text-right`}>Chunk 数</th>
+                      <th className={`${TH} text-right whitespace-nowrap`}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {docs.map((doc) => {
+                      const isOpen = !!openDocs[doc.id]
+                      return (
+                        <Fragment key={doc.id}>
+                          <tr
+                            onClick={() => toggleDoc(doc)}
+                            aria-expanded={isOpen}
+                            className="cursor-pointer transition hover:bg-accent-soft"
+                          >
+                            <td className="px-4 py-3">
+                              <span className="flex min-w-0 items-center gap-2">
+                                <Chevron open={isOpen} />
+                                <span className="truncate font-semibold text-fg">{doc.title}</span>
+                                <DocTypeBadge type={doc.docType} />
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <DocStatusBadge doc={doc} />
+                            </td>
+                            <td className="mono px-4 py-3 text-right text-sm text-muted">
+                              {doc.chunkCount}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <span className="inline-flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void rechunkDocFlow(doc)
+                                  }}
+                                  disabled={rechunkBusy === doc.id}
+                                  title="重新分块：已启用旧块先禁用并从向量库移除，再按当前规则重切"
+                                  className={miniBtn}
+                                >
+                                  {rechunkBusy === doc.id ? '…' : '重新分块'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void openSummary(doc)
+                                  }}
+                                  title="查看/生成全文摘要（100~200 字）与文档类型标签"
+                                  className={miniBtn}
+                                >
+                                  摘要
+                                </button>
+                              </span>
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          {isOpen && (
+                            <tr className="bg-fg/[0.02]">
+                              <td colSpan={4} className="p-0">
+                                <ChunkTable
+                                  chunks={chunksCache[doc.id]}
+                                  loading={loadingDoc === doc.id}
+                                  busyId={busyChunk}
+                                  onInspect={setInspect}
+                                  onToggleStatus={(c) => void toggleChunkStatus(c)}
+                                  onExtract={(c) => gotoExtract(c, doc)}
+                                  onDelete={(c) => void removeChunk(c)}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </kit.Panel>
           )}
         </div>
       )}
@@ -845,9 +818,7 @@ export default function Analyze() {
       {inspect && <ChunkInspector chunk={inspect} onClose={() => setInspect(null)} />}
 
       {/* 全文摘要窗（可拖动） */}
-      {summaryWin && (
-        <SummaryWindow state={summaryWin} onClose={() => setSummaryWin(null)} />
-      )}
-    </section>
+      {summaryWin && <SummaryWindow state={summaryWin} onClose={() => setSummaryWin(null)} />}
+    </kit.Page>
   )
 }

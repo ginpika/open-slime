@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Prop, PropType } from '../api/client'
 import Toast from './Toast'
+import { btnPrimary, btnQuiet, miniBtn } from './ui'
 
 /**
  * KV 附加数据编辑器（实体卡片 / 边卡片共用）：
@@ -21,7 +22,7 @@ function PropValue({ p }: { p: Prop }) {
         target="_blank"
         rel="noreferrer"
         title={p.v}
-        className="block truncate text-[12px] text-faint underline underline-offset-4 transition hover:text-fg"
+        className="block truncate text-sm text-faint underline underline-offset-4 transition hover:text-fg"
       >
         {p.v}
       </a>
@@ -29,7 +30,7 @@ function PropValue({ p }: { p: Prop }) {
   }
   if (p.t === 'bool') {
     return (
-      <span className={`text-[12px] ${boolOf(p.v) ? 'text-fg' : 'text-faint'}`}>
+      <span className={`text-sm ${boolOf(p.v) ? 'text-fg' : 'text-faint'}`}>
         {boolOf(p.v) ? '✓ 是' : '✗ 否'}
       </span>
     )
@@ -37,19 +38,16 @@ function PropValue({ p }: { p: Prop }) {
   return (
     <span
       title={p.v}
-      className={`block truncate text-right text-[12px] text-fg ${p.t === 'number' ? 'font-mono' : ''}`}
+      className={`block truncate text-right text-sm text-fg ${p.t === 'number' ? 'font-mono' : ''}`}
     >
       {p.v || <span className="text-faint">—</span>}
     </span>
   )
 }
 
+/* 行内小输入框：形状随主题（Endfield 下自动切角），focus 描边走点缀色令牌 */
 const inputCls =
-  'min-w-0 rounded-md border border-line bg-bg px-1.5 py-1 text-[11px] text-fg outline-none transition focus:border-secondary'
-const btnGhost =
-  'rounded-full border border-line px-2.5 py-1 text-[11px] text-muted transition hover:border-line-strong hover:text-fg'
-const btnSolid =
-  'rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-accent-fg transition hover:opacity-80 disabled:opacity-50'
+  'min-w-0 rounded-md border border-line bg-bg px-1.5 py-1 text-xs text-fg outline-none transition focus:border-accent'
 
 type Props = {
   props: Prop[]
@@ -89,22 +87,18 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
     return (
       <div className="mt-3">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">Props</p>
-          <button
-            type="button"
-            onClick={startEdit}
-            className="text-[11px] text-faint underline underline-offset-4 transition hover:text-fg"
-          >
+          <p className="ui-label">Props</p>
+          <button type="button" onClick={startEdit} className={miniBtn}>
             编辑
           </button>
         </div>
         {props.length === 0 && (readOnlyProps?.length ?? 0) === 0 ? (
-          <p className="mt-2 text-[11px] text-faint">暂无附加数据。</p>
+          <p className="mt-2 text-xs text-faint">暂无附加数据。</p>
         ) : (
           <ul className="mt-1.5 space-y-1">
             {(readOnlyProps ?? []).map((p) => (
               <li key={p.k} className="flex min-w-0 items-baseline justify-between gap-2">
-                <span className="shrink-0 text-[12px] text-faint">{p.k}</span>
+                <span className="shrink-0 text-sm text-faint">{p.k}</span>
                 <span className="min-w-0 flex-1">
                   <PropValue p={p} />
                 </span>
@@ -112,7 +106,7 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
             ))}
             {props.map((p) => (
               <li key={p.k} className="flex min-w-0 items-baseline justify-between gap-2">
-                <span className="shrink-0 text-[12px] text-muted">{p.k}</span>
+                <span className="shrink-0 text-sm text-muted">{p.k}</span>
                 <span className="min-w-0 flex-1">
                   <PropValue p={p} />
                 </span>
@@ -133,12 +127,12 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
       {/* 保存失败轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
       <div className="flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">Props</p>
+        <p className="ui-label">Props</p>
         <button
           type="button"
           onClick={() => setDraft((prev) => [...prev, { k: '', v: '', t: 'text' }])}
           disabled={draft.length >= 32}
-          className="text-[11px] text-faint underline underline-offset-4 transition hover:text-fg disabled:opacity-50"
+          className={miniBtn}
         >
           + 添加
         </button>
@@ -186,7 +180,7 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
               type="button"
               onClick={() => setDraft((prev) => prev.filter((_, j) => j !== i))}
               aria-label="删除该行"
-              className="shrink-0 px-0.5 text-[13px] leading-none text-faint transition hover:text-fg"
+              className="shrink-0 px-0.5 text-[13px] leading-none text-faint transition hover:text-danger"
             >
               ×
             </button>
@@ -194,10 +188,15 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
         ))}
       </ul>
       <div className="mt-2 flex gap-1.5">
-        <button type="button" onClick={() => void save()} disabled={saving} className={btnSolid}>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving}
+          className={btnPrimary('rounded-sm')}
+        >
           {saving ? '保存中…' : '保存'}
         </button>
-        <button type="button" onClick={() => setEditing(false)} className={btnGhost}>
+        <button type="button" onClick={() => setEditing(false)} className={btnQuiet('rounded-sm')}>
           取消
         </button>
       </div>

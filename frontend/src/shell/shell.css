@@ -1,0 +1,332 @@
+/* ============================================================================
+ * 外壳 kit 专属样式
+ * 只放"无法用令牌表达"的部分：背景层构图、刻度带、跑马灯、切角裁切、动效编排。
+ * 颜色一律取自令牌，因此仍然随主题自适应。
+ * ========================================================================= */
+
+/* --------------------------------------------------------------- 背景层 */
+
+.sh-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 技术网格显影区（Endfield）：只显影在视口下方 30%，上缘渐隐（工程图的地平基准带）
+   内部网格层外扩 120px 作平移余量，沿对角线钟摆漂移 */
+.sh-gridzone {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 55%, #000 72%);
+  mask-image: linear-gradient(to bottom, transparent 55%, #000 72%);
+}
+
+/* 技术网格：96px 细格 + 480px 粗格；粗格交叉点带注册节点，
+   每个细格内一条左上→右下的对角填充线（工程制图的剖面线画法） */
+.sh-bggrid {
+  position: absolute;
+  inset: -120px;
+  background-image:
+    radial-gradient(
+      circle at 1px 1px,
+      color-mix(in srgb, var(--c-fg) 22%, transparent) 1.3px,
+      transparent 1.6px
+    ),
+    linear-gradient(color-mix(in srgb, var(--c-fg) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--c-fg) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(
+      to bottom right,
+      transparent calc(50% - 0.5px),
+      color-mix(in srgb, var(--c-fg) 8%, transparent) 50%,
+      transparent calc(50% + 0.5px)
+    ),
+    linear-gradient(color-mix(in srgb, var(--c-fg) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--c-fg) 3.5%, transparent) 1px, transparent 1px);
+  background-size:
+    480px 480px,
+    480px 480px,
+    480px 480px,
+    96px 96px,
+    96px 96px,
+    96px 96px;
+  animation: sh-grid-drift 12s ease-in-out infinite alternate;
+}
+/* alternate 让动画到终点后原路缓回，形成"漂过去再漂回来"的钟摆感 */
+@keyframes sh-grid-drift {
+  from {
+    transform: translate3d(-90px, -90px, 0);
+  }
+  to {
+    transform: translate3d(90px, 90px, 0);
+  }
+}
+
+/* 辐射辉光（Endfield 深档）：黄 / 青 两处光源 + 暗角，让玻璃"有东西可糊" */
+.sh-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(80% 55% at 82% -6%, rgb(255 212 0 / .13), transparent 60%),
+    radial-gradient(60% 45% at 6% 104%, rgb(95 216 255 / .08), transparent 62%),
+    radial-gradient(120% 80% at 50% 50%, transparent 40%, rgb(0 0 0 / .5) 100%);
+}
+
+/* 线框球（Endfield 全息母题） */
+.sh-orb {
+  position: absolute;
+  right: -12%;
+  top: -18%;
+  width: 58vw;
+  height: 58vw;
+  max-width: 920px;
+  max-height: 920px;
+  opacity: 0.3;
+  animation: sh-spin 120s linear infinite;
+}
+@keyframes sh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 地形等高线（Endfield 深档） */
+.sh-topo {
+  position: absolute;
+  left: -6%;
+  bottom: -10%;
+  width: 60vw;
+  height: 46vw;
+  opacity: 0.28;
+}
+
+/* 噪点颗粒（Endfield）：磨砂金属质感，两档混合模式不同 */
+.sh-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 净空层（Endfield 首页标题区）：底色径向光晕，把背景全息噪声让开，
+   裸排的标题才有层级；其它主题下退化为几乎不可见的同色光晕 */
+.sh-clear {
+  background: radial-gradient(
+    58% 64% at 50% 48%,
+    color-mix(in srgb, var(--c-bg) 84%, transparent),
+    transparent 74%
+  );
+}
+
+/* CRT 细扫描线（Endfield 深档） */
+.sh-raster {
+  position: absolute;
+  inset: 0;
+  opacity: 0.32;
+  background: repeating-linear-gradient(0deg, rgb(0 0 0 / .3) 0 1px, transparent 1px 3px);
+}
+
+/* 登记簿 B · 印刷体：隐藏全部全息显影，只留极淡网格与噪点（demo body.light）。
+   复合 [data-theme] 限定作用域——这些类目前只有 Endfield 外壳渲染，
+   但按主题+明暗分支声明，避免其他主题将来复用同类名时误伤 */
+[data-theme='endfield'][data-scheme='light'] .sh-orb,
+[data-theme='endfield'][data-scheme='light'] .sh-topo,
+[data-theme='endfield'][data-scheme='light'] .sh-raster,
+[data-theme='endfield'][data-scheme='light'] .sh-glow {
+  display: none;
+}
+[data-theme='endfield'][data-scheme='light'] .sh-grain {
+  mix-blend-mode: multiply;
+  opacity: 0.045;
+}
+
+/* 粉彩光斑（BlueArchive） */
+.sh-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(76px);
+  opacity: 0.5;
+}
+
+/* 网点装饰（BlueArchive 波普） */
+.sh-dots {
+  position: absolute;
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--c-accent) 34%, transparent) 1.6px,
+    transparent 1.8px
+  );
+  background-size: 9px 9px;
+}
+
+/* ------------------------------------------------------------- 跑马灯 */
+
+.sh-marquee {
+  display: flex;
+  white-space: nowrap;
+  animation: sh-marq 36s linear infinite;
+}
+@keyframes sh-marq {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* 条码（Endfield 顶栏装饰） */
+.sh-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sh-bar i {
+  display: block;
+  background: var(--c-fg-2);
+  opacity: 0.75;
+}
+
+/* --------------------------------------------------------------- 形状 */
+
+/* 小切角：Endfield 的导航项 / 按钮 / 标签复用同一个 clip */
+.sh-cut-sm {
+  clip-path: var(--ui-clip-sm, none);
+}
+
+/* 发光 L 角标（Endfield）：打在未被切角的两个角上 */
+.sh-brk {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.sh-brk i {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--c-accent);
+}
+.sh-brk i:nth-child(1) {
+  right: 5px;
+  top: 5px;
+  border-left: 0;
+  border-bottom: 0;
+}
+.sh-brk i:nth-child(2) {
+  left: 5px;
+  bottom: 5px;
+  border-right: 0;
+  border-top: 0;
+}
+.sh-brk.tl-br i:nth-child(1) {
+  left: 5px;
+  top: 5px;
+  right: auto;
+  border: 2px solid var(--c-accent);
+  border-right: 0;
+  border-bottom: 0;
+}
+.sh-brk.tl-br i:nth-child(2) {
+  right: 5px;
+  bottom: 5px;
+  left: auto;
+  border: 2px solid var(--c-accent);
+  border-left: 0;
+  border-top: 0;
+}
+/* 面板底缘封警戒带（sh-hazard，1px 环 + 8px 带高）时，左下角标抬到带的上方避让 */
+.sh-brk.lift-bl i:nth-child(2) {
+  bottom: 14px;
+}
+/* 角标光晕只在深档（玻璃 HUD）存在；印刷体档角标干干净净。
+   复合 [data-theme] 限定：硬编码的黄光晕是 Endfield 设计语言，不应外溢 */
+[data-theme='endfield'][data-scheme='dark'] .sh-brk i {
+  box-shadow: 0 0 10px rgb(255 212 0 / .45);
+}
+
+/* 斜纹警戒带（Endfield）：黄黑 / 红黑，两档登记簿同色（黑固定，不随主题反转） */
+.sh-hazard {
+  height: 8px;
+  background: repeating-linear-gradient(-45deg, var(--c-accent) 0 6px, #0a0b0c 6px 12px);
+}
+.sh-hazard-r {
+  height: 8px;
+  background: repeating-linear-gradient(-45deg, var(--c-danger) 0 6px, #0a0b0c 6px 12px);
+}
+.sh-hazard-v {
+  width: 6px;
+  align-self: stretch;
+  background: repeating-linear-gradient(-45deg, var(--c-accent) 0 4px, #0a0b0c 4px 8px);
+}
+.sh-hazard-r-v {
+  width: 6px;
+  align-self: stretch;
+  background: repeating-linear-gradient(-45deg, var(--c-danger) 0 4px, #0a0b0c 4px 8px);
+}
+
+/* 机械闪烁（Endfield）：steps() 硬切，不用透明度渐变 */
+.sh-blink {
+  animation: sh-blink 1.5s steps(1, end) infinite;
+}
+@keyframes sh-blink {
+  0%,
+  62% {
+    opacity: 1;
+  }
+  63%,
+  100% {
+    opacity: 0.2;
+  }
+}
+
+/* ------------------------------------------------- Endfield 交互态补丁 */
+/* 说明：按钮工业风体系（4px 圆角 / 实底变体 / 混白提亮）、控件微圆角、
+   --ui-clip-sm 弃切角均已回迁 layers.ts 登记簿（endfieldShape / endfieldBtn），
+   本区仅保留无法令牌化的 utilities 层压制规则。 */
+
+/* 图标钮：不参与工业方角化（圆形语义由调用处 rounded-full 提供）；
+   压掉部分图标钮（如顶栏头像）组件级 border border-line 的灰描边——
+   无层规则可同时压制 utilities 层的 hover:border-line-strong；
+   伪元素跟随宿主圆角已由原语层 ::before/::after 的 inherit 统一解决 */
+[data-theme='endfield'] .ui-btn--icon {
+  border-color: transparent;
+}
+
+/* Toast 铭牌换装（Endfield）：浅档 = 纯白底 + 黑左缘 + 印刷硬偏移影（--ui-e1）；
+   深档 = 炭底 #1C1B1D + 点缀色左缘与轻微光晕描边（--ui-e2，罗德岛档自动换蓝晕）。
+   无层规则压制 utilities 层的 bg-bg/95 / border-l-* / shadow-lg（同区惯例） */
+[data-theme='endfield'] .toast-card {
+  background: #fff;
+  border-left-color: #0a0b0c;
+  box-shadow: var(--ui-e1);
+}
+[data-theme='endfield'][data-scheme='dark'] .toast-card {
+  background: #1c1b1d;
+  border-left-color: var(--c-accent);
+  box-shadow: var(--ui-e2);
+}
+
+/* 顶部发光的当前项指示条（BlueArchive 底部/顶部导航共用） */
+.sh-glowbar::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 3px;
+  border-radius: 99px;
+  background: var(--c-accent);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--c-accent) 70%, transparent);
+}
+
+/* 呼吸光晕（BlueArchive 主行动） */
+@keyframes sh-breathe {
+  0%,
+  100% {
+    box-shadow: var(--ui-e3, none);
+  }
+  50% {
+    box-shadow: var(--ui-e5, none);
+  }
+}

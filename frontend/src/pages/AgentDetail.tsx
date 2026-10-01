@@ -10,8 +10,8 @@
  * <b>工作空间</b>（绑定 {@code term_target}；绑了才授予 {@code run_command} / {@code list_terminals}，
  * 且只能访问绑定的这几台）。它与左侧资料共用同一份草稿，因此只有一个保存动作。
  *
- * <p>三个动作各归其位：<b>返回上级</b>在面包屑左侧（回成员列表，取代了原先的「取消」按钮）；
- * <b>保存</b>在面包屑那一行的最右端（微小圆角，与导航同处一行，不占正文也不悬空）；
+ * <p>三个动作各归其位：<b>返回上级</b>在页头左侧（回成员列表，取代了原先的「取消」按钮）；
+ * <b>保存</b>在页头那一行的最右端（与导航同处一行，不占正文也不悬空）；
  * <b>移出圆桌</b>收在左侧资料卡片底部（成员的破坏性动作，与右栏 tab 无关）。
  *
  * <p>提示词面板由 {@link PromptsPanel}（传 {@code peerId}）承载：版本、生效项、拼装顺序都落在
@@ -40,11 +40,13 @@ import {
   type TerminalTarget,
 } from '../api/client'
 import { btnOutline, btnPrimary, btnQuiet, miniBtn } from '../components/ui'
-import { Field, INPUT, Select } from '../components/formKit'
+import { Select } from '../components/formKit'
+import { Card, CardHead } from '../components/Card'
 import GraphMini from '../components/GraphMini'
 import PageBoundary from '../components/PageBoundary'
 import PeerAvatar from '../components/PeerAvatar'
 import Toast from '../components/Toast'
+import { usePageKit } from '../kit'
 import PromptsPanel from './PromptsPanel'
 
 /** 路径末段用 new 表示「新建成员」（成员 id 是 uuid，不会撞） */
@@ -97,19 +99,21 @@ function PickCard({
   description?: string
   onToggle: () => void
 }) {
+  const kit = usePageKit()
   return (
     <button
       type="button"
       title={description}
       onClick={onToggle}
       className={`flex flex-col gap-1.5 rounded-xl border p-3 text-left transition ${
-        checked ? 'border-secondary bg-secondary/10' : 'border-line hover:border-line-strong'
+        checked ? 'border-accent bg-accent-soft' : 'border-line hover:border-line-strong'
       }`}
     >
       <span className="flex w-full items-center gap-2">
         <span
-          className={`h-3.5 w-3.5 shrink-0 rounded-[4px] border ${
-            checked ? 'border-secondary bg-secondary' : 'border-line-strong'
+          className={`h-3.5 w-3.5 shrink-0 rounded-[4px] border transition ${
+            /* 选中格补一枚主题光晕：shadow-md 在终末地映射为黄光晕 */
+            checked ? 'border-accent bg-accent shadow-md' : 'border-line-strong'
           }`}
         />
         <span
@@ -119,11 +123,7 @@ function PickCard({
         >
           {title}
         </span>
-        {badge && (
-          <span className="shrink-0 rounded-md bg-fg/5 px-1.5 py-0.5 font-mono text-[10px] text-muted">
-            {badge}
-          </span>
-        )}
+        {badge && <kit.Badge>{badge}</kit.Badge>}
       </span>
       {description && (
         <span className="line-clamp-3 text-[11px] leading-snug text-hint">{description}</span>
@@ -201,6 +201,7 @@ function PeerAnchorPanel({
   peerName: string
   notify: (msg: string, kind?: 'ok' | 'err') => void
 }) {
+  const kit = usePageKit()
   const [view, setView] = useState<MaPeerAnchor | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -257,8 +258,8 @@ function PeerAnchorPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-[14px] font-semibold text-fg">图谱人格锚点</h2>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
+          <h2 className="ui-heading text-md">图谱人格锚点</h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
             把这位智能体钉在知识图谱的一个锚点实体上——与系统预置的「用户」锚点同一套机制。
             模型会把它的人设、知识、立场这些关系挂在这个锚点上，这就是它的第一人称坐标。
           </p>
@@ -276,12 +277,10 @@ function PeerAnchorPanel({
       </div>
 
       {loading ? (
-        <p className="text-[12px] text-hint">载入锚点…</p>
+        <p className="text-xs text-hint">载入锚点…</p>
       ) : !anchor ? (
-        <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-line px-4 py-6">
-          <p className="text-[12px] leading-relaxed text-muted">
-            还没有锚点。建立后会以「{peerName}」为名在图谱里新建一个锚点实体。
-          </p>
+        <div className="flex flex-col items-start gap-3">
+          <kit.Empty>还没有锚点。建立后会以「{peerName}」为名在图谱里新建一个锚点实体。</kit.Empty>
           <button
             type="button"
             className={btnPrimary('rounded-lg')}
@@ -293,13 +292,9 @@ function PeerAnchorPanel({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-[12px]">
-            <span className="rounded-md border border-line px-2 py-0.5 font-medium text-fg">
-              {anchor.name}
-            </span>
-            <span className="rounded-md bg-fg/5 px-2 py-0.5 font-mono text-[10.5px] text-muted">
-              {anchor.type}
-            </span>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <kit.Badge tone="accent">{anchor.name}</kit.Badge>
+            <kit.Badge>{anchor.type}</kit.Badge>
             <span className="text-hint">
               一跳邻居 {Math.max(graph.nodes.length - 1, 0)} 个 · 关系 {graph.edges.length} 条
             </span>
@@ -327,6 +322,7 @@ function PeerAnchorPanel({
 }
 
 export default function AgentDetail({ peerId }: { peerId: string }) {
+  const kit = usePageKit()
   const isNew = peerId === NEW_ID
   const [peer, setPeer] = useState<MaPeer | null>(null)
   const [loading, setLoading] = useState(true)
@@ -495,152 +491,154 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
   }
 
   if (loading) {
-    return <p className="pt-10 text-[12.5px] text-hint">载入成员资料…</p>
+    return (
+      <kit.Page title={isNew ? '新建成员' : '成员'} en="AGENT">
+        <p className="text-sm text-hint">载入成员资料…</p>
+      </kit.Page>
+    )
   }
 
   if (!isNew && !peer) {
     return (
-      <section className="flex flex-col gap-4 pt-6">
-        <p className="text-[13px] text-muted">这位成员不存在，或已被移出圆桌。</p>
+      <kit.Page title="成员" en="AGENT">
+        <kit.Empty>这位成员不存在，或已被移出圆桌。</kit.Empty>
         <a href="#/multi-agent" className={`${btnOutline('rounded-lg')} self-start`}>
           返回成员列表
         </a>
-      </section>
+      </kit.Page>
     )
   }
 
   const preview = draft?.name ?? peer?.name ?? ''
 
   return (
-    <section className="flex flex-col gap-5 pt-6 pb-4">
-      {/* 返回上级 + 面包屑：内部页从成员页进来，给一条明确的回路（原先的「取消」按钮由它取代）；
-          保存按钮挂这一行最右端，与导航同处一行，不占正文也不悬空 */}
-      <div className="flex items-center gap-3">
-        <a href="#/multi-agent" className={`${miniBtn} gap-1`} title="返回多智能体成员列表">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-            <path
-              d="M15 6l-6 6 6 6"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          返回上级
-        </a>
-        <nav className="flex items-center gap-2 text-[12px]">
-          <a href="#/multi-agent" className="text-muted transition hover:text-fg">
-            多智能体
+    <kit.Page
+      title={isNew ? '新建成员' : (peer?.name ?? '成员')}
+      en="AGENT"
+      meta={
+        /* 返回上级给一条明确的回路（原先的「取消」按钮由它取代）；保存挂页头最右端，
+           与导航同处一行，不占正文也不悬空 */
+        <span className="flex items-center gap-2.5">
+          <a href="#/multi-agent" className={miniBtn} title="返回多智能体成员列表">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
+              <path
+                d="M15 6l-6 6 6 6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            返回上级
           </a>
-          <span className="text-hint">/</span>
-          <span className="text-fg">{isNew ? '新建成员' : (peer?.name ?? '')}</span>
-        </nav>
-        <button
-          type="button"
-          className={`ml-auto ${btnPrimary('rounded-sm')}`}
-          disabled={savingProfile}
-          onClick={() => void saveProfile()}
-        >
-          {savingProfile ? '保存中…' : peer ? '保存资料' : '加入圆桌'}
-        </button>
-      </div>
-
+          <button
+            type="button"
+            className={btnPrimary('rounded-sm')}
+            disabled={savingProfile}
+            onClick={() => void saveProfile()}
+          >
+            {savingProfile ? '保存中…' : peer ? '保存资料' : '加入圆桌'}
+          </button>
+        </span>
+      }
+    >
       <PageBoundary>
         <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
           {/* 左：资料 */}
-          <div className="flex h-fit flex-col gap-5 rounded-2xl border border-line p-5">
-            <div className="flex flex-col items-center gap-3">
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                title="点击上传头像"
-                className="group relative shrink-0 cursor-pointer rounded-full"
-              >
-                <PeerAvatar
-                  name={preview || '新'}
-                  avatar={draft?.avatar ?? null}
-                  size="h-28 w-28"
-                  textClass="text-[36px]"
-                />
-                <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-[12px] font-medium text-white opacity-0 transition group-hover:opacity-100">
-                  换头像
-                </span>
-              </button>
-              <div className="flex items-center gap-2">
-                <button type="button" className={miniBtn} onClick={() => fileRef.current?.click()}>
-                  上传头像
-                </button>
-                {draft?.avatar && (
-                  <button
-                    type="button"
-                    className={miniBtn}
-                    onClick={() => setDraft((d) => (d ? { ...d, avatar: null } : d))}
-                  >
-                    移除
-                  </button>
-                )}
-              </div>
-              <p className="text-center text-[11px] text-hint">
-                PNG / JPG，会自动裁成方图并压缩
-              </p>
-            </div>
-
-            <Field label="名字" hint="发言时被 @ 的名字，圆桌上唯一">
-              <input
-                className={INPUT}
-                value={draft?.name ?? ''}
-                placeholder="如：张三"
-                onChange={(e) => setDraft((d) => (d ? { ...d, name: e.target.value } : d))}
-              />
-            </Field>
-
-            <Field label="模型" hint="不指定则跟随设置页默认">
-              <Select
-                value={draft?.modelId ?? ''}
-                onChange={(v) => setDraft((d) => (d ? { ...d, modelId: v } : d))}
-                options={modelOptions}
-              />
-            </Field>
-
-            <Field label="备注" hint="写给人看的一句话，不会注入模型">
-              <textarea
-                className={`${INPUT} min-h-[72px] resize-none`}
-                rows={3}
-                value={draft?.note ?? ''}
-                placeholder="如：负责挑刺的那位"
-                onChange={(e) => setDraft((d) => (d ? { ...d, note: e.target.value } : d))}
-              />
-            </Field>
-
-            {/* 移出圆桌：成员的破坏性动作，收在资料卡片底部（保存按钮已改为右下角悬浮） */}
-            {peer && (
-              <div className="flex flex-col items-start gap-2 border-t border-line pt-4">
+          <Card pad="none" className="h-fit">
+            <CardHead title="资料" />
+            <div className="flex flex-col gap-5 p-5">
+              <div className="flex flex-col items-center gap-3">
                 <button
                   type="button"
-                  className={btnQuiet('rounded-lg')}
-                  onClick={() => void remove()}
+                  onClick={() => fileRef.current?.click()}
+                  title="点击上传头像"
+                  className="group relative shrink-0 cursor-pointer rounded-full"
                 >
-                  移出圆桌
+                  <PeerAvatar
+                    name={preview || '新'}
+                    avatar={draft?.avatar ?? null}
+                    size="h-28 w-28"
+                    textClass="text-[36px]"
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 text-[12px] font-medium text-white opacity-0 transition group-hover:opacity-100">
+                    换头像
+                  </span>
                 </button>
-                <span className="text-[11px] leading-relaxed text-hint">
-                  移出后，它自己那套提示词（版本 / 生效项 / 顺序）会一并清除。
-                </span>
+                <div className="flex items-center gap-2">
+                  <button type="button" className={miniBtn} onClick={() => fileRef.current?.click()}>
+                    上传头像
+                  </button>
+                  {draft?.avatar && (
+                    <button
+                      type="button"
+                      className={miniBtn}
+                      onClick={() => setDraft((d) => (d ? { ...d, avatar: null } : d))}
+                    >
+                      移除
+                    </button>
+                  )}
+                </div>
+                <p className="text-center text-2xs text-hint">
+                  PNG / JPG，会自动裁成方图并压缩
+                </p>
               </div>
-            )}
-          </div>
 
-          {/* 右：能力 / 图谱人格锚点 / 提示词——三块内容都不短，用 tab 切换，免得竖着堆成一条长栏 */}
-          <div className="flex flex-col gap-5 rounded-2xl border border-line p-5">
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-line pb-3">
+              <kit.Field label="名字" hint="发言时被 @ 的名字，圆桌上唯一">
+                <input
+                  value={draft?.name ?? ''}
+                  placeholder="如：张三"
+                  onChange={(e) => setDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                />
+              </kit.Field>
+
+              <kit.Field label="模型" hint="不指定则跟随设置页默认" wrap={false}>
+                <Select
+                  value={draft?.modelId ?? ''}
+                  onChange={(v) => setDraft((d) => (d ? { ...d, modelId: v } : d))}
+                  options={modelOptions}
+                />
+              </kit.Field>
+
+              <kit.Field label="备注" hint="写给人看的一句话，不会注入模型">
+                <textarea
+                  className="min-h-[72px]"
+                  rows={3}
+                  value={draft?.note ?? ''}
+                  placeholder="如：负责挑刺的那位"
+                  onChange={(e) => setDraft((d) => (d ? { ...d, note: e.target.value } : d))}
+                />
+              </kit.Field>
+
+              {/* 移出圆桌：成员的破坏性动作，收在资料卡片底部（不与页头的保存动作抢位置） */}
+              {peer && (
+                <div className="flex flex-col items-start gap-2 border-t border-line pt-4">
+                  <button
+                    type="button"
+                    className={btnQuiet('rounded-lg')}
+                    onClick={() => void remove()}
+                  >
+                    移出圆桌
+                  </button>
+                  <span className="text-2xs leading-relaxed text-hint">
+                    移出后，它自己那套提示词（版本 / 生效项 / 顺序）会一并清除。
+                  </span>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* 右：能力 / 图谱人格锚点 / 提示词——三块内容都不短，用 tab 切换，免得竖着堆成一条长栏。
+              tab 选中 = 主行动钮（黄色实底印章），未选中走安静钮 */}
+          <Card pad="none" className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3.5 pb-2.5 pt-3">
               {RIGHT_TABS.map((t) => (
                 <button
                   key={t.key}
                   type="button"
                   onClick={() => setTab(t.key)}
-                  className={`rounded-md px-3 py-1.5 text-[12.5px] font-medium transition ${
-                    tab === t.key
-                      ? 'bg-accent/10 text-fg'
-                      : 'text-muted hover:bg-fg/5 hover:text-fg'
+                  className={`ui-btn ui-btn--sm ${
+                    tab === t.key ? 'ui-btn--primary' : 'ui-btn--quiet'
                   }`}
                 >
                   {t.label}
@@ -648,22 +646,21 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
               ))}
             </div>
 
+            <div className="p-5">
             {/* 能力：逐成员各配一份——额外可用工具（按业务领域分 Tab）+ 可访问的工作空间（绑了才给终端工具） */}
             {tab === 'cap' && (
               <div className="flex flex-col gap-5">
-                <p className="text-[12.5px] leading-relaxed text-muted">
+                <p className="text-sm leading-relaxed text-muted">
                   在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，
                   且只能访问绑定的这几台。
                 </p>
 
                 <div>
-                  <span className="mb-2 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint">
-                    工作空间
-                  </span>
+                  <span className="ui-label mb-2 block">工作空间</span>
                   {workspaceOptions.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-line px-3 py-4 text-[11.5px] leading-relaxed text-hint">
+                    <kit.Empty>
                       还没有工作空间。先到「工作空间」页添加一个（docker 容器或 SSH 服务器）。
-                    </p>
+                    </kit.Empty>
                   ) : (
                     <div className="scrollbar-slim grid max-h-72 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-2">
                       {workspaceOptions.map((t) => (
@@ -678,22 +675,19 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
                       ))}
                     </div>
                   )}
-                  <span className="mt-2 block text-[11px] text-hint">
+                  <span className="mt-2 block text-xs text-hint">
                     勾选即授予 run_command / list_terminals，且只在这几台上执行。
                   </span>
                 </div>
 
                 <div>
-                  <span className="mb-2 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint">
-                    可用工具
-                  </span>
+                  <span className="ui-label mb-2 block">可用工具</span>
                   {toolGroups.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-line px-3 py-4 text-[11.5px] leading-relaxed text-hint">
-                      没有可额外授予的工具。
-                    </p>
+                    <kit.Empty>没有可额外授予的工具。</kit.Empty>
                   ) : (
                     <div className="flex flex-col gap-2.5">
-                      {/* 业务领域 Tab：角标是「已勾选 / 该领域总数」，一眼看出哪类还空着 */}
+                      {/* 业务领域 Tab：角标是「已勾选 / 该领域总数」，一眼看出哪类还空着。
+                          选中 = 主行动钮（黄底黑字印章），计数等宽显示、空类降透明度（不另着色） */}
                       <div className="flex flex-wrap items-center gap-1.5">
                         {toolGroups.map((g) => {
                           const selected = g.tools.filter((t) =>
@@ -705,17 +699,13 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
                               key={g.key}
                               type="button"
                               onClick={() => setToolDomain(g.key)}
-                              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11.5px] font-medium transition ${
-                                active
-                                  ? 'bg-accent/10 text-fg'
-                                  : 'text-muted hover:bg-fg/5 hover:text-fg'
+                              className={`ui-btn ui-btn--sm ${
+                                active ? 'ui-btn--primary' : 'ui-btn--quiet'
                               }`}
                             >
                               {g.label}
                               <span
-                                className={`rounded px-1 text-[10.5px] ${
-                                  selected > 0 ? 'text-accent' : 'text-hint'
-                                }`}
+                                className={`font-mono ${selected > 0 ? '' : 'opacity-60'}`}
                               >
                                 {selected}/{g.tools.length}
                               </span>
@@ -738,7 +728,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
                       </div>
                     </div>
                   )}
-                  <span className="mt-2 block text-[11px] text-hint">
+                  <span className="mt-2 block text-xs text-hint">
                     只读检索与发言 / 状态机工具始终可用，这里勾的是额外放开的。
                   </span>
                 </div>
@@ -750,9 +740,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
               (peer ? (
                 <PeerAnchorPanel peerId={peer.id} peerName={peer.name} notify={notify} />
               ) : (
-                <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-[12px] text-muted">
-                  先把这位成员加入圆桌，再回来建立它的图谱人格锚点。
-                </p>
+                <kit.Empty>先把这位成员加入圆桌，再回来建立它的图谱人格锚点。</kit.Empty>
               ))}
 
             {/* 提示词 & 上下文工程（与潜意识页那张对话 tab 同一套编排 UI） */}
@@ -764,20 +752,17 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
               ) : (
                 <div className="flex flex-col gap-4">
                   <div className="min-w-0">
-                    <h2 className="text-[14px] font-semibold text-fg">
-                      提示词 &amp; 上下文工程
-                    </h2>
-                    <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
+                    <h2 className="ui-heading text-md">提示词 &amp; 上下文工程</h2>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">
                       每位智能体自己一套「对话」提示词（身份 / 增强 / 终端 / 子代理），
                       与首页对话的全局提示词隔离；「圆桌」那一类是全桌共用的协作规程。
                     </p>
                   </div>
-                  <p className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-[12px] text-muted">
-                    先把这位成员加入圆桌，再回来为它配置自己的提示词。
-                  </p>
+                  <kit.Empty>先把这位成员加入圆桌，再回来为它配置自己的提示词。</kit.Empty>
                 </div>
               ))}
-          </div>
+            </div>
+          </Card>
         </div>
       </PageBoundary>
 
@@ -795,6 +780,6 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
         kind={toast?.kind === 'err' ? 'error' : 'success'}
         onClose={() => setToast(null)}
       />
-    </section>
+    </kit.Page>
   )
 }

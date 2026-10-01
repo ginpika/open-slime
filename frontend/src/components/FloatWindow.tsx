@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useThemeState } from '../theme/store'
 
 /**
  * 可拖动悬浮窗口：标题栏按住拖动（Pointer Events + setPointerCapture），
  * 初始屏幕居中偏上，位置限制在视口内（标题栏始终可见可抓）。Esc 或关闭钮退出。
  * 不带遮罩，可同时操作页面其余部分。
+ *
+ * 窗口样式可被主题换装（哨兵式）：当令牌快照里存在 --ui-win-title-bg
+ * （终末地「工作台」窗口样式档写入，值登记于 layers.ts）时挂
+ * .ui-win-workbench —— 窗口内部 --c-* 切到浅色印刷环境，标题栏换
+ * 深炭底浅字。其他主题无此令牌族，维持默认外观。
  */
 
 type Props = {
@@ -16,6 +22,8 @@ type Props = {
 }
 
 export default function FloatWindow({ title, onClose, children, width = 520 }: Props) {
+  const { vars } = useThemeState()
+  const workbench = !!vars['--ui-win-title-bg']
   // 初始位置：水平居中、垂直 15% 处（挂载时一次性计算）
   const [pos, setPos] = useState(() => ({
     x: Math.max(16, (window.innerWidth - Math.min(width, window.innerWidth * 0.9)) / 2),
@@ -61,15 +69,26 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
       role="dialog"
       aria-modal="false"
       style={{ left: pos.x, top: pos.y, width }}
-      className="fixed z-[60] flex max-h-[70vh] max-w-[90vw] flex-col overflow-hidden rounded-md border border-line bg-bg shadow-xl"
+      className={`fixed z-[60] flex max-h-[70vh] max-w-[90vw] flex-col overflow-hidden rounded-md border border-line bg-bg shadow-xl${
+        workbench ? ' ui-win-workbench' : ''
+      }`}
     >
-      {/* 标题栏：拖动手柄 */}
+      {/* 标题栏：拖动手柄。工作台档换深炭底，并在栏内把 --c-fg 切到
+          标题栏前景——标题文字 / 关闭钮的 text-* 类与 hover 逻辑无需改动 */}
       <div
         onPointerDown={onTitlePointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         className="flex h-9 shrink-0 cursor-grab touch-none select-none items-center justify-between gap-2 border-b border-line bg-fg/[0.03] pl-3.5 pr-2 active:cursor-grabbing"
+        style={
+          workbench
+            ? ({
+                background: 'var(--ui-win-title-bg)',
+                '--c-fg': 'var(--ui-win-title-fg)',
+              } as CSSProperties)
+            : undefined
+        }
       >
         <div className="min-w-0 truncate text-xs font-medium text-fg">{title}</div>
         <button

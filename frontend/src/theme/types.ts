@@ -1,57 +1,113 @@
-/** 主题系统类型：双色 / 三色（统一结构：双色 = 辅色 ≡ 主色的三色）→ 语义令牌 */
-
-export type ThemeMode = 'duotone' | 'tritone'
-
 /**
- * 统一颜色结构（双色/三色共用，区别只在 mode）：
- * - primary   主色：文字、段落（正文墨色），灰阶 faint/muted 由底色+主色派生
- * - secondary 辅色：线条（header/footer 分割线、输入框描边、卡片边框）；双色模式下 ≡ primary
- * - accent    点缀色：按钮、链接、placeholder、状态提示、命中高亮
- * - base      底色：背景（缺省 = 从主色自动派生，可覆写）
+ * 主题系统 v4 类型契约 —— 「一个组件骨架，十种视觉投影」
+ *
+ * 核心模型：主题 = 6 层投影
+ *   color   色彩层：由 3 色种子派生（primary/secondary/accent，每档明暗各一份）
+ *   shape   形状层：圆角刻度、切角 clip-path、描边环宽度
+ *   depth   深度层：e0–e5 五级投影（可为柔影 / 光晕 / 硬偏移 / 无）
+ *   surface 材质层：面板透明度、背景模糊（玻璃）
+ *   typo    排印层：字体族、标题字重与斜体策略、字距、全大写策略
+ *   motion  动效层：时长、缓动、机械缓动（steps）
+ *
+ * 所有层最终都被解析成扁平 CSS 变量表（Vars），由 derive.ts 在运行时写入 :root。
+ * 两档明暗只换 color 种子；需要分档的层用 `overrides[scheme]` 局部覆盖。
  */
-export type ThemeColors = {
-  primary: string
-  secondary: string
-  accent: string
-  /** base 缺省（自动派生）时取浅底还是深底 */
-  dark: boolean
-  /** 底色覆写（缺省 = 自动派生） */
-  base?: string
-}
 
-export type ThemeDef = {
-  id: string
-  name: string
-  mode: ThemeMode
-  colors: ThemeColors
-  builtin?: boolean
-}
-
-/** 运行时语义令牌（写入 :root 的 CSS 变量，键即变量名） */
 export type Vars = Record<string, string>
 
-/** 外观模式：浅色 / 深色 / 跟随系统 */
-export type Appearance = 'light' | 'dark' | 'system'
+/** 5 套主题 */
+export type ThemeId = 'old' | 'clean' | 'md3' | 'endfield' | 'bluearchive'
 
-/** 持久化状态（localStorage: minis.theme.v3） */
-export type ThemeState = {
-  v: 3
-  /** 当前主题 id：builtin id / custom id / 'draft'（自定义编辑中） */
-  currentId: string
-  custom: ThemeDef[]
-  /** 自定义编辑草稿（进入“自定义”页签时由当前主题派生） */
-  draft: ThemeDef | null
-  /** 最近一次解析出的令牌快照（供 index.html 防闪烁脚本读取） */
-  vars: Vars
-  /** 外观模式（浅色/深色/跟随系统）；手动选主题时自动切到对应深浅档 */
-  appearance: Appearance
-  /** 上次使用的浅色主题 id（外观开关「浅色」档的目标） */
-  lastLightId: string
-  /** 上次使用的深色主题 id（外观开关「深色」档的目标） */
-  lastDarkId: string
+/** 明暗档位（每套主题都自带完整的两档） */
+export type Scheme = 'light' | 'dark'
+
+/** 用户可选的外观模式（system 跟随系统） */
+export type SchemeMode = Scheme | 'system'
+
+/** 一套主题在某一明暗档下的色种子 */
+export type ThemeSeed = {
+  /** 主色：正文墨色 */
+  primary: string
+  /** 辅色：线条 */
+  secondary: string
+  /** 点缀色：主行动 / 链接 / 强调 */
+  accent: string
+  /** 底色 */
+  base: string
 }
 
-/** 页面渲染版本注册表支持的路由（overrides.tsx 使用） */
+/** 全局用户覆盖（需求：保留全局色彩 / 字体调整面板） */
+export type OverrideState = {
+  /** 覆盖色种子（delta，切换主题时保留） */
+  seed: Partial<Pick<ThemeSeed, 'primary' | 'accent' | 'base'>>
+  /** 覆盖正文字体族 */
+  fontSans?: string
+  /** 覆盖等宽字体族 */
+  fontMono?: string
+  /** 覆盖标题斜体策略 */
+  headingStyle?: 'normal' | 'italic'
+}
+
+export type BackdropKind = 'none' | 'grid' | 'holo' | 'pop'
+
+/** 终末地主题色风格（主题配置窗口档位）：默认工业黄 / 罗德岛蓝点缀 */
+export type EndfieldPalette = 'default' | 'rhodes'
+
+/** 终末地窗口样式（主题配置窗口档位）：默认令牌驱动 / 工作台双色窗口 */
+export type EndfieldWindowStyle = 'default' | 'workbench'
+
+/** 终末地主题配置（主题配置窗口，随设计逐步扩充） */
+export type EndfieldConfig = {
+  /** 主题色风格 */
+  palette: EndfieldPalette
+  /** 全局浮窗（FloatWindow）样式 */
+  window: EndfieldWindowStyle
+}
+
+/** 一套主题的完整清单 */
+export type ThemeManifest = {
+  id: ThemeId
+  label: string
+  labelEn: string
+  desc: string
+  /** 两档明暗的色种子 */
+  seeds: Record<Scheme, ThemeSeed>
+  /** 形状层（变量名 → 值） */
+  shape: Vars
+  /** 深度层 */
+  depth: Vars
+  /** 材质层 */
+  surface: Vars
+  /** 排印层 */
+  typo: Vars
+  /** 动效层 */
+  motion: Vars
+  /** 分档局部覆盖（例如 Endfield 深色才开玻璃） */
+  overrides?: Partial<Record<Scheme, Vars>>
+  /** 全局背景层类型（由 <ThemeBackdrop/> 消费） */
+  backdrop: BackdropKind
+  /** 面板预览用色（浅档的三色 + 底色） */
+  swatch: string[]
+}
+
+/** 运行时主题状态（localStorage: minis.theme.v4） */
+export type ThemeState = {
+  v: 4
+  themeId: ThemeId
+  schemeMode: SchemeMode
+  /** 解析后的实际明暗（system 档会跟随系统） */
+  scheme: Scheme
+  override: OverrideState
+  /** 终末地主题配置（仅 endfield 主题消费；旧持久化数据缺失时逐字段兜底） */
+  endfield: EndfieldConfig
+  /** 最近一次解析出的完整令牌快照（供 index.html 防闪烁脚本与 canvas 读取） */
+  vars: Vars
+}
+
+/* ---------------------------------------------------------------------------
+ * 页面渲染版本注册表（管理员级扩展点，与主题系统解耦，保留不动）
+ * ------------------------------------------------------------------------- */
+
 export const OVERRIDE_ROUTES = [
   'home',
   'chat',
@@ -70,6 +126,7 @@ export const OVERRIDE_ROUTES = [
   'stats',
   'about',
 ] as const
+
 export type OverrideRoute = (typeof OVERRIDE_ROUTES)[number]
 
 export const ROUTE_LABELS: Record<OverrideRoute, string> = {

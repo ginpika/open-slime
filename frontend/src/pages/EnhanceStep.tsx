@@ -14,6 +14,7 @@ import FloatWindow from '../components/FloatWindow'
 import SegmentEditor, { type EditorSegment } from '../components/SegmentEditor'
 import Toast, { type ToastKind } from '../components/Toast'
 import { btnOutline, btnPrimary } from '../components/ui'
+import { usePageKit } from '../kit'
 import type { ExtractCtx } from './ExtractStep'
 
 /**
@@ -192,6 +193,7 @@ const fmtDate = (ms: number): string => {
 }
 
 export default function EnhanceStep({ ctx, onPrev }: Props) {
+  const kit = usePageKit()
   /** 最终提交预案的分段（初始按 chunk 快照回显留档；后续将由按钮增删部分，文本均可就地编辑） */
   const [segments, setSegments] = useState<EditorSegment[]>(() => planSegmentsOf(ctx.chunk))
   /** 提交预览全文（打开确认窗口时填充；null = 窗口关闭） */
@@ -439,8 +441,8 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
       {/* ② 最终提交预案：定制化分段文本编辑框（hover 出提示、点击编辑、点框外回预览） */}
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-sm font-semibold text-fg">最终提交预案</h2>
-          <p className="text-xs text-faint">
+          <h2 className="ui-heading text-sm">最终提交预案</h2>
+          <p className="mono text-2xs text-faint">
             父文档「{ctx.docTitle}」· chunk #{ctx.chunk.id} · {planChars} 字
           </p>
         </div>
@@ -452,25 +454,27 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
         />
       </div>
 
-      {/* ③ Footer：左「上一步」 / 右「提交 Chunk」→ 拼接预案全文弹窗预览确认 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {onPrev && (
+      {/* ③ Footer：左「上一步」 / 右「提交 Chunk」→ 拼接预案全文弹窗预览确认，分隔线形态随 kit.Toolbar */}
+      <kit.Toolbar
+        left={
+          onPrev ? (
             <button type="button" onClick={onPrev} className={btnOutline('rounded-md')}>
               ← 上一步
             </button>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setPreview(buildPlanText(segments, `chunk-${ctx.chunk.id}`))}
-          disabled={!!submitted}
-          title="拼接最终提交预案全文，预览确认后提交"
-          className={`${btnPrimary('rounded-md')} gap-2`}
-        >
-          {submitted ? '已提交' : '提交 Chunk'}
-        </button>
-      </div>
+          ) : undefined
+        }
+        right={
+          <button
+            type="button"
+            onClick={() => setPreview(buildPlanText(segments, `chunk-${ctx.chunk.id}`))}
+            disabled={!!submitted}
+            title="拼接最终提交预案全文，预览确认后提交"
+            className={`${btnPrimary('rounded-md')} gap-2`}
+          >
+            {submitted ? '已提交' : '提交 Chunk'}
+          </button>
+        }
+      />
 
       {/* 轻提示（message box）：提交成功 / 生成·留档·提交失败，视口顶部居中悬浮 */}
       <Toast kind={toast?.kind} message={toast?.text ?? null} onClose={() => setToast(null)} />

@@ -13,10 +13,12 @@ import {
   type Prop,
   type SearchGraph,
 } from '../api/client'
+import { Card } from '../components/Card'
 import GraphCanvas, { typeColorMap, type GraphSel } from '../components/GraphCanvas'
 import PropsEditor from '../components/PropsEditor'
 import Toast from '../components/Toast'
-import { btnOutline, btnPrimary } from '../components/ui'
+import { btnOutline, btnPrimary, Control } from '../components/ui'
+import { usePageKit } from '../kit'
 
 /* ECharts 引擎懒加载：可选引擎，避免 echarts 体积拖累默认（自研）路径的首屏 */
 const GraphECharts = lazy(() => import('../components/GraphECharts'))
@@ -26,6 +28,10 @@ const GraphECharts = lazy(() => import('../components/GraphECharts'))
  * 顶部悬浮工具栏（新增实体 / 实体搜索 / 跳数 / 规模 / 渲染引擎 / 物理开关），右侧悬浮详情卡片——
  * 点击节点或关系 fadeIn，点击空白背景 fadeOut（实体卡片内含新增关系入口）；左下角图例与谓词过滤。
  * 数据源：/api/graph/*。
+ *
+ * 呈现：满幅画布与悬浮玻璃胶囊（border-line + bg-bg/85 + backdrop-blur）不动；
+ * 详情 / 空态卡交给主题化 Card（空态引导文案走 kit.Empty），关系行交给 kit.Row，
+ * 实体类型标签走 kit.Badge，输入框包 Control 外壳，微标签走 ui-label。
  */
 
 const edgeKey = (e: GraphEdge) => `${e.from}|${e.predicate}|${e.to}`
@@ -59,9 +65,7 @@ function IdRow({ id }: { id: string }) {
   }
   return (
     <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-fg/5 px-2 py-1">
-      <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">
-        ID
-      </span>
+      <span className="ui-label shrink-0">ID</span>
       <span title={id} className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
         {id}
       </span>
@@ -104,6 +108,7 @@ function entityFromHash(): string | null {
 }
 
 export default function Graph() {
+  const kit = usePageKit()
   const [q, setQ] = useState('')
   const [sugs, setSugs] = useState<GraphNode[] | null>(null)
   const [sugOpen, setSugOpen] = useState(false)
@@ -639,39 +644,35 @@ export default function Graph() {
             onKeyDown={(ev) => ev.key === 'Escape' && setCreateOpen(false)}
             className="relative w-[340px] rounded-2xl border border-line bg-bg/95 p-5 backdrop-blur-md"
           >
-            <h3 className="text-[14px] font-semibold text-fg">新增实体</h3>
+            <h3 className="ui-heading text-[14px]">新增实体</h3>
             <p className="mt-1 text-[11px] text-faint">
               同名实体不会重复创建，将更新其类型。
             </p>
-            <label
-              htmlFor="new-entity-name"
-              className="mt-4 block text-[10px] font-semibold uppercase tracking-[0.2em] text-faint"
-            >
+            <label htmlFor="new-entity-name" className="ui-label mt-4 block">
               Name
             </label>
-            <input
-              id="new-entity-name"
-              autoFocus
-              value={newName}
-              onChange={(ev) => setNewName(ev.target.value)}
-              placeholder="实体名称"
-              spellCheck={false}
-              className="mt-1.5 w-full rounded-xl border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30"
-            />
-            <label
-              htmlFor="new-entity-type"
-              className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.2em] text-faint"
-            >
+            <Control className="mt-1.5">
+              <input
+                id="new-entity-name"
+                autoFocus
+                value={newName}
+                onChange={(ev) => setNewName(ev.target.value)}
+                placeholder="实体名称"
+                spellCheck={false}
+              />
+            </Control>
+            <label htmlFor="new-entity-type" className="ui-label mt-3 block">
               Type
             </label>
-            <input
-              id="new-entity-type"
-              value={newType}
-              onChange={(ev) => setNewType(ev.target.value)}
-              placeholder="自由输入，留空默认 CONCEPT"
-              spellCheck={false}
-              className="mt-1.5 w-full rounded-xl border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30"
-            />
+            <Control className="mt-1.5">
+              <input
+                id="new-entity-type"
+                value={newType}
+                onChange={(ev) => setNewType(ev.target.value)}
+                placeholder="自由输入，留空默认 CONCEPT"
+                spellCheck={false}
+              />
+            </Control>
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setCreateOpen(false)} className={btnOutline()}>
                 取消
@@ -691,15 +692,13 @@ export default function Graph() {
       {/* 空态：从入口建议开始 */}
       {center === null && !busy && !err && (
         <div className="absolute inset-0 z-10 flex items-center justify-center px-4">
-          <div className="w-[380px] rounded-2xl border border-line bg-bg/90 p-6 text-center shadow-xl backdrop-blur-md">
-            <p className="text-[14px] font-semibold text-fg">知识图谱</p>
+          <Card className="w-[380px] text-center" pad="lg">
+            <p className="ui-heading text-[14px]">知识图谱</p>
             <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
               从关系最多的实体开始，或在上方搜索框定位任一实体。
             </p>
             {hubs.length === 0 ? (
-              <p className="mt-4 text-[12px] text-faint">
-                知识库还没有实体——先在检索页搜索，或通过管理接口灌入知识。
-              </p>
+              <kit.Empty>知识库还没有实体——先在检索页搜索，或通过管理接口灌入知识。</kit.Empty>
             ) : (
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {hubs.map((h) => (
@@ -714,7 +713,7 @@ export default function Graph() {
                 ))}
               </div>
             )}
-          </div>
+          </Card>
         </div>
       )}
 
@@ -733,8 +732,9 @@ export default function Graph() {
               />
               <div className="min-w-0">
                 <h3 className="truncate text-[15px] font-bold text-fg">{cardNode.name}</h3>
-                <p className="mt-0.5 text-[11px] text-faint">
-                  {cardNode.type} · {degreeOf.get(cardNode.id) ?? 0} 条关系
+                <p className="mt-1 flex flex-wrap items-center gap-1.5 text-2xs text-faint">
+                  <kit.Badge>{cardNode.type || 'CONCEPT'}</kit.Badge>
+                  <span className="mono">{degreeOf.get(cardNode.id) ?? 0} 条关系</span>
                 </p>
               </div>
             </div>
@@ -770,9 +770,7 @@ export default function Graph() {
               onSave={(next) => saveNodeProps(cardNode.id, next)}
             />
             <div className="mt-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">
-                Relations
-              </p>
+              <p className="ui-label">Relations</p>
               {relFor === cardNode.id ? (
                 /* 内联表单：目标实体不存在时后端按 CONCEPT 自动创建 */
                 <form
@@ -786,14 +784,14 @@ export default function Graph() {
                     onChange={(ev) => setRelName(ev.target.value)}
                     placeholder="目标实体名称"
                     spellCheck={false}
-                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30"
+                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
                   />
                   <input
                     value={relPred}
                     onChange={(ev) => setRelPred(ev.target.value)}
                     placeholder="谓词，留空默认 relates_to"
                     spellCheck={false}
-                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30"
+                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
                   />
                   <div className="flex justify-end gap-1.5 pt-0.5">
                     <button
@@ -815,25 +813,24 @@ export default function Graph() {
               ) : cardRels.length === 0 ? (
                 <p className="mt-1.5 text-[11px] text-faint">暂无关系。</p>
               ) : (
-                <ul className="scrollbar-accent mt-1.5 max-h-44 divide-y divide-line overflow-y-auto">
+                /* 关系行交给 kit.Row：悬停黄晕染 + 左侧读数条，行内「谓词 + 实体名」 */
+                <div className="scrollbar-accent mt-1.5 max-h-44 overflow-y-auto">
                   {cardRels.map(({ node, predicate, rev }) => (
-                    <li key={`${node.id}-${predicate}`}>
-                      <button
-                        type="button"
-                        onClick={() => setSel({ kind: 'node', id: node.id })}
-                        className="flex w-full items-baseline justify-between gap-2 py-1.5 text-left"
-                      >
-                        <span className="shrink-0 text-[10px] text-faint">
-                          {predicate}
-                          {rev ? ' (R)' : ''}
-                        </span>
-                        <span className="min-w-0 truncate pr-1 text-right text-[12px] text-fg hover:underline">
-                          {node.name}
-                        </span>
-                      </button>
-                    </li>
+                    <kit.Row
+                      key={`${node.id}-${predicate}`}
+                      onClick={() => setSel({ kind: 'node', id: node.id })}
+                      className="items-baseline gap-2"
+                    >
+                      <span className="mono shrink-0 text-2xs text-faint">
+                        {predicate}
+                        {rev ? ' (R)' : ''}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-right text-sm text-fg">
+                        {node.name}
+                      </span>
+                    </kit.Row>
                   ))}
-                </ul>
+                </div>
               )}
             </div>
           </div>
@@ -841,9 +838,7 @@ export default function Graph() {
 
         {cardEdge && (
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">
-              Relation
-            </p>
+            <p className="ui-label">Relation</p>
             <p className="mt-2 inline-block rounded-full bg-fg/5 px-2.5 py-1 text-[13px] font-semibold text-fg">
               {cardEdge.predicate}
             </p>
@@ -893,9 +888,7 @@ export default function Graph() {
       {/* 左下角：类型图例 + 谓词过滤 */}
       {center !== null && (
         <div className="absolute bottom-4 left-4 z-20 w-60 rounded-2xl border border-line bg-bg/85 p-3.5 shadow-lg backdrop-blur-md">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">
-            Types
-          </p>
+          <p className="ui-label">Types</p>
           <div className="mt-1 flex gap-2.5">
             <button
               type="button"
@@ -935,9 +928,7 @@ export default function Graph() {
           </div>
           {predicateCounts.length > 0 && (
             <>
-              <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">
-                Relations
-              </p>
+              <p className="ui-label mt-3">Relations</p>
               <div className="mt-1 flex gap-2.5">
                 <button
                   type="button"

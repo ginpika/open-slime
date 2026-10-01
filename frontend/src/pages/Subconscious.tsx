@@ -46,7 +46,6 @@ import {
   type InjectorBinding,
   type InjectorGuide,
   type ModelView,
-  type SubChannel,
   type SubExec,
   type SubExecKind,
   type SubHeartbeatContext,
@@ -60,20 +59,20 @@ import {
   type SubTool,
   type SubUsage,
 } from '../api/client'
+import { Card } from '../components/Card'
 import FloatWindow from '../components/FloatWindow'
 import Toast from '../components/Toast'
 import { btnPrimary, btnQuiet, miniBtn } from '../components/ui'
+import { usePageKit } from '../kit'
 import PromptsPanel from './PromptsPanel'
 
 /** 表单控件基底：与设置页保持一致的输入框风格 */
 const INPUT =
-  'w-full rounded-md border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30'
+  'w-full rounded-md border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25'
 
-const LABEL = 'mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint'
-
-/** dashboard 的节拍输入：MD3 描边输入框（8dp 圆角、透明容器、聚焦时点缀色描边） */
+/** dashboard 的节拍输入：透明底描边输入框（聚焦时点缀色描边） */
 const DASH_INPUT =
-  'w-[104px] rounded-lg border border-outline bg-transparent px-3 py-1.5 font-mono text-[13px] text-fg outline-none transition placeholder:text-on-surface-variant hover:border-on-surface-variant focus:border-accent focus:ring-2 focus:ring-accent/30'
+  'w-[104px] rounded-lg border border-line bg-transparent px-3 py-1.5 font-mono text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/30'
 
 /** 心跳重连间隔（后端单条流有最长保持时长，断开属正常） */
 const RECONNECT_MS = 1500
@@ -177,28 +176,14 @@ function successRate(done: number, runs: number): string {
   return `${Math.round((done / runs) * 100)}%`
 }
 
-/** 状态点（MD3 状态指示器）：进行中=点缀色脉冲；完成/失败用语义色，不随主题走 */
+/** 状态点：进行中=点缀色脉冲；完成 / 失败用语义色令牌 */
 function StatusDot({ status }: { status: string }) {
   const tone =
-    status === 'done'
-      ? 'bg-emerald-500'
-      : status === 'failed'
-        ? 'bg-red-500'
-        : 'animate-pulse bg-accent'
+    status === 'done' ? 'bg-ok' : status === 'failed' ? 'bg-danger' : 'animate-pulse bg-accent'
   return <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label className="block">
-      <span className={LABEL}>{label}</span>
-      {children}
-      {hint && <span className="mt-1 block text-[11px] text-hint">{hint}</span>}
-    </label>
-  )
-}
-
-/** 开关（MD3 switch）：心跳常驻——开=点缀色实底 + 滑块靠右，关=描边 + 中性底 */
+/** 开关：心跳常驻——开=点缀色实底 + 滑块靠右，关=描边 + 中性底 */
 function Switch({
   on,
   disabled,
@@ -216,19 +201,19 @@ function Switch({
       disabled={disabled}
       onClick={() => onToggle(!on)}
       className={`relative h-6 w-11 shrink-0 rounded-full border transition disabled:opacity-40 ${
-        on ? 'border-accent bg-accent' : 'border-outline bg-surface-container-highest'
+        on ? 'border-accent bg-accent' : 'border-line-strong bg-fg/10'
       }`}
     >
       <span
         className={`absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full transition-all ${
-          on ? 'left-[21px] bg-accent-fg' : 'left-[1px] bg-outline'
+          on ? 'left-[21px] bg-accent-fg' : 'left-[1px] bg-fg/30'
         }`}
       />
     </button>
   )
 }
 
-/** 顶部滑块的一段：切 dashboard（原页面）/ heartbeat（主会话）/ 提示词 & 上下文工程 / 子代理 / RAG 召回 / 插槽 / 工具七个内部页 */
+/** 分段按钮的一段：顶部内部页滑块与浮窗内的 tab 共用（观感对齐 kit.Range 的分段带） */
 function ViewTab({
   active,
   onClick,
@@ -242,42 +227,12 @@ function ViewTab({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-3.5 py-1 text-[12px] font-medium transition ${
-        active ? 'bg-fg text-bg' : 'text-muted hover:bg-fg/5 hover:text-fg'
+      className={`mono px-3 py-1.5 text-xs font-bold tracking-wider transition hover:bg-accent-soft first:pl-3.5 last:pr-3.5 ${
+        active ? 'bg-accent text-accent-fg' : 'text-muted hover:text-fg'
       }`}
     >
       {children}
     </button>
-  )
-}
-
-/** MD3 分段按钮：统计窗口的切换（选中段用点缀色实底） */
-function Segmented({
-  value,
-  options,
-  onChange,
-}: {
-  value: number
-  options: readonly (readonly [number, string])[]
-  onChange: (v: number) => void
-}) {
-  return (
-    <div className="flex w-fit shrink-0 items-center rounded-full border border-outline-variant p-0.5">
-      {options.map(([v, label]) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
-            value === v
-              ? 'bg-accent text-accent-fg'
-              : 'text-on-surface-variant hover:bg-fg/5 hover:text-on-surface'
-          }`}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
   )
 }
 
@@ -341,10 +296,6 @@ function InjectorRows({
   )
 }
 
-function Empty({ children }: { children: ReactNode }) {
-  return <p className="py-6 text-center text-[12.5px] text-hint">{children}</p>
-}
-
 /* ---------------- 心跳主会话（总线） ---------------- */
 
 /**
@@ -361,6 +312,7 @@ function HeartbeatPage({
   models: ModelView[]
   onToast: (kind: 'success' | 'error', msg: string) => void
 }) {
+  const kit = usePageKit()
   const [content, setContent] = useState('')
   const [bound, setBound] = useState<InjectorBinding[]>([])
   const [modelId, setModelId] = useState('')
@@ -404,23 +356,24 @@ function HeartbeatPage({
     }
   }
 
-  if (!ready) return <Empty>正在读心跳主会话…</Empty>
+  if (!ready) return <kit.Empty>正在读心跳主会话…</kit.Empty>
 
   return (
     <div className="flex flex-col gap-3.5">
-      <Field
+      <kit.Field
         label="提示词"
         hint="{{插槽}} 由下方绑定的注入器现取填充。工具不在这里配：它只做「派计划 / 立改撤计划 / 派子代理 / 翻过程 / 只读检索」。"
+        wrap={false}
       >
         <textarea
           className={`${INPUT} scrollbar-slim min-h-[320px] font-mono text-[12.5px] leading-6`}
           value={content}
           onChange={(e) => setContent(e.target.value)}
         />
-      </Field>
+      </kit.Field>
 
       <div className="max-w-[260px]">
-        <Field label="模型">
+        <kit.Field label="模型" wrap={false}>
           <select className={INPUT} value={modelId} onChange={(e) => setModelId(e.target.value)}>
             <option value="">跟随默认模型</option>
             {models.map((m) => (
@@ -429,12 +382,12 @@ function HeartbeatPage({
               </option>
             ))}
           </select>
-        </Field>
+        </kit.Field>
       </div>
 
-      <Field label="插槽注入器">
+      <kit.Field label="插槽注入器" wrap={false}>
         <InjectorRows value={bound} options={injectors} onChange={setBound} />
-      </Field>
+      </kit.Field>
 
       <div className="flex justify-end border-t border-line pt-3">
         <button
@@ -527,20 +480,12 @@ const TOOL_SURFACE_LABELS: Record<string, string> = {
   COMMIT: '文档分析 · 入库',
 }
 
-/** 标记小片：写库 / 可并行 / 子代理不可调等工具属性 */
-function FlagChip({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-full border border-outline-variant px-2 py-0.5 text-[10.5px] text-on-surface-variant">
-      {children}
-    </span>
-  )
-}
-
 /**
  * 工具子页：一份从头上到尾的说明文档——系统里每个工具叫什么、干什么、长在哪些工具面上、参数怎么给。
  * 不用卡片、不折叠，所有文字都在页面上，可以直接 Ctrl+F 搜。
  */
 function ToolsPage() {
+  const kit = usePageKit()
   const [tools, setTools] = useState<SubTool[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -560,7 +505,7 @@ function ToolsPage() {
   return (
     <article className="flex max-w-[760px] flex-col gap-7 text-[12.5px] leading-relaxed text-muted">
       <header className="flex flex-col gap-1.5">
-        <h2 className="text-[13px] font-semibold text-fg">工具</h2>
+        <h2 className="ui-heading text-sm">工具</h2>
         <p>
           工具是大模型能亲手做的事，每个工具是一份写死的编程契约：叫什么、干什么、参数怎么给、
           可出现在哪些工具面。一次调用里模型能看见哪些工具，由「工具面」决定——同一个工具可落在多个面上。
@@ -569,9 +514,9 @@ function ToolsPage() {
       </header>
 
       <section className="flex flex-col">
-        <h3 className="text-[12.5px] font-semibold text-fg">
+        <h3 className="ui-heading text-sm">
           全部工具
-          <span className="ml-2 text-[11.5px] font-normal text-hint">共 {tools.length} 个</span>
+          <span className="mono ml-2 text-2xs font-normal text-faint">共 {tools.length} 个</span>
         </h3>
         <div className="mt-1 flex flex-col divide-y divide-line">
           {tools.map((t) => {
@@ -582,16 +527,11 @@ function ToolsPage() {
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className="font-mono text-[12.5px] font-semibold text-fg">{t.name}</p>
                   {t.surfaces.map((s) => (
-                    <span
-                      key={s}
-                      className="rounded-full bg-surface-container-highest px-2 py-0.5 text-[10.5px] text-on-surface-variant"
-                    >
-                      {TOOL_SURFACE_LABELS[s] ?? s}
-                    </span>
+                    <kit.Badge key={s}>{TOOL_SURFACE_LABELS[s] ?? s}</kit.Badge>
                   ))}
-                  {t.writes && <FlagChip>写库</FlagChip>}
-                  {t.parallelizable && <FlagChip>可并行</FlagChip>}
-                  {!t.agentsMayCall && <FlagChip>子代理不可调</FlagChip>}
+                  {t.writes && <kit.Badge tone="accent">写库</kit.Badge>}
+                  {t.parallelizable && <kit.Badge tone="ok">可并行</kit.Badge>}
+                  {!t.agentsMayCall && <kit.Badge tone="warn">子代理不可调</kit.Badge>}
                 </div>
                 <p>{t.description || '—'}</p>
                 <p className="text-hint">参数：{props.length ? '' : '无'}</p>
@@ -618,44 +558,6 @@ function ToolsPage() {
 
 /* ---------------- 子代理 & 任务计划（资源使用视图） ---------------- */
 
-/** MD3 卡片：资源总览的一格（数值 + 标签 + 附注） */
-function StatCard({
-  label,
-  value,
-  hint,
-  tone = 'default',
-}: {
-  label: string
-  value: ReactNode
-  hint?: string
-  tone?: 'default' | 'accent'
-}) {
-  return (
-    <div className="flex flex-col gap-1 rounded-2xl bg-surface-container-low px-4 py-3.5 shadow-sm">
-      <span className="text-[11.5px] font-medium tracking-[0.08em] text-on-surface-variant">
-        {label}
-      </span>
-      <span
-        className={`text-[20px] leading-tight font-semibold ${
-          tone === 'accent' ? 'text-accent' : 'text-on-surface'
-        }`}
-      >
-        {value}
-      </span>
-      {hint && <span className="text-[11.5px] leading-snug text-on-surface-variant">{hint}</span>}
-    </div>
-  )
-}
-
-/** 渠道标签：静默留痕 / 投递首页会话 */
-function ChannelChip({ channel }: { channel: SubChannel }) {
-  return (
-    <span className="rounded-full bg-surface-container-highest px-2 py-0.5 text-[11px] text-on-surface-variant">
-      {SUB_CHANNEL_LABELS[channel] ?? channel}
-    </span>
-  )
-}
-
 /** 执行种类 → 人话：一次执行可能是主会话登场、编制被派出，或匿名子代理被当场交代 */
 function kindLabel(kind: SubExecKind): string {
   return kind === 'heartbeat' ? '心跳主会话' : kind === 'plan' ? '任务计划' : '子代理'
@@ -663,7 +565,8 @@ function kindLabel(kind: SubExecKind): string {
 
 /**
  * 一条执行记录（子代理列表 / 编制展开后的历史共用）：状态、时刻、耗时、结论摘要，点开看全过程。
- * showTitle 只在混排列表里开——编制历史里的 title 与所属编制同名，重复显示没意义。
+ * 行的形态交给 kit.Row（分隔线 / 圆角块随主题）；showTitle 只在混排列表里开——
+ * 编制历史里的 title 与所属编制同名，重复显示没意义。
  */
 function ExecLine({
   exec,
@@ -674,34 +577,22 @@ function ExecLine({
   showTitle?: boolean
   onClick: () => void
 }) {
+  const kit = usePageKit()
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={textPreview(exec.error ?? exec.output, 300) || '（无结论）'}
-      className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-outline-variant bg-surface-variant px-3 py-2 text-left transition hover:bg-fg/8 active:bg-fg/12"
-    >
+    <kit.Row onClick={onClick} className="flex-wrap gap-x-3 gap-y-1">
       <StatusDot status={exec.status} />
       {showTitle && (
-        <span className="max-w-[220px] truncate text-[12.5px] font-medium text-on-surface">
+        <span className="max-w-[220px] truncate text-sm font-medium text-fg">
           {exec.title ?? '（未命名子代理）'}
         </span>
       )}
-      <span className="shrink-0 text-[11.5px] text-on-surface-variant">
-        {fmtDay(exec.startedAt)}
-      </span>
-      <span className="shrink-0 text-[11px] text-on-surface-variant">
-        {fmtDur(exec.startedAt, exec.finishedAt)}
-      </span>
-      {exec.edits.length > 0 && (
-        <span className="shrink-0 rounded-full bg-surface-container-highest px-1.5 py-0.5 text-[10.5px] text-on-surface-variant">
-          写库 {exec.edits.length}
-        </span>
-      )}
-      <span className="min-w-[160px] flex-1 truncate text-[11.5px] text-on-surface-variant">
+      <span className="mono shrink-0 text-2xs text-dim">{fmtDay(exec.startedAt)}</span>
+      <span className="mono shrink-0 text-2xs text-dim">{fmtDur(exec.startedAt, exec.finishedAt)}</span>
+      {exec.edits.length > 0 && <kit.Badge>写库 {exec.edits.length}</kit.Badge>}
+      <span className="min-w-[160px] flex-1 truncate text-xs text-muted">
         {textPreview(exec.error ?? exec.output, 80) || '（无结论）'}
       </span>
-    </button>
+    </kit.Row>
   )
 }
 
@@ -724,6 +615,7 @@ function PlanRow({
   onOpenExec: (id: number) => void
   onToast: (kind: 'success' | 'error', msg: string) => void
 }) {
+  const kit = usePageKit()
   const [open, setOpen] = useState(false)
   const [history, setHistory] = useState<SubExec[] | null>(null)
   const u = usage
@@ -742,22 +634,20 @@ function PlanRow({
   }
 
   return (
-    <li className="flex flex-col rounded-2xl bg-surface-container-low shadow-sm transition hover:bg-surface-container">
+    <Card as="li" pad="none">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 py-3.5">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-[13.5px] font-medium text-on-surface">{plan.name}</span>
+            <span className="truncate text-md font-semibold text-fg">{plan.name}</span>
             {plan.channels.map((c) => (
-              <ChannelChip key={c} channel={c} />
+              <kit.Badge key={c}>{SUB_CHANNEL_LABELS[c] ?? c}</kit.Badge>
             ))}
-            <span className="rounded-full bg-surface-container-highest px-2 py-0.5 text-[11px] text-on-surface-variant">
-              {intervalLabel(plan.intervalMs)}
-            </span>
+            <kit.Badge>{intervalLabel(plan.intervalMs)}</kit.Badge>
           </div>
-          <p className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-on-surface-variant">
+          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
             {textPreview(plan.content, 110) || '（无正文）'}
           </p>
-          <p className="mt-1 text-[11px] text-outline">
+          <p className="mono mt-1.5 text-2xs text-dim">
             工具 {plan.tools.length ? plan.tools.join('、') : '无'}
             <span className="mx-1.5">·</span>
             最近派出 {fmtAgo(plan.lastBeatAt)}
@@ -765,10 +655,10 @@ function PlanRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <div className="flex flex-col items-end gap-0.5 text-[11.5px] text-on-surface-variant">
-            <span className="font-mono text-[13px] text-on-surface">
+          <div className="mono flex flex-col items-end gap-0.5 text-2xs text-dim">
+            <span className="text-sm font-bold text-fg">
               {u?.runs ?? 0}
-              <span className="ml-1 text-[11px] text-on-surface-variant">次</span>
+              <span className="ml-1 font-normal text-dim">次</span>
             </span>
             <span>
               成功 {successRate(u?.done ?? 0, u?.runs ?? 0)}
@@ -785,69 +675,68 @@ function PlanRow({
       </div>
 
       {open && (
-        <div className="border-t border-outline-variant px-4 py-3">
-          <div className="flex flex-wrap gap-x-6 gap-y-1.5 text-[11.5px] text-on-surface-variant">
+        <div className="border-t border-line px-4 py-3">
+          <div className="mono flex flex-wrap gap-x-6 gap-y-1.5 text-2xs text-dim">
             <span>
-              平均耗时 <span className="font-mono text-on-surface">{fmtMs(u?.avgDurationMs ?? 0)}</span>
+              平均耗时 <span className="font-bold text-fg">{fmtMs(u?.avgDurationMs ?? 0)}</span>
             </span>
             <span>
-              最长耗时 <span className="font-mono text-on-surface">{fmtMs(u?.maxDurationMs ?? 0)}</span>
+              最长耗时 <span className="font-bold text-fg">{fmtMs(u?.maxDurationMs ?? 0)}</span>
             </span>
             <span>
-              工具往返 <span className="font-mono text-on-surface">{u?.toolRounds ?? 0}</span> 次
+              工具往返 <span className="font-bold text-fg">{u?.toolRounds ?? 0}</span> 次
             </span>
             <span>
-              ≈ <span className="font-mono text-on-surface">{fmtNum(u?.estTokens ?? 0)}</span> tokens
-              <span className="ml-1 text-outline">（按上下文字符量粗估）</span>
+              ≈ <span className="font-bold text-fg">{fmtNum(u?.estTokens ?? 0)}</span> tokens
+              <span className="ml-1">（按上下文字符量粗估）</span>
             </span>
             <span>
               窗口内最近一次{' '}
-              <span className="font-mono text-on-surface">
-                {u?.lastRunAt ? fmtDay(u.lastRunAt) : '—'}
-              </span>
+              <span className="font-bold text-fg">{u?.lastRunAt ? fmtDay(u.lastRunAt) : '—'}</span>
             </span>
           </div>
 
           <div className="mt-3 flex flex-col gap-1.5">
-            <span className="text-[11px] font-medium tracking-[0.08em] text-outline">
-              最近执行
-            </span>
-            {history === null && <p className="text-[11.5px] text-on-surface-variant">载入中…</p>}
-            {history?.length === 0 && (
-              <p className="text-[11.5px] text-on-surface-variant">还没有被派出过</p>
+            <span className="ui-label">最近执行</span>
+            {history === null && <p className="text-xs text-muted">载入中…</p>}
+            {history?.length === 0 && <p className="text-xs text-muted">还没有被派出过</p>}
+            {history && history.length > 0 && (
+              <div className="flex flex-col">
+                {history.map((r) => (
+                  <ExecLine key={r.id} exec={r} onClick={() => onOpenExec(r.id)} />
+                ))}
+              </div>
             )}
-            {history?.map((r) => (
-              <ExecLine key={r.id} exec={r} onClick={() => onOpenExec(r.id)} />
-            ))}
           </div>
         </div>
       )}
-    </li>
+    </Card>
   )
 }
 
 /** 资源用量四件套（子代理与任务计划各一组）：次数、成功率、平均耗时、工具往返 */
 function UsageCards({ usage, unitHint }: { usage: SubUsage | undefined; unitHint: string }) {
+  const kit = usePageKit()
   const runs = usage?.runs ?? 0
   const done = usage?.done ?? 0
   const failed = usage?.failed ?? 0
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <StatCard label={unitHint} value={runs} hint={`成功 ${done} · 失败 ${failed}`} />
-      <StatCard
+    <div className={kit.statRow}>
+      <kit.Stat label={unitHint} value={String(runs)} hint={`成功 ${done} · 失败 ${failed}`} />
+      <kit.Stat
         label="成功率"
         value={successRate(done, runs)}
         hint={done > 0 ? `${done}/${runs}` : '窗口内还没有跑过'}
         tone={failed > 0 ? 'default' : 'accent'}
       />
-      <StatCard
+      <kit.Stat
         label="平均耗时"
         value={fmtMs(usage?.avgDurationMs ?? 0)}
         hint={`最长 ${fmtMs(usage?.maxDurationMs ?? 0)}`}
       />
-      <StatCard
+      <kit.Stat
         label="工具往返"
-        value={usage?.toolRounds ?? 0}
+        value={String(usage?.toolRounds ?? 0)}
         hint={`≈ ${fmtNum(usage?.estTokens ?? 0)} tokens`}
       />
     </div>
@@ -882,6 +771,7 @@ function AgentsPage({
   onOpenExec: (id: number) => void
   onToast: (kind: 'success' | 'error', msg: string) => void
 }) {
+  const kit = usePageKit()
   const hb = resources?.heartbeat
   const totals = resources?.totals
   /** 编制用量按 planId 对齐（不是名字：编制被改名后历史仍挂在同一个 id 上） */
@@ -889,53 +779,58 @@ function AgentsPage({
   const windowLabel = WINDOWS.find((w) => w[0] === hours)?.[1] ?? ''
 
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div className="flex flex-col gap-1">
-          <h2 className="text-[15px] font-medium text-on-surface">子代理 &amp; 任务计划</h2>
-          <p className="max-w-[720px] text-[12px] leading-relaxed text-on-surface-variant">
+          <h2 className="ui-heading text-md">子代理 &amp; 任务计划</h2>
+          <p className="max-w-[720px] text-xs leading-relaxed text-muted">
             两个层次：子代理是匿名 worker——当场交代即跑，不建档案、跑完即逝；任务计划是常驻编制——
             一份带名字、正文、工具与渠道的岗位定义，由心跳主会话按需派出、可反复用。本页只读，
             回答的是「它们被用得怎么样」。
           </p>
         </div>
-        <Segmented value={hours} options={WINDOWS} onChange={onHours} />
+        <kit.Range
+          value={hours}
+          options={WINDOWS.map(([v, label]) => ({ value: v, label }))}
+          onChange={onHours}
+        />
       </header>
 
       {/* 总览：窗口内的执行总量与心跳主会话那一档；细项留给下面两块各自的四张卡 */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        <StatCard
+      <div className={kit.statRow}>
+        <kit.Stat
           label={`执行（${windowLabel}）`}
-          value={totals?.runs ?? 0}
+          value={String(totals?.runs ?? 0)}
           hint={`成功 ${totals?.done ?? 0} · 失败 ${totals?.failed ?? 0}`}
         />
-        <StatCard
+        <kit.Stat
           label="成功率"
           value={successRate(totals?.done ?? 0, totals?.runs ?? 0)}
           hint={`子代理 ${resources?.agents.runs ?? 0} · 计划 ${resources?.plans.runs ?? 0}`}
           tone={(totals?.failed ?? 0) > 0 ? 'default' : 'accent'}
         />
-        <StatCard
+        <kit.Stat
           label="单次耗时"
           value={fmtMs(totals?.avgDurationMs ?? 0)}
           hint={`最长 ${fmtMs(totals?.maxDurationMs ?? 0)}`}
         />
-        <StatCard
+        <kit.Stat
           label="工具往返"
-          value={totals?.toolRounds ?? 0}
+          value={String(totals?.toolRounds ?? 0)}
           hint={`≈ ${fmtNum(totals?.estTokens ?? 0)} tokens`}
         />
-        <StatCard
+        <kit.Stat
           label="心跳主会话"
-          value={`${hb?.runs ?? 0} 次出场`}
+          value={String(hb?.runs ?? 0)}
+          unit="次出场"
           hint={`${resources?.running ? '执行中' : resources?.heartbeatEnabled ? '待命' : '已停摆'} · 节拍 ${resources?.tickMs ?? '—'}ms · 工具往返 ${hb?.toolRounds ?? 0}`}
         />
-      </section>
+      </div>
 
       {/* 子代理：匿名 worker，不建档案，所以这里只有跑过的记录 */}
       <section className="flex flex-col gap-3">
-        <h3 className="text-[14px] font-medium text-on-surface">子代理</h3>
-        <p className="max-w-[720px] text-[12px] leading-relaxed text-on-surface-variant">
+        <h3 className="ui-heading text-sm">子代理</h3>
+        <p className="max-w-[720px] text-xs leading-relaxed text-muted">
           匿名 worker：主对话或心跳主会话当场用
           <span className="mx-1 font-mono text-[11.5px]">delegate_subagent</span>
           交代一句就派出去，不建档、跑完即逝，同一批可以并行跑好几个。
@@ -945,35 +840,31 @@ function AgentsPage({
         <UsageCards usage={resources?.agents} unitHint={`调用（${windowLabel}）`} />
 
         {agentRuns.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-outline-variant px-4 py-8 text-center">
-            <p className="text-[13px] text-on-surface">还没有子代理被派过</p>
-            <p className="mx-auto mt-1.5 max-w-[520px] text-[12px] leading-relaxed text-on-surface-variant">
-              它不由人在页面上新建。去对话里交代一句——比如「派个子代理去查一下 X」，
-              或让心跳主会话自己决定；跑完只把结论带回来，不留下编制，所以这里只看到跑过的记录。
-            </p>
-          </div>
+          <kit.Empty>
+            还没有子代理被派过 ——
+            它不由人在页面上新建。去对话里交代一句——比如「派个子代理去查一下 X」，或让心跳主会话自己决定；
+            跑完只把结论带回来，不留下编制，所以这里只看到跑过的记录。
+          </kit.Empty>
         ) : (
-          <ul className="flex flex-col gap-2">
+          <div className="flex flex-col">
             {agentRuns.map((r) => (
-              <li key={r.id}>
-                <ExecLine exec={r} showTitle onClick={() => onOpenExec(r.id)} />
-              </li>
+              <ExecLine key={r.id} exec={r} showTitle onClick={() => onOpenExec(r.id)} />
             ))}
-          </ul>
+          </div>
         )}
       </section>
 
       {/* 任务计划：常驻编制，立改撤都在大模型的工具里 */}
       <section className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-3">
-          <h3 className="text-[14px] font-medium text-on-surface">任务计划</h3>
+          <h3 className="ui-heading text-sm">任务计划</h3>
           {plans.length > 0 && (
-            <span className="text-[12px] text-on-surface-variant">
+            <span className="mono text-2xs text-dim">
               {plans.length} 份编制 · 名册 {resources?.rosterCount ?? plans.length}
             </span>
           )}
         </div>
-        <p className="max-w-[720px] text-[12px] leading-relaxed text-on-surface-variant">
+        <p className="max-w-[720px] text-xs leading-relaxed text-muted">
           常驻编制：一份带名字、正文、工具与交付渠道的岗位定义，还有节拍参考（给主会话的参考，
           不是硬时刻表）。由心跳主会话按需派出，可以反复用。立、改、撤都是大模型在对话里用
           <span className="mx-1 font-mono text-[11.5px]">create_plan / update_plan / delete_plan</span>
@@ -983,14 +874,12 @@ function AgentsPage({
         <UsageCards usage={resources?.plans} unitHint={`被派出（${windowLabel}）`} />
 
         {plans.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-outline-variant px-4 py-8 text-center">
-            <p className="text-[13px] text-on-surface">名册还是空的</p>
-            <p className="mx-auto mt-1.5 max-w-[520px] text-[12px] leading-relaxed text-on-surface-variant">
-              编制不由人在页面上新建。去对话里说一句「以后定期做 X」，大模型就会用
-              <span className="mx-1 font-mono text-[11.5px]">create_plan</span>
-              立一份——之后每拍由心跳主会话看着名册决定派不派它。
-            </p>
-          </div>
+          <kit.Empty>
+            名册还是空的 ——
+            编制不由人在页面上新建。去对话里说一句「以后定期做 X」，大模型就会用
+            <span className="mx-1 font-mono">create_plan</span>
+            立一份——之后每拍由心跳主会话看着名册决定派不派它。
+          </kit.Empty>
         ) : (
           <ul className="flex flex-col gap-2.5">
             {plans.map((p) => (
@@ -1013,24 +902,11 @@ function AgentsPage({
 
 /* ---------------- RAG 召回（三路召回留痕） ---------------- */
 
-/** 三路各自一个语义色，列表里一眼可辨 */
-const RAG_CHANNEL_TONE: Record<SubRagChannel, string> = {
-  vector: 'bg-sky-500/15 text-sky-600',
-  graph: 'bg-violet-500/15 text-violet-600',
-  memory: 'bg-amber-500/15 text-amber-600',
-}
-
-/** 召回路标签（向量 / 图 / 时序事件） */
-function RagChannelChip({ channel }: { channel: SubRagChannel }) {
-  return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium ${
-        RAG_CHANNEL_TONE[channel] ?? 'bg-surface-container-highest text-on-surface-variant'
-      }`}
-    >
-      {SUB_RAG_CHANNEL_LABELS[channel] ?? channel}
-    </span>
-  )
+/** 三路各自一个徽章色调（向量=点缀 / 图=成功 / 时序=警示），列表里一眼可辨 */
+const RAG_CHANNEL_TONE: Record<SubRagChannel, 'accent' | 'ok' | 'warn'> = {
+  vector: 'accent',
+  graph: 'ok',
+  memory: 'warn',
 }
 
 /**
@@ -1043,6 +919,7 @@ function RagRecallPage({
 }: {
   onToast: (kind: 'success' | 'error', msg: string) => void
 }) {
+  const kit = usePageKit()
   const [channel, setChannel] = useState<SubRagChannel | null>(null)
   const [rows, setRows] = useState<SubRagRecall[] | null>(null)
   const [active, setActive] = useState<SubRagRecall | null>(null)
@@ -1087,51 +964,48 @@ function RagRecallPage({
     <div className="flex flex-col gap-5">
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div className="flex flex-col gap-1">
-          <h2 className="text-[15px] font-medium text-on-surface">RAG 召回</h2>
-          <p className="max-w-[760px] text-[12px] leading-relaxed text-on-surface-variant">
+          <h2 className="ui-heading text-md">RAG 召回</h2>
+          <p className="max-w-[760px] text-xs leading-relaxed text-muted">
             三路召回（向量 / 图 / 时序事件）每一次工具调用的留痕：模型问了什么、工具回给它的原始数据是什么，
             都原样记在这里。用来回看检索效果——命中了什么、拼进上下文的内容对不对、模型据此答得对不对。
             对话、智能体群聊、心跳与子代理里发生的召回都会记进来，来源标在每条上。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex w-fit shrink-0 items-center rounded-full border border-outline-variant p-0.5">
+          {/* 渠道过滤是字符串值（含 null=全部），kit.Range 只收数字，故自绘同款分段带 */}
+          <div className="mono flex w-fit shrink-0 border border-line-strong">
             {FILTERS.map(([v, label]) => (
               <button
                 key={v ?? 'all'}
                 type="button"
                 onClick={() => setChannel(v)}
-                className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
-                  channel === v
-                    ? 'bg-accent text-accent-fg'
-                    : 'text-on-surface-variant hover:bg-fg/5 hover:text-on-surface'
+                className={`px-3 py-1.5 text-xs font-bold tracking-wider transition hover:bg-accent-soft first:pl-3.5 last:pr-3.5 ${
+                  channel === v ? 'bg-accent text-accent-fg' : 'text-muted hover:text-fg'
                 }`}
               >
                 {label}
               </button>
             ))}
           </div>
-          <button type="button" className={btnQuiet()} onClick={() => load(channel)}>
+          <button type="button" className={btnQuiet('rounded-sm')} onClick={() => load(channel)}>
             刷新
           </button>
-          <button type="button" className={btnQuiet()} disabled={busy} onClick={clear}>
+          <button type="button" className={btnQuiet('rounded-sm')} disabled={busy} onClick={clear}>
             清空
           </button>
         </div>
       </header>
 
       {rows === null ? (
-        <Empty>正在读取召回留痕…</Empty>
+        <kit.Empty>正在读取召回留痕…</kit.Empty>
       ) : rows.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-outline-variant px-4 py-8 text-center">
-          <p className="text-[13px] text-on-surface">还没有召回记录</p>
-          <p className="mx-auto mt-1.5 max-w-[560px] text-[12px] leading-relaxed text-on-surface-variant">
-            当对话、智能体群聊或潜意识里的执行调用检索工具（
-            <span className="mx-1 font-mono text-[11.5px]">search_vector_chunks</span>/
-            <span className="mx-1 font-mono text-[11.5px]">recall_memory</span>/ 图谱查询）时，
-            这里会记下它问了什么、拿到了什么。
-          </p>
-        </div>
+        <kit.Empty>
+          还没有召回记录 ——
+          当对话、智能体群聊或潜意识里的执行调用检索工具（
+          <span className="mx-1 font-mono">search_vector_chunks</span>/
+          <span className="mx-1 font-mono">recall_memory</span>/ 图谱查询）时，
+          这里会记下它问了什么、拿到了什么。
+        </kit.Empty>
       ) : (
         <ul className="flex flex-col gap-2">
           {rows.map((r) => (
@@ -1139,24 +1013,24 @@ function RagRecallPage({
               <button
                 type="button"
                 onClick={() => setActive(r)}
-                className="flex w-full flex-col gap-1.5 rounded-2xl bg-surface-container-low px-4 py-3 text-left shadow-sm transition hover:bg-surface-container"
+                className="flex w-full flex-col gap-1.5 border border-line px-4 py-3 text-left transition hover:border-line-strong hover:bg-accent-soft"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <RagChannelChip channel={r.channel} />
-                  <span className="font-mono text-[12px] text-accent">{r.tool}</span>
-                  <span className="rounded-full bg-surface-container-highest px-2 py-0.5 text-[10.5px] text-on-surface-variant">
-                    {SUB_RAG_SOURCE_LABELS[r.source] ?? r.source}
-                  </span>
-                  <span className="text-[11px] text-on-surface-variant">{fmtDay(r.createdAt)}</span>
-                  <span className="ml-auto shrink-0 font-mono text-[11px] text-outline">
+                  <kit.Badge tone={RAG_CHANNEL_TONE[r.channel]}>
+                    {SUB_RAG_CHANNEL_LABELS[r.channel] ?? r.channel}
+                  </kit.Badge>
+                  <span className="mono text-xs font-bold text-fg">{r.tool}</span>
+                  <kit.Badge>{SUB_RAG_SOURCE_LABELS[r.source] ?? r.source}</kit.Badge>
+                  <span className="mono text-2xs text-dim">{fmtDay(r.createdAt)}</span>
+                  <span className="mono ml-auto shrink-0 text-2xs text-dim">
                     {fmtNum(r.resultChars)} 字
                   </span>
                 </div>
-                <p className="text-[12px] text-on-surface-variant">
-                  <span className="text-outline">查询 </span>
+                <p className="text-xs text-muted">
+                  <span className="text-faint">查询 </span>
                   <span className="font-mono">{textPreview(r.query, 120) || '—'}</span>
                 </p>
-                <p className="line-clamp-2 text-[11.5px] leading-relaxed text-on-surface-variant">
+                <p className="line-clamp-2 text-xs leading-relaxed text-muted">
                   {textPreview(r.result, 200) || '（无返回）'}
                 </p>
               </button>
@@ -1182,15 +1056,15 @@ function RagRecallDetail({ row, onClose }: { row: SubRagRecall; onClose: () => v
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
-          <p className="text-[11px] font-medium tracking-[0.08em] text-outline">查询参数</p>
+          <p className="ui-label">查询参数</p>
           <pre className="scrollbar-slim max-h-[20vh] overflow-auto rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-[11.5px] leading-5 whitespace-pre-wrap text-muted">
             {row.query ? jsonPretty(row.query) : '（无参数）'}
           </pre>
         </div>
         <div className="flex flex-col gap-1.5">
-          <p className="text-[11px] font-medium tracking-[0.08em] text-outline">
+          <p className="ui-label">
             回给模型的原始数据
-            <span className="ml-2 font-normal text-hint">
+            <span className="mono ml-2 font-normal tracking-normal text-hint">
               共 {fmtNum(row.resultChars)} 字（大模型调用该工具实际拿到的内容）
             </span>
           </p>
@@ -1206,6 +1080,7 @@ function RagRecallDetail({ row, onClose }: { row: SubRagRecall; onClose: () => v
 /* ---------------- 执行详情（组装出的上下文 / 思维链 / 写库清单） ---------------- */
 
 function ResultDetail({ detail, onClose }: { detail: SubExec; onClose: () => void }) {
+  const kit = usePageKit()
   const [tab, setTab] = useState<'out' | 'ctx' | 'trace' | 'edit'>('out')
   const writes = detail.edits
   return (
@@ -1215,7 +1090,7 @@ function ResultDetail({ detail, onClose }: { detail: SubExec; onClose: () => voi
       onClose={onClose}
       width={760}
     >
-      <div className="mb-3 flex w-fit gap-1 rounded-full border border-line p-1">
+      <div className="mb-3 flex w-fit border border-line-strong">
         {(
           [
             ['out', `结论${detail.output ? '' : '（空）'}`],
@@ -1224,30 +1099,23 @@ function ResultDetail({ detail, onClose }: { detail: SubExec; onClose: () => voi
             ['edit', `写库 ${writes.length}`],
           ] as const
         ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setTab(k)}
-            className={`rounded-full px-3 py-1 text-[12px] font-semibold transition ${
-              tab === k ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-fg/5 hover:text-fg'
-            }`}
-          >
+          <ViewTab key={k} active={tab === k} onClick={() => setTab(k)}>
             {label}
-          </button>
+          </ViewTab>
         ))}
       </div>
 
       {tab === 'out' && (
         <div className="text-[13px] leading-relaxed text-fg">
           {detail.error && (
-            <p className="mb-2 border-l-2 border-red-500 bg-fg/[0.03] px-2 py-1 text-[12.5px] text-hint">
+            <p className="mb-2 border-l-2 border-danger bg-fg/[0.03] px-2 py-1 text-[12.5px] text-muted">
               {detail.error}
             </p>
           )}
           {detail.output ? (
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.output}</ReactMarkdown>
           ) : (
-            <Empty>本次未产出结论文本</Empty>
+            <kit.Empty>本次未产出结论文本</kit.Empty>
           )}
         </div>
       )}
@@ -1266,14 +1134,14 @@ function ResultDetail({ detail, onClose }: { detail: SubExec; onClose: () => voi
 
       {tab === 'trace' && (
         <div className="flex flex-col gap-2">
-          {detail.trace.length === 0 && <Empty>无过程记录</Empty>}
+          {detail.trace.length === 0 && <kit.Empty>无过程记录</kit.Empty>}
           {detail.trace.map((s, i) => (
             <div key={i} className="rounded-md border border-line">
               <div className="flex items-center gap-2 border-b border-line bg-fg/[0.03] px-2.5 py-1.5">
-                <span className="text-[11px] font-semibold tracking-wide text-faint">
+                <span className="mono text-2xs font-bold tracking-wide text-faint">
                   {s.type === 'tool' ? '工具调用' : '思考'}
                 </span>
-                {s.name && <span className="font-mono text-[11.5px] text-accent">{s.name}</span>}
+                {s.name && <span className="mono text-xs font-bold text-fg">{s.name}</span>}
               </div>
               <pre className="scrollbar-slim max-h-[40vh] overflow-auto p-2.5 font-mono text-[11.5px] leading-5 whitespace-pre-wrap text-muted">
                 {s.args ? jsonPretty(s.args) : (s.text ?? '')}
@@ -1295,18 +1163,18 @@ function ResultDetail({ detail, onClose }: { detail: SubExec; onClose: () => voi
 
       {tab === 'edit' && (
         <div className="flex flex-col gap-2">
-          {writes.length === 0 && <Empty>本次未写库</Empty>}
+          {writes.length === 0 && <kit.Empty>本次未写库</kit.Empty>}
           {writes.map((w) => (
             <div key={w.id} className="rounded-md border border-line">
               <div className="flex items-center justify-between gap-2 border-b border-line bg-fg/[0.03] px-2.5 py-1.5">
-                <span className="font-mono text-[11.5px] text-accent">{w.tool}</span>
-                <span className="text-[11px] text-hint">{fmtTime(w.createdAt)}</span>
+                <span className="mono text-xs font-bold text-fg">{w.tool}</span>
+                <span className="mono text-2xs text-dim">{fmtTime(w.createdAt)}</span>
               </div>
               <pre className="scrollbar-slim max-h-[28vh] overflow-auto p-2.5 font-mono text-[11.5px] leading-5 whitespace-pre-wrap text-muted">
                 {jsonPretty(w.args)}
               </pre>
               {w.summary && (
-                <p className="border-t border-line px-2.5 py-1.5 text-[12px] text-faint">
+                <p className="border-t border-line px-2.5 py-1.5 text-xs text-faint">
                   {w.summary}
                 </p>
               )}
@@ -1337,6 +1205,8 @@ export default function Subconscious() {
   const [live, setLive] = useState(false)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
+
+  const kit = usePageKit()
 
   const notify = useCallback(
     (kind: 'success' | 'error', msg: string) => setToast({ kind, msg }),
@@ -1477,9 +1347,17 @@ export default function Subconscious() {
   const heartbeatOn = state?.heartbeatEnabled ?? false
 
   return (
-    <section className="flex flex-col gap-6 pt-6 pb-4">
+    <kit.Page
+      title="潜意识"
+      en="SUBCONSCIOUS"
+      meta={
+        <kit.Badge tone={live ? 'ok' : 'warn'}>
+          {live ? 'STREAM LIVE' : 'RECONNECTING'}
+        </kit.Badge>
+      }
+    >
       {/* 顶部滑块：dashboard（原页面）/ heartbeat（主会话总线）/ 提示词 & 上下文工程 / 子代理 & 任务计划 / RAG 召回 / 插槽 / 工具（内部页） */}
-      <div className="flex w-fit shrink-0 gap-1 rounded-full border border-line p-1">
+      <div className="flex w-fit shrink-0 flex-wrap border border-line-strong">
         <ViewTab active={view === 'dashboard'} onClick={() => setView('dashboard')}>
           dashboard
         </ViewTab>
@@ -1504,35 +1382,36 @@ export default function Subconscious() {
       </div>
 
       {view === 'dashboard' && (
-        <div className="flex flex-col gap-6">
-          {/* 心跳控制卡（MD3 elevated card）：状态 + 常驻开关 + 节拍 + 手动敲一拍 */}
-          <div className="rounded-2xl bg-surface-container-low px-4 py-4 shadow-sm sm:px-5">
+        <div className="flex flex-col gap-3.5">
+          {/* 心跳控制：状态 + 常驻开关 + 节拍 + 手动敲一拍 */}
+          <kit.Panel
+            title="心跳控制"
+            meta={running ? 'RUNNING' : heartbeatOn ? 'STANDBY' : 'HALTED'}
+          >
             <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
               <div className="flex min-w-0 items-start gap-3">
                 <span
                   className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
-                    running ? 'animate-pulse bg-accent' : heartbeatOn ? 'bg-accent' : 'bg-outline'
+                    running ? 'animate-pulse bg-accent' : heartbeatOn ? 'bg-accent' : 'bg-fg/30'
                   }`}
                 />
                 <div className="min-w-0">
-                  <p className="text-[15px] font-medium text-on-surface">潜意识</p>
-                  <p className="mt-0.5 text-[12px] text-on-surface-variant">
+                  <p className="text-sm font-medium text-fg">潜意识</p>
+                  <p className="mt-0.5 text-xs text-muted">
                     心跳主会话 + 子代理 / 任务计划 · 每拍由主会话决定派谁
                   </p>
-                  <p className="mt-1.5 text-[12px] text-on-surface-variant">
+                  <p className="mono mt-1.5 text-2xs text-dim">
                     {running ? '本轮心跳执行中' : heartbeatOn ? '常驻心跳待命' : '心跳已停摆'}
-                    <span className="mx-1.5 text-outline">·</span>
+                    <span className="mx-1.5">·</span>
                     节拍 {state?.tickMs ?? '—'}ms
-                    <span className="mx-1.5 text-outline">·</span>
-                    <span className={live ? 'text-accent' : ''}>
-                      {live ? '观测台已连' : '观测台重连中…'}
-                    </span>
+                    <span className="mx-1.5">·</span>
+                    {live ? '观测台已连' : '观测台重连中…'}
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 pr-1 text-[13px] text-on-surface-variant">
+                <label className="flex items-center gap-2 pr-1 text-[13px] text-muted">
                   <Switch on={heartbeatOn} onToggle={toggleHeartbeat} />
                   常驻心跳
                 </label>
@@ -1550,47 +1429,41 @@ export default function Subconscious() {
                 </button>
               </div>
             </div>
-          </div>
+          </kit.Panel>
 
-          {/* 最近事件：每批一条长条（MD3 卡片），条内内联本批的各次执行 */}
-          <section className="flex flex-col gap-3">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-[15px] font-medium text-on-surface">最近事件</h2>
-              {runs.length > 0 && (
-                <p className="text-[12px] text-on-surface-variant">最近 {runs.length} 批</p>
-              )}
-            </div>
-
+          {/* 最近事件：每批一条长条，条内内联本批的各次执行 */}
+          <kit.Panel
+            title="最近事件"
+            meta={runs.length > 0 ? `LAST ${runs.length} BATCHES` : undefined}
+          >
             {runs.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-outline-variant">
-                <Empty>还没有跑过一轮心跳</Empty>
-              </div>
+              <kit.Empty>还没有跑过一轮心跳</kit.Empty>
             ) : (
               <div className="flex flex-col gap-2">
                 {runs.map(({ run, execs }) => (
                   <article
                     key={run.id}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-surface-container-low px-4 py-3 shadow-sm transition hover:bg-surface-container"
+                    className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-line px-3.5 py-3 transition hover:border-line-strong hover:bg-accent-soft"
                   >
                     <span className="flex shrink-0 items-center gap-2">
                       <StatusDot status={run.status} />
-                      <span className="rounded-full bg-surface-container-highest px-2 py-0.5 text-[12px] font-medium text-on-surface">
+                      <span className="mono border border-line px-1.5 py-0.5 text-2xs font-bold text-fg">
                         #{run.beat}
                       </span>
-                      <span className="text-[12px] text-on-surface-variant">
+                      <span className="mono text-2xs text-dim">
                         {run.trigger === 'manual' ? '手动' : run.trigger === 'chat' ? '对话委托' : '心跳'}
-                        <span className="mx-1.5 text-outline">·</span>
+                        <span className="mx-1.5">·</span>
                         {fmtDay(run.startedAt)}
-                        <span className="mx-1.5 text-outline">·</span>
+                        <span className="mx-1.5">·</span>
                         {fmtDur(run.startedAt, run.finishedAt)}
-                        <span className="mx-1.5 text-outline">·</span>
+                        <span className="mx-1.5">·</span>
                         {run.agentCount} 次执行
                         {run.note ? ` · ${run.note}` : ''}
                       </span>
                     </span>
 
                     {execs.length === 0 ? (
-                      <span className="text-[12px] text-on-surface-variant">本批没有执行产出</span>
+                      <span className="text-2xs text-dim">本批没有执行产出</span>
                     ) : (
                       <div className="flex flex-1 flex-wrap items-center gap-1.5">
                         {execs.map((r) => (
@@ -1599,19 +1472,17 @@ export default function Subconscious() {
                             type="button"
                             onClick={() => openDetail(r.id)}
                             title={textPreview(r.error ?? r.output, 300) || '（无结论）'}
-                            className="flex max-w-full items-center gap-2 rounded-lg border border-outline-variant bg-surface-variant px-2.5 py-1.5 text-left transition hover:bg-fg/8 active:bg-fg/12"
+                            className="flex max-w-full items-center gap-2 border border-line px-2.5 py-1.5 text-left transition hover:border-line-strong hover:bg-accent-soft"
                           >
                             <StatusDot status={r.status} />
-                            <span className="max-w-[180px] truncate text-[12px] font-medium text-on-surface">
+                            <span className="max-w-[180px] truncate text-xs font-medium text-fg">
                               {r.title ?? '（未知）'}
                             </span>
-                            <span className="shrink-0 text-[11px] text-on-surface-variant">
+                            <span className="mono shrink-0 text-2xs text-dim">
                               {fmtDur(r.startedAt, r.finishedAt)}
                             </span>
                             {r.edits.length > 0 && (
-                              <span className="shrink-0 rounded-full bg-surface-container-highest px-1.5 py-0.5 text-[10.5px] text-on-surface-variant">
-                                写库 {r.edits.length}
-                              </span>
+                              <kit.Badge>写库 {r.edits.length}</kit.Badge>
                             )}
                           </button>
                         ))}
@@ -1621,8 +1492,7 @@ export default function Subconscious() {
                 ))}
               </div>
             )}
-          </section>
-
+          </kit.Panel>
         </div>
       )}
 
@@ -1661,6 +1531,6 @@ export default function Subconscious() {
       {detail && <ResultDetail detail={detail} onClose={() => setDetail(null)} />}
 
       <Toast message={toast?.msg ?? null} kind={toast?.kind} onClose={() => setToast(null)} />
-    </section>
+    </kit.Page>
   )
 }

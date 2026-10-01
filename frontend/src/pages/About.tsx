@@ -5,11 +5,16 @@
  * ② 业务流程——知识从「导入」到「被问答/检索」的主线步骤（每个阶段标注对应页面入口，可直接跳转）；
  * ③ 数据流向——程序员视角的数据流树状图（前端 / 后端子 Tab，见 DataFlow.tsx）。
  * 纯静态展示页，不请求后端。
+ *
+ * 呈现骨架交给 PageKit：主 Tab（关于 / 业务流程 / 数据流向）经索引映射走 kit.Range
+ * 挂在 kit.Page 的 meta 槽位，hero（知识球 canvas）与业务流程时间线的结构保持不变。
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import DataFlow from './DataFlow'
 import { BRAND } from '../branding'
+import { btnQuiet } from '../components/ui'
+import { usePageKit } from '../kit'
 
 /** 关于页 Tab 键 */
 type AboutTab = 'about' | 'flow' | 'data'
@@ -19,21 +24,6 @@ const TABS: { key: AboutTab; label: string }[] = [
   { key: 'flow', label: '业务流程' },
   { key: 'data', label: '数据流向' },
 ]
-
-/** 主 Tab 切换按钮 */
-function MainTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-4 py-1.5 text-[12.5px] font-semibold transition ${
-        active ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-fg/5 hover:text-fg'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
 
 /* ---------------- 关于：Mono hero + 知识球 ---------------- */
 
@@ -385,12 +375,12 @@ const STAGES: Stage[] = [
   },
 ]
 
-/** 阶段跳转入口：小号链接按钮（有 route 时才渲染） */
+/** 阶段跳转入口：小号链接按钮（有 route 时才渲染），走 .ui-btn 于是形状随主题 */
 function RouteLink({ route, label }: { route: string; label: string }) {
   return (
     <a
       href={`#${route}`}
-      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line px-3 py-1 text-[12px] font-medium text-muted transition hover:border-line-strong hover:bg-fg/5 hover:text-fg"
+      className={`${btnQuiet('rounded-full')} shrink-0 text-xs [--ui-btn-px:12px] [--ui-btn-py:4px]`}
     >
       前往{label}
       <span aria-hidden="true">→</span>
@@ -399,31 +389,34 @@ function RouteLink({ route, label }: { route: string; label: string }) {
 }
 
 export default function About() {
+  const kit = usePageKit()
   const [tab, setTab] = useState<AboutTab>('about')
 
   return (
-    <section className="flex flex-col gap-8 pt-6 pb-4">
-      {/* 主 Tab：关于（项目定位）/ 业务流程（用户视角）/ 数据流向（程序员视角） */}
-      <div className="flex w-fit gap-1 rounded-full border border-line p-1">
-        {TABS.map((t) => (
-          <MainTab key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>
-            {t.label}
-          </MainTab>
-        ))}
-      </div>
-
+    /* 页面骨架交给 kit：主 Tab（关于 / 业务流程 / 数据流向）经索引映射走 kit.Range，挂在页头 meta 槽 */
+    <kit.Page
+      title="关于"
+      en="ABOUT"
+      meta={
+        <kit.Range
+          options={TABS.map((t, i) => ({ value: i, label: t.label }))}
+          value={TABS.findIndex((t) => t.key === tab)}
+          onChange={(v) => setTab(TABS[v].key)}
+        />
+      }
+    >
       {tab === 'about' && <Intro />}
 
       {tab === 'flow' && (
         /* 主线：知识入库 → 知识消费 的分步说明（左侧时间线 + 右侧说明卡片） */
         <div className="flex flex-col gap-6">
-          <h2 className="text-[15px] font-semibold text-fg">整体业务流程</h2>
+          <h2 className="ui-heading text-[15px]">整体业务流程</h2>
           <ol className="flex flex-col">
             {STAGES.map((s, i) => (
               <li key={s.no} className="flex gap-4">
-                {/* 左侧：序号圆点 + 竖直连线 */}
+                {/* 左侧：序号圆点（mono 读数）+ 竖直连线 */}
                 <div className="flex flex-col items-center">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-[13px] font-semibold text-accent-fg">
+                  <span className="mono flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-bold text-accent-fg">
                     {s.no}
                   </span>
                   {i < STAGES.length - 1 && <span aria-hidden="true" className="w-px flex-1 bg-line" />}
@@ -432,7 +425,7 @@ export default function About() {
                 {/* 右侧：阶段卡片 */}
                 <div className="flex-1 pb-6">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-[14px] font-semibold text-fg">{s.title}</h3>
+                    <h3 className="ui-heading text-[14px]">{s.title}</h3>
                     {s.route && s.routeLabel && <RouteLink route={s.route} label={s.routeLabel} />}
                   </div>
                   <p className="mt-2 text-[13px] leading-relaxed text-muted">{s.intro}</p>
@@ -452,6 +445,6 @@ export default function About() {
       )}
 
       {tab === 'data' && <DataFlow />}
-    </section>
+    </kit.Page>
   )
 }

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import type { SearchHit } from '../api/client'
+import { Card } from './Card'
+import { usePageKit } from '../kit'
 
 /** 命中词高亮（mark 语义令牌：随主题的点缀底 + 前景字，无圆角、无彩） */
 export function Mark({ text, terms }: { text: string; terms: string[] }) {
@@ -30,11 +32,11 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** chunk 状态标签（RAG 测试模式）：Tailwind 风格 pill（圆角 + 描边 + 淡底），复用分析页配色 */
-const STATUS_TONES: Record<string, { cls: string; label: string }> = {
-  enabled: { cls: 'border-secondary/40 bg-secondary/10 text-secondary', label: '启用' },
-  disabled: { cls: 'border-line bg-fg/5 text-hint', label: '禁用' },
-  unanalyzed: { cls: 'border-line bg-fg/5 text-faint', label: '未分析' },
+/** chunk 状态标签（RAG 测试模式）：kit.Badge 印章式徽章，语义与 Analyze 页 ChunkStatusBadge 一致 */
+const STATUS_TONES: Record<string, { tone: 'ok' | 'default'; label: string }> = {
+  enabled: { tone: 'ok', label: '启用' },
+  disabled: { tone: 'default', label: '禁用' },
+  unanalyzed: { tone: 'default', label: '未分析' },
 }
 
 /** 来源文件名：文章 slug / note 路径补全 .md 扩展名（外链与内部文档 ref 原样返回） */
@@ -44,8 +46,10 @@ function fileName(ref: string): string {
   return base.includes('.') ? ref : `${ref}.md`
 }
 
-/** 单条搜索命中：文档行 / 图谱锚点实体行（Google 结果式：面包屑 + 链接标题 + 摘要） */
+/** 单条搜索命中：文档行 / 图谱锚点实体行（Google 结果式：面包屑 + 链接标题 + 摘要）；
+ *  外层容器交给主题化 Card（interactive：悬停描边加强 + 抬升），内部排版保留语义类 */
 export default function ResultCard({ hit }: { hit: SearchHit }) {
+  const kit = usePageKit()
   const isEntity = hit.kind === 'entity'
   const isChunk = hit.kind === 'chunk'
   const statusTone = hit.status ? STATUS_TONES[hit.status] : undefined
@@ -55,47 +59,42 @@ export default function ResultCard({ hit }: { hit: SearchHit }) {
   const graphHref = isEntity && hit.entityId ? `#/graph?entity=${hit.entityId}` : null
   const href = external ? hit.sourceRef : (docHref ?? graphHref)
   return (
-    <article className="py-6">
-      <div className="flex items-center gap-3 text-[11px] text-faint">
+    <Card as="article" interactive>
+      {/* 面包屑行：等宽元数据（类型牌 / 来源 / chunk 号 / 状态徽章 / 相似度读数） */}
+      <div className="mono flex items-center gap-3 text-xs text-faint">
         <span
           className={
             isEntity
-              ? 'font-semibold uppercase tracking-[0.18em] text-fg'
-              : 'font-medium uppercase tracking-[0.18em]'
+              ? 'font-bold uppercase tracking-[0.18em] text-fg'
+              : 'font-bold uppercase tracking-[0.18em]'
           }
         >
           {isEntity ? 'Entity' : isChunk ? 'Chunk' : hit.kind === 'doc' ? 'Document' : hit.source || 'note'}
         </span>
         {hit.sourceRef && (
           <>
-            <span className="text-faint">/</span>
+            <span>/</span>
             <span className="truncate">{fileName(hit.sourceRef)}</span>
           </>
         )}
         {isChunk && hit.chunkId != null && (
           <>
-            <span className="text-faint">/</span>
-            <span className="shrink-0 font-mono">#{hit.chunkId}</span>
+            <span>/</span>
+            <span className="shrink-0">#{hit.chunkId}</span>
           </>
         )}
         {isChunk && statusTone && (
-          <span
-            className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none ${statusTone.cls}`}
-          >
-            {statusTone.label}
-          </span>
+          <kit.Badge tone={statusTone.tone}>{statusTone.label}</kit.Badge>
         )}
-        <span className="ml-auto shrink-0 font-mono text-faint">
-          {hit.score.toFixed(3)}
-        </span>
+        <span className="ml-auto shrink-0">{hit.score.toFixed(3)}</span>
       </div>
-      <h3 className="mt-2.5 text-[21px] font-bold leading-snug tracking-tight">
+      <h3 className="mt-2.5 text-xl font-bold leading-snug tracking-tight">
         {href ? (
           <a
             href={href}
             target={external ? '_blank' : undefined}
             rel={external ? 'noreferrer' : undefined}
-            className="text-accent transition hover:underline"
+            className="text-fg transition hover:text-accent hover:underline"
           >
             <Mark text={hit.title} terms={hit.matched} />
           </a>
@@ -106,10 +105,10 @@ export default function ResultCard({ hit }: { hit: SearchHit }) {
         )}
       </h3>
       {!isEntity && (
-        <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-muted [overflow-wrap:anywhere]">
+        <p className="mt-2 max-w-2xl text-base leading-relaxed text-muted [overflow-wrap:anywhere]">
           <Mark text={hit.snippet} terms={hit.matched} />
         </p>
       )}
-    </article>
+    </Card>
   )
 }

@@ -1,6 +1,14 @@
+/**
+ * 文档页：博客式文章分页列表（索引：标题|摘要|url），点击进入 markdown 详情。
+ *
+ * 本页只持有数据与分页时序；列表行的形态、空态、分页按钮的样式全部来自 PageKit ——
+ * 于是同一页在 flat / Endfield / BlueArchive 下分别是「表格感 / 仪表感 / 卡片流」。
+ */
+
 import { useEffect, useState } from 'react'
 import { articles, loginUrlOf, type ArticlePage } from '../api/client'
 import Toast from '../components/Toast'
+import { usePageKit } from '../kit'
 
 const SIZE = 10
 
@@ -25,14 +33,6 @@ function pageItems(current: number, total: number): (number | 'dots')[] {
   return out
 }
 
-/** 分页按钮：30px 正圆 ghost 风格（Tailwind 圆形分页），当前页点缀色实底。
- *  注意：text-muted 只挂在 idle 态——若挂基类会与激活态 text-accent-fg 同层竞争，
- *  且 .text-muted 在样式表中后置，会把激活页码文字覆盖成灰色。 */
-const pagerBtn =
-  'inline-flex h-[30px] w-[30px] items-center justify-center rounded-full text-[12px] font-semibold transition'
-const pagerIdle = `${pagerBtn} text-muted hover:bg-fg/5 hover:text-fg`
-const pagerActive = `${pagerBtn} bg-accent text-accent-fg`
-
 function Chevron({ dir }: { dir: 'left' | 'right' }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
@@ -47,12 +47,15 @@ function Chevron({ dir }: { dir: 'left' | 'right' }) {
   )
 }
 
-/** 文档页：博客式文章分页列表（索引：标题|摘要|url），点击进入 markdown 详情 */
+/** 分页按钮：走 .ui-btn，于是形状（胶囊 / 切角）随主题 */
+const PAGER = 'ui-btn ui-btn--quiet h-[30px] w-[30px] shrink-0 rounded-none [--ui-btn-px:0px] [--ui-btn-py:0px]'
+const PAGER_ON = 'ui-btn ui-btn--primary h-[30px] w-[30px] shrink-0 rounded-none [--ui-btn-px:0px] [--ui-btn-py:0px]'
+
 export default function Articles() {
+  const kit = usePageKit()
   const [page, setPage] = useState(1)
   const [data, setData] = useState<ArticlePage | null>(null)
   const [loading, setLoading] = useState(true)
-  /** 列表加载失败轻提示（message box，替代页内错误文案） */
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
@@ -84,54 +87,62 @@ export default function Articles() {
   const totalPages = Math.max(1, Math.ceil(total / SIZE))
 
   return (
-    <section className="flex min-h-[calc(100dvh-8.5rem)] flex-col pt-6">
-      {/* 列表加载失败轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
+    <kit.Page
+      title="文档"
+      en="ARTICLES"
+      meta={<span className="text-sm text-muted">共 {total} 篇</span>}
+    >
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] text-faint">共 {total} 篇</span>
-      </div>
 
-      <div className="mt-3 min-h-0 flex-1">
-        {data && data.items.length === 0 && (
-          <p className="border border-dashed border-line p-6 text-[13px] leading-relaxed text-faint">
-            还没有文档 —— 通过 POST /api/admin/articles 发布（markdown 原文存 data/article，索引进
-            documents 表）。
-          </p>
-        )}
-        {data && data.items.length > 0 && (
-          <ul className="divide-y divide-line">
-            {data.items.map((a) => (
-              <li key={a.url}>
-                <a href={`#/article/${encodeURIComponent(a.url)}`} className="group block py-4">
-                  <div className="flex items-baseline justify-between gap-4">
-                    <h2 className="text-[13.5px] font-medium text-accent underline-offset-4 transition group-hover:underline">
-                      {a.title}
-                    </h2>
-                    <span className="shrink-0 text-[11px] text-faint">{fmtDate(a.createdAt)}</span>
-                  </div>
-                  {a.summary && (
-                    <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{a.summary}</p>
-                  )}
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-        {/* 分页：在分割线以下的剩余空间内垂直居中（与 footer 等距） */}
-        <div className="flex min-h-0 flex-1 items-center justify-center">
+      {data && data.items.length === 0 && (
+        <kit.Empty>
+          还没有文档 —— 通过 POST /api/admin/articles 发布（markdown 原文存 data/article，索引进
+          documents 表）。
+        </kit.Empty>
+      )}
+
+      {data && data.items.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {data.items.map((a) => (
+            <kit.Row
+              key={a.url}
+              href={`#/article/${encodeURIComponent(a.url)}`}
+              className="group items-start gap-4"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-md font-semibold text-fg transition group-hover:text-accent group-hover:underline group-hover:underline-offset-4">
+                  {a.title}
+                </p>
+                {a.summary && (
+                  <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted">{a.summary}</p>
+                )}
+              </div>
+              <span className="mono shrink-0 pt-0.5 text-2xs text-faint">
+                {fmtDate(a.createdAt)}
+              </span>
+            </kit.Row>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex justify-center pt-6">
           <nav aria-label="分页" className="flex items-center gap-1">
             <button
               type="button"
               aria-label="上一页"
               disabled={page <= 1 || loading}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className={`${pagerIdle} disabled:pointer-events-none disabled:opacity-40`}
+              className={`${PAGER} disabled:pointer-events-none disabled:opacity-40`}
             >
               <Chevron dir="left" />
             </button>
             {pageItems(page, totalPages).map((it, i) =>
               it === 'dots' ? (
-                <span key={`dots-${i}`} className="flex h-[30px] items-center px-1.5 text-[12px] text-faint">
+                <span
+                  key={`dots-${i}`}
+                  className="mono flex h-[30px] items-center px-1.5 text-sm text-faint"
+                >
                   …
                 </span>
               ) : (
@@ -141,7 +152,7 @@ export default function Articles() {
                   disabled={loading || it === page}
                   aria-current={it === page ? 'page' : undefined}
                   onClick={() => setPage(it)}
-                  className={`${it === page ? pagerActive : pagerIdle} disabled:pointer-events-none`}
+                  className={`${it === page ? PAGER_ON : PAGER} mono disabled:pointer-events-none`}
                 >
                   {it}
                 </button>
@@ -152,13 +163,13 @@ export default function Articles() {
               aria-label="下一页"
               disabled={page >= totalPages || loading}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className={`${pagerIdle} disabled:pointer-events-none disabled:opacity-40`}
+              className={`${PAGER} disabled:pointer-events-none disabled:opacity-40`}
             >
               <Chevron dir="right" />
             </button>
           </nav>
         </div>
-      </div>
-    </section>
+      )}
+    </kit.Page>
   )
 }

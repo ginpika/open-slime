@@ -41,12 +41,8 @@ import {
 } from '../api/client'
 import FloatWindow from '../components/FloatWindow'
 import Toast from '../components/Toast'
-import { btnPrimary, btnQuiet, miniBtn } from '../components/ui'
-
-const INPUT =
-  'w-full rounded-md border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30'
-
-const LABEL = 'mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint'
+import { btnPrimary, btnQuiet, miniBtn, Control } from '../components/ui'
+import { usePageKit } from '../kit'
 
 /** 可编辑提示词位的长条色调（按顺序轮换；超出则回落到主色调） */
 const PART_TONES = ['note-tone-accent', 'note-tone-secondary', 'note-tone-primary']
@@ -163,21 +159,23 @@ function PromptViewer({
     <FloatWindow title={`${slot.name} · ${cur.from}`} onClose={onClose} width={860}>
       <div className="flex flex-col gap-3">
         <p className="text-[11.5px] leading-relaxed text-hint">{slot.description}</p>
-        <textarea
-          className={`${INPUT} scrollbar-slim min-h-[420px] resize-y font-mono text-[12.5px] leading-6`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-              e.preventDefault()
-              void save()
-            }
-          }}
-          spellCheck={false}
-          autoFocus
-        />
+        <Control>
+          <textarea
+            className="scrollbar-slim min-h-[420px] resize-y font-mono text-[12.5px] leading-6"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault()
+                void save()
+              }
+            }}
+            spellCheck={false}
+            autoFocus
+          />
+        </Control>
         <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
-          <span className={`text-[11px] ${dirty ? 'text-accent' : 'text-hint'}`}>
+          <span className={`text-[11px] ${dirty ? 'text-warn' : 'text-hint'}`}>
             {saving ? '保存中…' : dirty ? '有未保存的改动' : savedAt ? '已保存' : `生效：${cur.from}`}
           </span>
           <div className="flex gap-2">
@@ -218,6 +216,7 @@ function NameDialog({
   onClose: () => void
   onSubmit: (req: { name: string; content: string }) => Promise<void>
 }) {
+  const kit = usePageKit()
   const rename = mode === 'rename'
   const [name, setName] = useState(editing?.name ?? `${slot.name} 副本`)
   const [busy, setBusy] = useState(false)
@@ -240,10 +239,8 @@ function NameDialog({
       width={520}
     >
       <div className="flex flex-col gap-3.5">
-        <label className="block">
-          <span className={LABEL}>版本名</span>
+        <kit.Field label="版本名">
           <input
-            className={INPUT}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
@@ -252,7 +249,7 @@ function NameDialog({
             placeholder="如 严谨助手 / 精简版"
             autoFocus
           />
-        </label>
+        </kit.Field>
         {!rename && (
           <p className="text-[11.5px] leading-relaxed text-hint">
             新版本将以当前生效正文起稿（不覆盖内置），保存后用「查看提示词」改它。
@@ -392,6 +389,7 @@ function SlotBar({
   onRename: (v: PromptVersion) => void
   onDelete: (v: PromptVersion) => void
 }) {
+  const kit = usePageKit()
   const [menuOpen, setMenuOpen] = useState(false)
   const cur = effective(slot)
   const active = slot.versions.find((v) => v.id === slot.activeVersionId) ?? null
@@ -434,9 +432,7 @@ function SlotBar({
       {/* 2. 标题与信息：名称 + 类型 + 生效版本 */}
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="truncate text-[12.5px] font-semibold text-fg">{slot.name}</span>
-        <span className="shrink-0 rounded-full border border-line px-1.5 py-0.5 text-[10.5px] text-hint">
-          提示词
-        </span>
+        <kit.Badge>提示词</kit.Badge>
         <span className="truncate text-[11.5px] text-muted">{cur.from}</span>
       </div>
 
@@ -476,6 +472,7 @@ function SlotBar({
 /* ---------------- 长条：代码控制的运行时素材 ---------------- */
 
 function RuntimeBar({ name, description }: { name: string; description: string }) {
+  const kit = usePageKit()
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
@@ -485,9 +482,7 @@ function RuntimeBar({ name, description }: { name: string; description: string }
 
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="truncate text-[12.5px] font-medium text-muted">{name}</span>
-        <span className="shrink-0 rounded-full border border-line px-1.5 py-0.5 text-[10.5px] text-hint">
-          运行时
-        </span>
+        <kit.Badge>运行时</kit.Badge>
         <span className="truncate text-[11.5px] text-hint">代码控制，运行时填充</span>
       </div>
 
@@ -525,11 +520,7 @@ function CategoryTab({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-full border px-3.5 py-1 text-[12px] font-medium transition ${
-        active
-          ? 'border-fg bg-fg text-bg'
-          : 'border-line text-muted hover:border-line-strong hover:bg-fg/5 hover:text-fg'
-      }`}
+      className={active ? btnPrimary() : btnQuiet()}
     >
       {children}
     </button>
@@ -553,6 +544,7 @@ type PromptApi = {
  * 全局（潜意识 · 提示词）：维护首页对话在用的那一套提示词。
  */
 export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
+  const kit = usePageKit()
   const [data, setData] = useState<PromptsView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -650,7 +642,7 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
   if (error) {
     return (
       <div className="flex flex-col gap-2">
-        <p className="text-[12.5px] text-hint">{error}</p>
+        <kit.Note tone="warn">{error}</kit.Note>
         <button type="button" className={`${miniBtn} self-start`} onClick={() => void load()}>
           重试
         </button>
@@ -728,7 +720,7 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
   return (
     <div className="flex max-w-[900px] flex-col gap-5">
       <header className="flex flex-col gap-1.5">
-        <h2 className="text-[13px] font-semibold text-fg">提示词 &amp; 上下文工程</h2>
+        <h2 className="ui-heading text-sm">提示词 &amp; 上下文工程</h2>
         <p className="text-[12.5px] leading-relaxed text-muted">
           {peerId
             ? '「系统级提示词」是这位智能体自己的一套，改了只影响它；「圆桌」那一类是全桌共用的协作机制（协作规程 + 调度文书），改了所有成员都受影响。每个上下文下方，长条自上而下就是交给模型的拼装顺序。'
@@ -754,7 +746,7 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
           <section key={ctx.key} className="flex flex-col gap-2.5">
             {/* 一个大类下多个上下文时才需要小标题；只有一个时描述已足够说明 */}
             {category.contexts.length > 1 && (
-              <h3 className="text-[12.5px] font-semibold text-fg">{ctx.name}</h3>
+              <h3 className="ui-heading text-[13px]">{ctx.name}</h3>
             )}
             <p className="text-[11.5px] leading-relaxed text-faint">{ctx.description}</p>
 
@@ -789,9 +781,7 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
           </section>
         ))}
 
-        <p className="text-[11.5px] leading-relaxed text-hint">
-          虚线灰块是代码控制的运行时素材，位置由 API 协议固定，不可拖拽。
-        </p>
+        <kit.Note>虚线灰块是代码控制的运行时素材，位置由 API 协议固定，不可拖拽。</kit.Note>
       </div>
 
       {viewerSlot && (

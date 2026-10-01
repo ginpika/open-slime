@@ -1,7 +1,15 @@
+/**
+ * 文档导入页：粘贴文本 → 直接作为 markdown 文章保存（data/article/{url}.md）
+ *
+ * 呈现来自 PageKit：编辑器本体是表单控件（走令牌，圆角/配色/字体随主题），
+ * 字数与提交动作放进 kit.Toolbar，结果卡与底部说明换成 kit.Panel / kit.Note。
+ */
+
 import { useState } from 'react'
 import { importArticle, loginUrlOf, type ImportResult } from '../api/client'
 import Toast from '../components/Toast'
 import { btnPrimary } from '../components/ui'
+import { usePageKit } from '../kit'
 
 /** 从 hexo/hugo front-matter（--- YAML / +++ TOML 头部块）中提取 title；无则返回 null */
 function frontMatterTitle(content: string): string | null {
@@ -27,8 +35,12 @@ function frontMatterTitle(content: string): string | null {
   return null
 }
 
-/** 文档导入页：粘贴文本 → 直接作为 markdown 文章保存（data/article/{url}.md） */
+/** 表单控件基类：圆角/描边/字体全部走令牌，因此五套主题自适应 */
+const FIELD =
+  'w-full rounded-md border border-line bg-bg px-3.5 py-2.5 text-base text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25'
+
 export default function Import() {
+  const kit = usePageKit()
   const [content, setContent] = useState('')
   const [title, setTitle] = useState('')
   /** 上次自动填入的标题：标题栏为空或仍等于它时才允许自动覆盖，避免冲掉用户手动输入 */
@@ -68,59 +80,60 @@ export default function Import() {
   }
 
   return (
-    <section className="flex min-h-[calc(100dvh-8.5rem)] flex-col pt-6">
-      {/* 导入失败轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
+    <kit.Page
+      title="文档导入"
+      en="IMPORT"
+      meta={<span className="text-sm text-muted">粘贴 Markdown → 保存为文章</span>}
+    >
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
-      {/* 导入区域：文本输入 + 导入按钮 */}
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-baseline justify-between">
-          <h1 className="text-[14px] font-semibold text-fg">文档导入</h1>
-          <span className="text-[11px] text-faint">粘贴 Markdown → 保存为文章</span>
-        </div>
+
+      <div className="flex min-h-[calc(100dvh-18rem)] flex-col gap-3">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="文章标题（粘贴 hexo / hugo 文档时自动识别 front-matter 的 title，可修改）"
           spellCheck={false}
-          className="mt-3 w-full rounded-md border border-line bg-bg px-3.5 py-2.5 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30"
+          className={FIELD}
         />
         <textarea
           value={content}
           onChange={(e) => onContentChange(e.target.value)}
           placeholder="在此粘贴或输入文档内容…（支持 Markdown / 纯文本）"
           spellCheck={false}
-          className="scrollbar-slim mt-2 min-h-[320px] w-full flex-1 resize-none rounded-md border border-line bg-bg p-4 text-[13px] leading-relaxed text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30"
+          className={`scrollbar-slim min-h-[320px] flex-1 resize-none rounded-md border border-line bg-bg p-4 text-base leading-relaxed text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25`}
         />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <span className="text-[11px] text-faint">{content.length} 字</span>
-          <button
-            type="button"
-            onClick={() => void submit()}
-            disabled={importing || !content.trim()}
-            className={`${btnPrimary('rounded-md')} disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            {importing ? '导入中 …' : '导入'}
-          </button>
-        </div>
-        {result && (
-          <div className="mt-4 rounded-md border border-line p-4 text-[12px] leading-relaxed">
-            <p className="text-[13px] font-semibold text-fg">已保存为文章：{result.title}</p>
-            <p className="mt-1 font-mono text-[11px] text-faint">data/article/{result.url}.md</p>
+
+        <kit.Toolbar
+          left={`${content.length} 字`}
+          right={
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={importing || !content.trim()}
+              className={`${btnPrimary('rounded-md')} disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              {importing ? '导入中 …' : '导入'}
+            </button>
+          }
+        />
+
+        {result ? (
+          <kit.Panel title="已保存" meta={`${result.url}.md`}>
+            <p className="ui-heading text-md">{result.title}</p>
+            <p className="mono mt-1.5 text-2xs text-faint">data/article/{result.url}.md</p>
             <a
               href={`#/article/${encodeURIComponent(result.url)}`}
-              className="mt-2 inline-block text-secondary hover:underline"
+              className="mt-3 inline-block text-sm font-semibold text-accent hover:underline"
             >
               查看文章 →
             </a>
-          </div>
-        )}
-
-        {!result && (
-          <p className="mt-auto pt-6 text-[11px] text-faint">
+          </kit.Panel>
+        ) : (
+          <kit.Note>
             标题栏自动识别 front-matter 的 title；留空时取首个 # 标题行，否则取首行文本。
-          </p>
+          </kit.Note>
         )}
       </div>
-    </section>
+    </kit.Page>
   )
 }

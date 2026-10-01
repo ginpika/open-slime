@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { articleDetail, loginUrlOf, type ArticleDetail } from '../api/client'
 import Toast from '../components/Toast'
+import { usePageKit } from '../kit'
 
 /** 渲染前预处理：剥离 hexo/hugo front-matter 头部块与 <!--more--> 摘要分割标记（原文存储不动） */
 function preprocess(markdown: string): string {
@@ -113,7 +114,7 @@ function TocRail({ items }: { items: TocItem[] }) {
 
   return (
     <nav ref={navRef} aria-label="目录" className="w-full">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-faint">Contents</p>
+      <p className="ui-label">Contents</p>
       <ul className="mt-2 max-h-[60vh] overflow-y-auto border-l border-line">
         {items.map((it) => {
           const active = it.id === activeId
@@ -123,7 +124,7 @@ function TocRail({ items }: { items: TocItem[] }) {
                 href={`#${it.id}`}
                 onClick={(e) => jump(e, it.id)}
                 title={it.text}
-                className={`-ml-px block truncate border-l py-1 pr-2 text-[12px] leading-5 transition ${
+                className={`-ml-px block truncate border-l py-1 pr-2 text-sm leading-5 transition ${
                   it.level === 3 ? 'pl-7' : 'pl-3.5'
                 } ${
                   active
@@ -143,6 +144,7 @@ function TocRail({ items }: { items: TocItem[] }) {
 
 /** 文档详情页：渲染 markdown 原文（data/article/{url}.md），左侧悬浮目录 */
 export default function ArticleDetailPage({ url }: { url: string }) {
+  const kit = usePageKit()
   const [doc, setDoc] = useState<ArticleDetail | null>(null)
   const [loading, setLoading] = useState(true)
   /** 加载失败/文章缺失（err 有值时以错误 message box 提示，页内仅保留返回入口） */
@@ -202,7 +204,7 @@ export default function ArticleDetailPage({ url }: { url: string }) {
 
   if (loading) {
     return (
-      <section className="pt-24 text-center text-[13px] text-hint">加载中 …</section>
+      <section className="pt-24 text-center text-base text-hint">加载中 …</section>
     )
   }
 
@@ -215,7 +217,7 @@ export default function ArticleDetailPage({ url }: { url: string }) {
           message={err ?? '文章不存在。'}
           onClose={() => setErr(null)}
         />
-        <a href="#/articles" className="mt-3 inline-block text-[12px] text-faint hover:text-fg">
+        <a href="#/articles" className="mt-3 inline-block text-sm text-faint transition hover:text-fg">
           ← 返回文档列表
         </a>
       </section>
@@ -223,34 +225,39 @@ export default function ArticleDetailPage({ url }: { url: string }) {
   }
 
   return (
-    /* 文章容器保持居中主布局；目录 fixed 悬浮在正文左缘外侧留白区并垂直居中
-       （2xl 视口以上左侧留白才足够容纳），不挤占文档流空间，也不受 main 裁剪。
+    /* 标题区交给 kit.Page（扇区头 + 工程虚线随主题）；目录 fixed 悬浮在正文左缘外侧
+       留白区并垂直居中（2xl 视口以上左侧留白才足够容纳），不挤占文档流空间，也不受 main 裁剪。
        right = 50% + max-w-6xl/2 − main 内边距 + 间距 = 50% + 35.5rem */
-    <section className="pt-6">
+    <kit.Page
+      title={doc.title}
+      en="ARTICLE"
+      meta={
+        <>
+          <a href="#/articles" className="text-sm text-faint transition hover:text-fg">
+            ← 返回文档列表
+          </a>
+          <span className="mono text-2xs text-faint">
+            {new Date(doc.createdAt).toLocaleDateString('zh-CN')}
+          </span>
+        </>
+      }
+    >
       {toc.length > 0 && (
         <aside className="fixed top-1/2 right-[calc(50%_+_35.5rem)] z-10 hidden w-40 -translate-y-1/2 2xl:block">
           <TocRail items={toc} />
         </aside>
       )}
-      <div>
-        <a href="#/articles" className="text-[12px] text-faint transition hover:text-fg">
-          ← 返回文档列表
-        </a>
-        <h1 className="mt-4 text-[18px] font-semibold text-fg">{doc.title}</h1>
-        <p className="mt-1.5 text-[11px] text-faint">
-          {new Date(doc.createdAt).toLocaleDateString('zh-CN')}
+      {doc.summary && (
+        <p className="border-l border-line pl-3 text-sm leading-relaxed text-muted">
+          {doc.summary}
         </p>
-        {doc.summary && (
-          <p className="mt-3 border-l border-line pl-3 text-[12px] leading-relaxed text-muted">
-            {doc.summary}
-          </p>
-        )}
-        <article ref={articleRef} className="mt-4">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>
-            {body}
-          </ReactMarkdown>
-        </article>
-      </div>
-    </section>
+      )}
+      {/* Markdown 正文：内容优先，不套面板 */}
+      <article ref={articleRef}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>
+          {body}
+        </ReactMarkdown>
+      </article>
+    </kit.Page>
   )
 }

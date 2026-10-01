@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 /**
- * Tailwind 风格轻提示（message box）：视口顶部居中悬浮卡片，
+ * Tailwind 风格轻提示（message box）：顶部居中悬浮卡片，
  * 淡入上滑 / 淡出动画，超时自动关闭（点击可立即关闭）。
  * 用于替代提交成功横幅与页内错误提示，避免挤占、破坏原有布局。
  * z 序高于 FloatWindow（z-[60]），预览确认弹窗内提交后同样可见。
+ * 顶部偏移走 --ui-toast-top（默认视口顶 1.25rem）：终末地外壳的 main 带
+ * relative z-20，会困住本组件的 fixed z-[70] 使其压不过 z-30 顶栏，
+ * 故由该外壳把基准挪到内容区上缘（顶栏下方），避让顶栏。
+ * 终末地换装（.toast-card 白底黑缘 / 炭底点缀色光晕）在 shell.css 补丁区。
  */
 export type ToastKind = 'success' | 'error'
 
@@ -45,12 +49,15 @@ export default function Toast({
   if (message === null) return null
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-5 z-[70] flex justify-center px-4">
+    <div
+      className="pointer-events-none fixed inset-x-0 z-[70] flex justify-center px-4"
+      style={{ top: 'var(--ui-toast-top, 1.25rem)' } as CSSProperties}
+    >
       <div
         role="status"
         onClick={() => closeRef.current()}
         title="点击关闭"
-        className={`pointer-events-auto flex max-w-xl cursor-pointer items-start gap-2.5 rounded-lg border border-line border-l-4 bg-bg/95 px-4 py-3 shadow-lg backdrop-blur-md transition-all duration-300 ${
+        className={`toast-card pointer-events-auto flex max-w-xl cursor-pointer items-start gap-2.5 rounded-lg border border-line border-l-4 bg-bg/95 px-4 py-3 shadow-lg backdrop-blur-md transition-all duration-300 ${
           kind === 'error' ? 'border-l-hint' : 'border-l-emerald-500'
         } ${shown ? 'translate-y-0 opacity-100' : '-translate-y-3 opacity-0'}`}
       >

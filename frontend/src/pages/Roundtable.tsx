@@ -44,11 +44,13 @@ import {
   type MaTopic,
   type TraceSegment,
 } from '../api/client'
+import { Card, CardHead } from '../components/Card'
 import { btnOutline, btnPrimary, miniBtn } from '../components/ui'
-import { Field, Select } from '../components/formKit'
+import { Select } from '../components/formKit'
 import PageBoundary from '../components/PageBoundary'
 import PeerAvatar from '../components/PeerAvatar'
 import Toast from '../components/Toast'
+import { usePageKit } from '../kit'
 
 /** 「不显示思维链」偏好的本地存储 key：离开圆桌再回来不用重设 */
 const HIDE_COT_KEY = 'minis.roundtable.hide-cot'
@@ -205,6 +207,7 @@ function appendReasoning(trace: TraceSegment[], delta: string): TraceSegment[] {
 
 /** 圆桌页（路由 /roundtable）：左侧选会话，右侧是这张圆桌 */
 export default function Roundtable() {
+  const kit = usePageKit()
   const [peers, setPeers] = useState<MaPeer[]>([])
   const [modelOptions, setModelOptions] = useState<Option[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
@@ -244,24 +247,37 @@ export default function Roundtable() {
   }, [peers])
 
   return (
-    /* 整页只有这一块：占满可用高度，滚动都发生在容器内部——底部的输入框因此始终可见。
-       顶部不再放标题与说明，页面全留给对话本身。 */
-    <section className="flex h-full flex-col p-3 lg:p-5">
-      <PageBoundary>
-        <RoundtableBoard
-          peers={peers}
-          peerById={peerById}
-          modelOptions={modelOptions}
-          notify={notify}
-        />
-      </PageBoundary>
+    /* kit.Page 出扇区头；圆桌本体占满剩余高度，滚动都发生在容器内部——底部的输入框因此始终可见。
+       [&>*]:h-full 把高度传给 kit 渲染的 <section>，于是各主题的 Page 都能撑满整页。 */
+    <div className="h-full p-3 lg:p-5 [&>*]:h-full">
+      <kit.Page
+        title="圆桌"
+        en="ROUNDTABLE"
+        meta={
+          <span className="flex items-center gap-3">
+            <span className="text-sm text-muted">{peers.length} 位成员</span>
+            <a href="#/multi-agent" className={btnOutline('rounded-lg')}>
+              管理成员
+            </a>
+          </span>
+        }
+      >
+        <PageBoundary>
+          <RoundtableBoard
+            peers={peers}
+            peerById={peerById}
+            modelOptions={modelOptions}
+            notify={notify}
+          />
+        </PageBoundary>
 
-      <Toast
-        message={toast?.msg ?? null}
-        kind={toast?.kind === 'err' ? 'error' : 'success'}
-        onClose={() => setToast(null)}
-      />
-    </section>
+        <Toast
+          message={toast?.msg ?? null}
+          kind={toast?.kind === 'err' ? 'error' : 'success'}
+          onClose={() => setToast(null)}
+        />
+      </kit.Page>
+    </div>
   )
 }
 
@@ -278,6 +294,7 @@ function RoundtableBoard({
   modelOptions: Option[]
   notify: (msg: string, kind?: 'ok' | 'err') => void
 }) {
+  const kit = usePageKit()
   const [sessions, setSessions] = useState<MaSession[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MaMessage[]>([])
@@ -672,8 +689,11 @@ function RoundtableBoard({
   )
 
   return (
-    /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌 */
-    <div className="flex min-h-0 flex-1 rounded-2xl border border-line">
+    /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌。
+       容器交给 Card：描边环 / 面板底随主题（内部还是左目录 + 右圆桌的横排章法）。
+       两个弹层是 fixed 定位，放在 Card 外——切角主题会裁剪内部超出容器的绘制 */
+    <>
+    <Card pad="none" className="ui-card--row flex min-h-0 flex-1">
       {/* 左：目录。会话列表自己滚，底下的配置与在座钉住不动 */}
       <aside className="flex min-h-0 w-[164px] shrink-0 flex-col gap-2 border-r border-line p-3 lg:w-[220px]">
         <button
@@ -685,16 +705,19 @@ function RoundtableBoard({
         </button>
         {/* 兜底模型放在上面：它的下拉往会话列表的方向展开，不会被容器底边切掉 */}
         <div className="shrink-0">
-          <Field label="兜底模型" hint="成员没指定模型时用它">
+          <kit.Field label="兜底模型" hint="成员没指定模型时用它" wrap={false}>
             <Select value={modelId} onChange={setModelId} options={modelOptions} />
-          </Field>
+          </kit.Field>
         </div>
-        <div className="scrollbar-slim flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+        <div className="scrollbar-slim flex min-h-0 flex-1 flex-col overflow-y-auto">
           {sessions.map((s) => (
-            <div
+            /* 会话行：分隔线 + 悬停黄晕染（kit.Row）；选中态用左侧黄条 + 柔黄底标出 */
+            <kit.Row
               key={s.id}
-              className={`group flex items-center gap-2 rounded-lg border px-3 py-2 transition ${
-                s.id === sessionId ? 'border-line-strong bg-fg/5' : 'border-line hover:bg-fg/5'
+              className={`group ${
+                s.id === sessionId
+                  ? 'bg-accent-soft shadow-[inset_3px_0_0_var(--c-accent)]'
+                  : ''
               }`}
             >
               <button
@@ -727,22 +750,20 @@ function RoundtableBoard({
               </button>
               <button
                 type="button"
-                className="shrink-0 text-[11px] text-hint opacity-0 transition group-hover:opacity-100"
+                className="shrink-0 text-[11px] text-hint opacity-0 transition group-hover:opacity-100 hover:text-danger"
                 onClick={() => void removeSession(s.id)}
               >
                 删除
               </button>
-            </div>
+            </kit.Row>
           ))}
           {sessions.length === 0 && (
-            <p className="px-1 text-[11px] text-hint">还没有会话，点上面新建一个</p>
+            <p className="px-3 py-2 text-[11px] text-hint">还没有会话，点上面新建一个</p>
           )}
         </div>
         {seated.length > 0 && (
           <div className="scrollbar-slim mt-1 flex max-h-40 shrink-0 flex-col gap-1.5 overflow-y-auto border-t border-line pt-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
-              在座
-            </p>
+            <p className="ui-label">在座</p>
             {seated.map((p) => (
               <span key={p.id} className="flex items-center gap-2 text-[11.5px] text-muted">
                 <PeerAvatar
@@ -765,26 +786,21 @@ function RoundtableBoard({
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2.5">
             <div className="flex flex-wrap items-center gap-1">
               {Object.entries(current.states).map(([name, state]) => {
-                /* 正在说话的那位高亮一下：状态条也要看得出「此刻是谁的回合」 */
+                /* 正在说话的那位高亮一下：状态条也要看得出「此刻是谁的回合」（accent 填充 = 激活态） */
                 const speaking = live?.peerName === name
                 return (
-                  <span
-                    key={name}
-                    className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] transition ${
-                      speaking
-                        ? 'border-line-strong bg-fg/10 font-medium text-fg'
-                        : 'border-line text-muted'
-                    }`}
-                  >
+                  <kit.Badge key={name} tone={speaking ? 'accent' : 'default'}>
                     <PeerAvatar
                       name={name}
                       avatar={avatarOfName(name)}
                       size="h-4 w-4"
                       textClass="text-[8px]"
                     />
-                    {name} · {MA_STATE_LABELS[state] ?? state}
-                    {speaking ? ' · 正在说' : ''}
-                  </span>
+                    <span className="ml-1">
+                      {name} · {MA_STATE_LABELS[state] ?? state}
+                      {speaking ? ' · 正在说' : ''}
+                    </span>
+                  </kit.Badge>
                 )
               })}
             </div>
@@ -794,9 +810,7 @@ function RoundtableBoard({
         {/* 消息：这一块自己滚（min-h-0 才真的滚得起来），把输入框留给容器底部 */}
         <div ref={scrollRef} className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-4 py-4">
           {messages.length === 0 && !live && done.length === 0 && (
-            <p className="py-16 text-center text-[12px] text-hint">
-              说一句话，圆桌上的人会依次应答
-            </p>
+            <kit.Empty>说一句话，圆桌上的人会依次应答</kit.Empty>
           )}
           <div className="flex flex-col gap-4">
             {messages.filter((m) => showEventLine(m, showPresence, peerById)).map((m) => (
@@ -860,7 +874,7 @@ function RoundtableBoard({
             免得「现在轮到你」只藏在状态条那个「等待用户」里。正在跑一轮（busy）时不出现，
             因为此刻还轮不到人说话 */}
         {awaiting && !busy && (
-          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-line bg-accent/10 px-4 py-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-line bg-accent-soft px-4 py-2">
             <span
               className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
               aria-hidden="true"
@@ -875,7 +889,7 @@ function RoundtableBoard({
         {/* 输入：钉在容器底部，永远看得见。
             输入框与发送按钮包在同一个边框里，并用 items-center 对齐——两者天然在同一条水平线上 */}
         <div className="shrink-0 border-t border-line px-4 py-3">
-          <div className="relative flex items-center gap-2 rounded-2xl border border-line bg-bg py-1.5 pl-4 pr-1.5 transition hover:border-line-strong focus-within:border-secondary">
+          <div className="relative flex items-center gap-2 rounded-2xl border border-line bg-bg py-1.5 pl-4 pr-1.5 transition hover:border-line-strong focus-within:border-accent">
             {mention && mentionMatches.length > 0 && (
               <MentionMenu
                 peers={mentionMatches}
@@ -943,24 +957,26 @@ function RoundtableBoard({
               onChangeSpeakerStrategy={changeSpeakerStrategy}
             />
             {busy ? (
+              /* 停止：描边钮（.ui-btn 体系，形状随主题） */
               <button
                 type="button"
                 onClick={() => void stop()}
                 title="停止"
                 aria-label="停止"
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-line text-muted transition hover:border-line-strong hover:bg-fg/5 hover:text-fg"
+                className="ui-btn ui-btn--outline h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
               >
                 <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <rect x="6" y="6" width="12" height="12" rx="2" />
                 </svg>
               </button>
             ) : (
+              /* 发送：主行动钮（点缀色实底，圆环 / 切角随主题） */
               <button
                 type="button"
                 onClick={() => void send()}
                 title="发送"
                 aria-label="发送"
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-fg transition hover:bg-accent-hover"
+                className="ui-btn ui-btn--primary h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
@@ -976,6 +992,7 @@ function RoundtableBoard({
           </div>
         </div>
       </div>
+    </Card>
 
       {/* 新建会话的选人弹窗 */}
       {pickerOpen && (
@@ -992,16 +1009,19 @@ function RoundtableBoard({
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-6"
           onClick={() => setContextView(null)}
         >
-          <div
-            className="flex max-h-[82vh] w-full max-w-3xl flex-col rounded-2xl border border-line bg-bg"
+          <Card
+            pad="none"
+            className="flex max-h-[82vh] w-full max-w-3xl flex-col shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-              <p className="text-[13px] font-medium text-fg">原始上下文 · {contextView.title}</p>
-              <button type="button" className={miniBtn} onClick={() => setContextView(null)}>
-                关闭
-              </button>
-            </div>
+            <CardHead
+              title={`原始上下文 · ${contextView.title}`}
+              meta={
+                <button type="button" className={miniBtn} onClick={() => setContextView(null)}>
+                  关闭
+                </button>
+              }
+            />
             <p className="border-b border-line px-4 py-2 text-[11px] text-hint">
               这是它这次发言当时真正发出去的那一份：system（身份 / 协作规程 / 局面）、
               共享话题历史、末尾的发言权交代，以及挂了哪些工具。
@@ -1009,10 +1029,10 @@ function RoundtableBoard({
             <pre className="scrollbar-slim flex-1 overflow-auto px-4 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-muted">
               {contextView.text}
             </pre>
-          </div>
+          </Card>
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -1268,10 +1288,9 @@ function DisplayMenu({
       </button>
 
       {open && (
-        <div className="absolute bottom-[calc(100%+8px)] right-0 z-30 w-[252px] rounded-xl border border-line bg-bg p-1.5 shadow-xl">
-          <p className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
-            显示
-          </p>
+        <div className="ui-card ui-surface absolute bottom-[calc(100%+8px)] right-0 z-30 w-[252px]">
+          <div className="ui-card__in p-1.5">
+          <p className="ui-label px-2 pb-1 pt-1.5">显示</p>
           <MenuSwitch
             label="不显示思维链"
             hint="成员气泡只显示发言正文，思考过程与工具调用都收起来。"
@@ -1291,9 +1310,7 @@ function DisplayMenu({
             onToggle={onToggleContext}
           />
           <div className="my-1.5 border-t border-line" />
-          <p className="px-2 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
-            发言策略
-          </p>
+          <p className="ui-label px-2 pb-1 pt-0.5">发言策略</p>
           <MenuChoice
             options={MA_SPEAKER_STRATEGIES}
             value={speakerStrategy}
@@ -1303,6 +1320,7 @@ function DisplayMenu({
             这一轮该谁先开口：轮询＝按名册顺序依次交接；随机＝每次掷骰子；发言欲望优先＝每位成员说完
             报一个 0~10 的欲望，高的先开口。下一次发言生效。
           </p>
+          </div>
         </div>
       )}
     </div>
@@ -1324,10 +1342,9 @@ function MentionMenu({
   onPick: (peer: MaPeer) => void
 }) {
   return (
-    <div className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-[280px] overflow-hidden rounded-xl border border-line bg-bg shadow-xl">
-      <p className="px-3 pt-2 pb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
-        提及成员
-      </p>
+    <div className="ui-card ui-surface absolute bottom-[calc(100%+8px)] left-0 z-30 w-[280px] overflow-hidden">
+      <div className="ui-card__in overflow-hidden">
+      <p className="ui-label px-3 pb-1 pt-2">提及成员</p>
       <div
         role="listbox"
         aria-label="提及成员"
@@ -1350,6 +1367,7 @@ function MentionMenu({
             <span className="flex-1 truncate text-[12px]">{p.name}</span>
           </button>
         ))}
+      </div>
       </div>
     </div>
   )
@@ -1434,8 +1452,8 @@ function Bubble({
       className={`rounded-2xl border px-3.5 py-2.5 text-[13px] leading-relaxed ${
         mine
           ? 'border-line bg-fg/5 text-fg'
-          : `${BUBBLE_MAX_W} border-line bg-surface-container-low/50 text-fg`
-      }${onClick ? ' cursor-pointer transition hover:border-line-strong' : ''}`}
+          : `${BUBBLE_MAX_W} border-line bg-fg/[0.04] text-fg`
+      }${onClick ? ' cursor-pointer transition hover:border-accent' : ''}`}
     >
       {/* 思考过程：没有思考时它什么都不渲染；「不显示思维链」开着时整块不渲染 */}
       {showCot && <CotBlocks reasoning={reasoning} trace={trace} live={!!streaming} />}
@@ -1594,37 +1612,39 @@ function EventLine({
   createdAt: string | null
   peerById: Map<string, MaPeer>
 }) {
+  const kit = usePageKit()
   const { peer, name, action, reason } = parseEventLine(text, peerId, peerName, peerById)
 
   if (action === '话题开始') {
     return (
       <div className="flex justify-center">
-        <span className="rounded-full border border-line px-2.5 py-1 font-mono text-[10.5px] tracking-wide text-faint">
-          {fmtTime(createdAt, true) || '话题开始'}
-        </span>
+        <kit.Badge>{fmtTime(createdAt, true) || '话题开始'}</kit.Badge>
       </div>
     )
   }
 
+  /* 徽章是等宽 nowrap 的，模型写的理由可能是一整句——理由单独成 chip 放在徽章旁，长了能换行 */
   const pill = (
-    <p className="flex flex-wrap items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted">
-      {name && (
-        <span className="shrink-0" title={name}>
-          <PeerAvatar
-            name={name}
-            avatar={peer?.avatar ?? null}
-            size="h-4 w-4"
-            textClass="text-[8px]"
-          />
-        </span>
-      )}
-      <span>{action}</span>
+    <span className="flex flex-wrap items-center gap-1.5">
+      <kit.Badge>
+        {name && (
+          <span className="shrink-0" title={name}>
+            <PeerAvatar
+              name={name}
+              avatar={peer?.avatar ?? null}
+              size="h-4 w-4"
+              textClass="text-[8px]"
+            />
+          </span>
+        )}
+        <span className="ml-1">{action}</span>
+      </kit.Badge>
       {reason && (
-        <span className="rounded-full bg-fg/[0.07] px-1.5 py-0.5 text-[10.5px] text-hint">
+        <span className="rounded-full bg-fg/[0.07] px-1.5 py-0.5 font-mono text-[10.5px] text-hint">
           {reason}
         </span>
       )}
-    </p>
+    </span>
   )
   /* 不是成员的主动表态（进出 / 系统动作 / 话题本身）：居中，不占左边那一格头像 */
   if (CENTERED_ACTIONS.has(action)) {
@@ -1708,6 +1728,7 @@ function NewSessionDialog({
   onCancel: () => void
   onCreate: (memberIds: string[]) => void
 }) {
+  const kit = usePageKit()
   const [picked, setPicked] = useState<string[]>([])
   const toggle = (id: string) =>
     setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -1717,16 +1738,19 @@ function NewSessionDialog({
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-6"
       onClick={onCancel}
     >
-      <div
-        className="flex max-h-[82vh] w-full max-w-2xl flex-col rounded-2xl border border-line bg-bg"
+      <Card
+        pad="none"
+        className="flex max-h-[82vh] w-full max-w-2xl flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <p className="text-[13px] font-medium text-fg">新建会话 · 选人上桌</p>
-          <button type="button" className={miniBtn} onClick={onCancel}>
-            取消
-          </button>
-        </div>
+        <CardHead
+          title="新建会话 · 选人上桌"
+          meta={
+            <button type="button" className={miniBtn} onClick={onCancel}>
+              取消
+            </button>
+          }
+        />
         <p className="border-b border-line px-4 py-2 text-[11px] leading-relaxed text-hint">
           勾选的成员组成这张桌子，没勾的不会出现在这次会话里；一位都不勾就是全体名册。
           选了就定下来——以后往名册里加人，也不会自动加进这张桌子。
@@ -1741,9 +1765,7 @@ function NewSessionDialog({
             />
           ))}
           {peers.length === 0 && (
-            <p className="w-full py-6 text-center text-[12px] text-hint">
-              名册还是空的：先去「多智能体 · 成员」页添几位
-            </p>
+            <kit.Empty>名册还是空的：先去「多智能体 · 成员」页添几位</kit.Empty>
           )}
         </div>
         <div className="flex items-center gap-2 border-t border-line px-4 py-3">
@@ -1763,7 +1785,7 @@ function NewSessionDialog({
             创建
           </button>
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
@@ -1783,24 +1805,22 @@ function MemberTile({
   picked: boolean
   onToggle: () => void
 }) {
+  const kit = usePageKit()
   return (
-    <button
-      type="button"
+    /* kit.Tile 出切角仪表块（角标 + 悬停切环）；选中态黄环 + 柔黄底都由 ui-card--accent 出 */
+    <kit.Tile
       onClick={onToggle}
-      title={peer.name}
-      className={`group relative h-28 w-28 shrink-0 rounded-2xl border p-2 transition ${
-        picked ? 'border-secondary bg-secondary/10' : 'border-line hover:border-line-strong'
-      }`}
+      className={`group h-28 w-28 shrink-0 ${picked ? 'ui-card--accent' : ''}`}
     >
       <span
-        className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${
+        className={`absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-150 ${
           picked ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'
         }`}
       >
         <PeerAvatar name={peer.name} avatar={peer.avatar} size="h-16 w-16" textClass="text-[22px]" />
       </span>
       <span
-        className={`absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-center transition-opacity duration-150 ${
+        className={`absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 px-2 text-center transition-opacity duration-150 ${
           picked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
       >
@@ -1811,6 +1831,6 @@ function MemberTile({
           </span>
         )}
       </span>
-    </button>
+    </kit.Tile>
   )
 }

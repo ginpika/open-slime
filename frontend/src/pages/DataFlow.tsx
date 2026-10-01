@@ -12,7 +12,8 @@
  * 布局：层内按「邻居重心」迭代排序（barycenter）减少连线交叉。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePageKit } from '../kit'
 import { BACKEND_GRAPH, FRONTEND_GRAPH, type FlowGraph, type FlowKind, type GraphNode } from './dataflowData'
 
 /* 角色 → 徽章文案 + 圆点配色（CSS 变量，主题切换实时跟随） */
@@ -104,22 +105,8 @@ function edgePath(a: Pos, b: Pos, ra: number, rb: number) {
 
 /* ---------------- 组件 ---------------- */
 
-/** 子 Tab（前端 / 后端） */
-function SideTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-3.5 py-1 text-[12px] font-medium transition ${
-        active ? 'bg-fg text-bg' : 'text-muted hover:bg-fg/5 hover:text-fg'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
 export default function DataFlow() {
+  const kit = usePageKit()
   const [side, setSide] = useState<'frontend' | 'backend'>('backend')
   const g = side === 'backend' ? BACKEND_GRAPH : FRONTEND_GRAPH
   const { pos, width, height, layers } = useMemo(() => layout(g), [g])
@@ -205,16 +192,16 @@ export default function DataFlow() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 前端/后端子 Tab */}
+      {/* 前端/后端子 Tab：经索引映射走 kit.Range（side 状态保持字符串键不动） */}
       <div className="flex flex-wrap items-center justify-start gap-3">
-        <div className="flex shrink-0 gap-1 rounded-full border border-line p-1">
-          <SideTab active={side === 'frontend'} onClick={() => switchSide('frontend')}>
-            前端
-          </SideTab>
-          <SideTab active={side === 'backend'} onClick={() => switchSide('backend')}>
-            后端
-          </SideTab>
-        </div>
+        <kit.Range
+          options={[
+            { value: 0, label: '前端' },
+            { value: 1, label: '后端' },
+          ]}
+          value={side === 'frontend' ? 0 : 1}
+          onChange={(v) => switchSide(v === 0 ? 'frontend' : 'backend')}
+        />
       </div>
 
       {/* 图画布 */}

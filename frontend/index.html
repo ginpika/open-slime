@@ -9,16 +9,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>__BRAND_TITLE__</title>
     <script>
-      // 防闪烁（FOUC）：React 挂载前把持久化的主题变量写入 :root
+      // 防闪烁（FOUC）：React 挂载前把持久化的主题令牌写入 :root，
+      // 并同步 data-theme / data-scheme（供无法变量化的样式分支使用）
       ;(function () {
         try {
-          var raw = localStorage.getItem('minis.theme.v3')
+          var root = document.documentElement
+          var raw = localStorage.getItem('minis.theme.v4')
           if (!raw) return
-          var vars = JSON.parse(raw).vars
+          var s = JSON.parse(raw)
+          var vars = s && s.vars
+          /* 版本校验：令牌派生逻辑升级后（v4 → v5…）旧快照的令牌集可能过期，
+             跳过回放以避免首帧写入过期令牌（最多退化为一帧默认色，而非错误样式） */
+          if (!s || s.v !== 4) return
           if (!vars || typeof vars !== 'object') return
-          var s = document.documentElement.style
+          var st = root.style
           for (var k in vars) {
-            if (Object.prototype.hasOwnProperty.call(vars, k)) s.setProperty(k, vars[k])
+            if (Object.prototype.hasOwnProperty.call(vars, k)) st.setProperty(k, vars[k])
+          }
+          if (s.themeId) root.dataset.theme = s.themeId
+          if (s.scheme) {
+            root.dataset.scheme = s.scheme
+            st.colorScheme = s.scheme
           }
         } catch (e) {
           /* 忽略损坏数据 */

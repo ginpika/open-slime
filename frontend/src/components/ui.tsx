@@ -1,33 +1,99 @@
 /**
- * 共享 UI 原语：统一按钮样式与内联图标。
- * 按钮默认 TailwindCSS 风格胶囊（rounded-full，header 级动作），
- * 面板内控件传 'rounded-none' 得到无圆角直角；
- * 图标一律 currentColor 线条（与首页放大镜同风格），自动跟随主题令牌。
+ * 共享 UI 原语（主题 v4）：统一按钮样式与内联图标。
+ *
+ * 两条并行出口，互为补充：
+ *  1. 类名字符串 helper（btnPrimary / btnOutline / …）——兼容既有页面的
+ *     `className={btnPrimary('rounded-md')}` 写法，零改动即获得主题驱动；
+ *  2. <Button> 组件——新代码与需要装饰槽的场景使用，状态机与 a11y 一次写好。
+ *
+ * 视觉全部来自 .ui-btn（见 index.css）：形状层负责圆角/切角，深度层负责
+ * 阴影/光晕，排印层负责字重与斜体，动效层负责时长与缓动。组件本身不含任何
+ * 主题判断分支。
  */
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 
-/** 按钮基底：12px/semibold 排版 */
-const BTN_BASE =
-  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap text-[12px] font-semibold transition'
+/** 常用圆角档位：pill 胶囊 / panel 面板内控件 / card 卡片级。
+ *  注意：普通按钮的圆角主权在主题形状层（--ui-r-btn），工厂默认不再注入
+ *  形状类——默认 fallback 999px（胶囊）与原 pill 形态一致；图标钮例外，
+ *  圆形是跨主题交互惯例，仍默认 pill。 */
+export const RADIUS = {
+  pill: 'rounded-full',
+  panel: 'rounded-md',
+  card: 'rounded-lg',
+} as const
 
-/** 描边按钮（登出 / 面板次级主行动）：细线描边，悬停边框加深 + 轻微填充 */
-export const btnOutline = (radius = 'rounded-full') =>
-  `${BTN_BASE} ${radius} border border-line bg-bg px-3.5 py-1.5 text-muted hover:border-line-strong hover:bg-fg/5 hover:text-fg`
+export type BtnVariant = 'primary' | 'outline' | 'quiet' | 'danger' | 'icon'
 
-/** 主行动按钮（保存 / 搜索）：点缀色实底 + 自动黑/白文字（对比度保证可读） */
-export const btnPrimary = (radius = 'rounded-full') =>
-  `${BTN_BASE} ${radius} bg-accent px-3.5 py-1.5 text-accent-fg hover:bg-accent-hover`
+/** 变体 → 类名 */
+function variantClass(variant: BtnVariant): string {
+  return `ui-btn--${variant}`
+}
 
-/** 安静按钮（低优先级动作）：细线描边、muted 文字 */
-export const btnQuiet = (radius = 'rounded-full') =>
-  `${BTN_BASE} ${radius} border border-line px-3.5 py-1.5 text-muted hover:border-line-strong`
+/* ------------------------------------------------ 类名 helper（兼容旧写法） */
 
-/** 图标按钮：无描边圆形切换钮（同 Tailwind 明暗切换钮），悬停轻微填充 */
-export const btnIcon = (radius = 'rounded-full') =>
-  `${BTN_BASE} ${radius} h-[30px] w-[30px] text-muted hover:bg-fg/10 hover:text-fg`
+/** 描边按钮（登出 / 面板次级主行动）；圆角跟随主题，显式传参可覆盖 */
+export const btnOutline = (radius: string = '') => `ui-btn ui-btn--outline${radius ? ` ${radius}` : ''}`
 
-/** 表格操作列小动作钮（Analyze 系列页面共用）：微小圆角细描边 */
-export const miniBtn =
-  'inline-flex items-center whitespace-nowrap rounded-sm border border-line px-2.5 py-1 text-xs font-medium text-muted transition hover:border-line-strong hover:bg-fg/5 hover:text-fg disabled:pointer-events-none disabled:opacity-40'
+/** 主行动按钮（保存 / 搜索）；圆角跟随主题，显式传参可覆盖 */
+export const btnPrimary = (radius: string = '') => `ui-btn ui-btn--primary${radius ? ` ${radius}` : ''}`
+
+/** 安静按钮（低优先级动作）；圆角跟随主题，显式传参可覆盖 */
+export const btnQuiet = (radius: string = '') => `ui-btn ui-btn--quiet${radius ? ` ${radius}` : ''}`
+
+/** 图标按钮（无描边圆形切换钮）；圆形为跨主题惯例，默认 pill */
+export const btnIcon = (radius: string = RADIUS.pill) => `ui-btn ui-btn--icon ${radius}`
+
+/** 破坏性动作；圆角跟随主题，显式传参可覆盖 */
+export const btnDanger = (radius: string = '') => `ui-btn ui-btn--danger${radius ? ` ${radius}` : ''}`
+
+/** 表格操作列小动作钮（Analyze 系列共用）；圆角走 --ui-r-btn-sm 控件刻度 */
+export const miniBtn = 'ui-btn ui-btn--quiet ui-btn--sm'
+
+/* ---------------------------------------------------------- Button 组件 */
+
+export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: BtnVariant
+  /** sm 用于密集场景（表格操作列、工具栏） */
+  size?: 'sm' | 'md'
+  radius?: string
+  /** 尾部装饰：Endfield 的箭头、BA 的流光等由主题 CSS 决定呈现 */
+  deco?: ReactNode
+  children?: ReactNode
+}
+
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = 'outline', size = 'md', radius = '', deco, className = '', children, ...rest },
+  ref,
+) {
+  return (
+    <button
+      ref={ref}
+      className={`${variantClass(variant)}${radius ? ` ${radius}` : ''}${
+        size === 'sm' ? ' ui-btn--sm' : ''
+      }${className ? ` ${className}` : ''}`}
+      {...rest}
+    >
+      {children}
+      {deco ? <span className="ui-btn__deco">{deco}</span> : null}
+    </button>
+  )
+})
+
+/* --------------------------------------------------------------- 图标 */
+
+/**
+ * 表单控件外壳：给 input / textarea 补上它们自己做不到的「描边环 + 切角 + 玻璃」。
+ * 纯令牌实现，因此不需要按主题分叉。
+ */
+export function Control({
+  children,
+  className = '',
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return <div className={`ui-control${className ? ` ${className}` : ''}`}>{children}</div>
+}
 
 export function IconPalette({ className = '' }: { className?: string }) {
   return (

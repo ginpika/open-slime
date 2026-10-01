@@ -1,16 +1,25 @@
 @import 'tailwindcss';
 
 /*
- * 语义令牌 → Tailwind 工具类映射（Tailwind v4 @theme inline）。
- * --c-* 由主题系统在运行时写入 :root（见 src/theme/apply.ts），
- * 生成 bg-bg / text-fg / border-line / bg-accent / text-hint 等工具类。
- * 角色分工：底色=背景，主色=文字，辅色=线条，点缀色=按钮/链接/提示。
+ * 主题系统 v4 · 令牌 → Tailwind 映射
+ *
+ * 两层设计：
+ *  1) 色彩层 --c-* 与六层投影 --ui-* 由 theme/derive.ts 在运行时写入 :root；
+ *  2) 本文件把 Tailwind 的原生刻度（radius / shadow / text / font / ease）
+ *     直接"劫持"为语义刻度，于是页面里既有的 rounded-md / shadow-lg / text-sm
+ *     会立刻变成主题驱动——这是迁移成本能压下来的关键。
+ *
+ * 角色分工（沿用）：底色=背景，主色=文字，辅色=线条，点缀色=按钮/链接/强调。
  */
+
 @theme inline {
+  /* ============================ 色彩层 ============================ */
   --color-bg: var(--c-bg);
   --color-fg: var(--c-fg);
+  --color-fg-2: var(--c-fg-2);
   --color-muted: var(--c-muted);
   --color-faint: var(--c-faint);
+  --color-dim: var(--c-dim);
   --color-line: var(--c-line);
   --color-line-strong: var(--c-line-strong);
   --color-primary: var(--c-primary);
@@ -19,13 +28,27 @@
   --color-accent: var(--c-accent);
   --color-accent-fg: var(--c-accent-fg);
   --color-accent-hover: var(--c-accent-hover);
+  --color-accent-soft: var(--c-accent-soft);
   --color-hint: var(--c-hint);
   --color-mark: var(--c-mark);
+  --color-contrast: var(--c-contrast);
+
+  /* 语义色（跟随主题，替代硬编码 red-500 / emerald-500） */
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-ok: var(--c-ok);
+  --color-ok-soft: var(--c-ok-soft);
+  --color-info: var(--c-info);
+
+  /* 分类色板（图谱实体专用） */
   --color-entity-1: var(--c-entity-1);
   --color-entity-2: var(--c-entity-2);
   --color-entity-3: var(--c-entity-3);
   --color-entity-4: var(--c-entity-4);
-  /* MD3 角色（由三色派生，见 theme/apply.ts）：surface 阶梯 / on-surface / outline */
+
+  /* MD3 角色阶梯（五套主题共用同一批词汇，不再是 MD3 专属） */
   --color-surface-container-lowest: var(--c-surface-container-lowest);
   --color-surface-container-low: var(--c-surface-container-low);
   --color-surface-container: var(--c-surface-container);
@@ -36,7 +59,46 @@
   --color-on-surface-variant: var(--c-on-surface-variant);
   --color-outline: var(--c-outline);
   --color-outline-variant: var(--c-outline-variant);
+
+  /* ====================== 形状层：劫持 radius 刻度 ====================== */
+  --radius-xs: var(--ui-r-xs);
+  --radius-sm: var(--ui-r-sm);
+  --radius-md: var(--ui-r-md);
+  --radius-lg: var(--ui-r-lg);
+  --radius-xl: var(--ui-r-xl);
+  --radius-2xl: var(--ui-r-xl);
+  --radius-3xl: var(--ui-r-card);
+  --radius-full: var(--ui-r-pill);
+
+  /* ====================== 深度层：劫持 shadow 刻度 ====================== */
+  --shadow-2xs: var(--ui-e0);
+  --shadow-xs: var(--ui-e1);
+  --shadow-sm: var(--ui-e1);
+  --shadow-md: var(--ui-e2);
+  --shadow-lg: var(--ui-e3);
+  --shadow-xl: var(--ui-e4);
+  --shadow-2xl: var(--ui-e5);
+
+  /* ====================== 排印层：字体族 + 字号谱系（9 档） ====================== */
+  --font-sans: var(--ui-font-sans);
+  --font-mono: var(--ui-font-mono);
+
+  --text-2xs: var(--ui-fs-micro);
+  --text-xs: var(--ui-fs-xs);
+  --text-sm: var(--ui-fs-sm);
+  --text-base: var(--ui-fs-base);
+  --text-md: var(--ui-fs-md);
+  --text-lg: var(--ui-fs-lg);
+  --text-xl: var(--ui-fs-xl);
+  --text-2xl: var(--ui-fs-2xl);
+  --text-3xl: var(--ui-fs-3xl);
+
+  /* ====================== 动效层 ====================== */
+  --ease-theme: var(--ui-ease);
+  --ease-mech: var(--ui-ease-mech);
 }
+
+/* ============================================================== 基础 */
 
 html,
 body,
@@ -47,21 +109,357 @@ body,
 body {
   background-color: var(--c-bg, #ffffff);
   color: var(--c-fg, #0f0f0f);
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    'PingFang SC',
-    'Microsoft YaHei',
-    sans-serif;
+  font-family: var(--ui-font-sans, system-ui, sans-serif);
+  letter-spacing: var(--ui-body-tracking, 0em);
 }
 
-/* 所有按钮统一指针光标（Tailwind v4 preflight 将按钮光标重置为 default，此处全局改回 pointer） */
+/* 所有按钮统一指针光标（Tailwind v4 preflight 将按钮光标重置为 default） */
 button:not(:disabled) {
   cursor: pointer;
 }
 
-/* 隐藏滚动条但保留滚动能力（首页两页模式、对话页内部滚动） */
+@layer base {
+  /*
+   * 文本类表单控件的「形状」随主题改变 —— Endfield 下会变成切角输入框。
+   * 说明：input / textarea 是替换元素，不支持伪元素描边环，所以这里只接管形状；
+   * 描边仍由 border 工具类提供；需要「完美描边环 + 玻璃」的场景用 .ui-control 包裹。
+   */
+  input:not([type='color']):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='submit']):not([type='button']),
+  textarea,
+  select {
+    clip-path: var(--ui-clip-sm, none);
+    /* 原生控件圆角：--ui-r-control 由主题形状层登记（Endfield 工业风 2px） */
+    border-radius: var(--ui-r-control, 0px);
+    font-family: var(--ui-font-sans);
+  }
+
+  /* 内容滚动容器恒预留滚动条槽：进入会话等场景内容从不满一屏变为超一屏时，
+     经典滚动条出现会挤压内容宽度、整页横向抖动。stable 让槽常在，宽度恒定。
+     （对 overflow 非 scroll 的 main 无效果，无副作用；Safari 18.2 前的版本自动降级为现状） */
+  main {
+    scrollbar-gutter: stable;
+  }
+}
+
+/* ============================================================ 原语层 */
+
+@layer components {
+  /* ---------------------------------------------------------------------
+   * 主题化按钮
+   * 零额外 DOM 的「描边环 + 填充」双层：
+   *   ::before 贴外缘画描边色，::after 内缩 --ui-ring-w 画填充色。
+   *   两者与宿主使用同一个 --ui-clip，于是 Endfield 的切角描边自动成立，
+   *   而 Old/Clean/MD3 的 --ui-clip: none 时退化为普通圆角描边。
+   * ------------------------------------------------------------------- */
+  .ui-btn {
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    white-space: nowrap;
+    cursor: pointer;
+    border: 0;
+    background: transparent;
+    /* 按钮用"小切角"，卡片用"大切角"——两者比例不同，所以分成两个令牌 */
+    --ui-clip: var(--ui-clip-sm, none);
+    clip-path: var(--ui-clip, none);
+    /* 圆角主权在主题形状层（--ui-r-btn）；fallback 999px = 胶囊（工厂默认形态）。
+       调用处显式传 rounded-* 工具类时仍以调用处为准（utilities 层在后） */
+    border-radius: var(--ui-r-btn, 999px);
+
+    padding: var(--ui-btn-py, 6px) var(--ui-btn-px, 14px);
+    font-family: var(--ui-font-sans);
+    font-size: var(--ui-btn-fs, var(--ui-fs-sm));
+    font-weight: var(--ui-btn-weight, 600);
+    font-style: var(--ui-btn-style, normal);
+    letter-spacing: var(--ui-btn-tracking, 0em);
+    text-transform: var(--ui-btn-transform, none);
+
+    /* 变体默认值（由 .ui-btn--* 覆盖） */
+    --ui-btn-ring: var(--c-line);
+    --ui-btn-ring-hover: var(--c-line-strong);
+    --ui-btn-fill: var(--c-bg);
+    --ui-btn-fill-hover: var(--c-accent-soft);
+    --ui-btn-fill-active: var(--c-accent-soft);
+    color: var(--c-fg);
+
+    transition:
+      color var(--ui-dur-base, 150ms) var(--ui-ease, ease),
+      box-shadow var(--ui-dur-base, 150ms) var(--ui-ease, ease),
+      transform var(--ui-dur-base, 150ms) var(--ui-ease, ease);
+  }
+  .ui-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background: var(--ui-btn-ring);
+    clip-path: var(--ui-clip, none);
+    /* 伪元素不继承宿主圆角，显式 inherit 才能跟随宿主形状，
+       否则描边环 / 填充层在宿主圆角时仍是直角矩形 */
+    border-radius: inherit;
+    transition: background var(--ui-dur-base, 150ms) var(--ui-ease, ease);
+  }
+  .ui-btn::after {
+    content: '';
+    position: absolute;
+    inset: var(--ui-ring-w, 1px);
+    z-index: -1;
+    background: var(--ui-btn-fill);
+    clip-path: var(--ui-clip, none);
+    border-radius: inherit;
+    transition: background var(--ui-dur-base, 150ms) var(--ui-ease, ease);
+  }
+  .ui-btn:hover::before {
+    background: var(--ui-btn-ring-hover);
+  }
+  .ui-btn:hover::after {
+    background: var(--ui-btn-fill-hover);
+  }
+  .ui-btn:active::after {
+    background: var(--ui-btn-fill-active);
+  }
+  .ui-btn:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+  .ui-btn:disabled {
+    opacity: var(--ui-disabled-opacity, 0.4);
+    pointer-events: none;
+  }
+  .ui-btn > svg {
+    flex: none;
+  }
+
+  /* 变体令牌族：色值默认走色彩令牌（--c-*），主题可在按钮层登记
+     --ui-btn-{variant}-* 覆盖（如 Endfield 的工业风实底 + 混白提亮） */
+  .ui-btn--primary {
+    --ui-btn-ring: var(--ui-btn-primary-ring, var(--c-accent));
+    --ui-btn-ring-hover: var(--ui-btn-primary-ring-hover, var(--c-accent));
+    --ui-btn-fill: var(--ui-btn-primary-fill, var(--c-accent));
+    --ui-btn-fill-hover: var(--ui-btn-primary-fill-hover, var(--c-accent-hover));
+    --ui-btn-fill-active: var(--ui-btn-primary-fill-active, var(--c-accent-hover));
+    color: var(--ui-btn-primary-fg, var(--c-accent-fg));
+    box-shadow: var(--ui-btn-primary-shadow, var(--ui-e1, none));
+  }
+  .ui-btn--outline {
+    --ui-btn-ring: var(--ui-btn-outline-ring, var(--c-line));
+    --ui-btn-ring-hover: var(--ui-btn-outline-ring-hover, var(--c-line-strong));
+    --ui-btn-fill: var(--ui-btn-outline-fill, var(--c-bg));
+    --ui-btn-fill-hover: var(--ui-btn-outline-fill-hover, var(--c-accent-soft));
+    --ui-btn-fill-active: var(--ui-btn-outline-fill-active, var(--c-accent-soft));
+    color: var(--ui-btn-outline-fg, var(--c-muted));
+  }
+  .ui-btn--outline:hover {
+    color: var(--ui-btn-outline-fg-hover, var(--c-fg));
+  }
+  .ui-btn--quiet {
+    --ui-btn-ring: var(--ui-btn-quiet-ring, var(--c-line));
+    --ui-btn-ring-hover: var(--ui-btn-quiet-ring-hover, var(--c-line-strong));
+    --ui-btn-fill: var(--ui-btn-quiet-fill, transparent);
+    --ui-btn-fill-hover: var(--ui-btn-quiet-fill-hover, var(--c-accent-soft));
+    --ui-btn-fill-active: var(--ui-btn-quiet-fill-active, var(--c-accent-soft));
+    color: var(--ui-btn-quiet-fg, var(--c-muted));
+  }
+  .ui-btn--quiet:hover {
+    color: var(--ui-btn-quiet-fg-hover, var(--c-fg));
+  }
+  .ui-btn--icon {
+    --ui-btn-ring: transparent;
+    --ui-btn-ring-hover: transparent;
+    --ui-btn-fill: transparent;
+    --ui-btn-fill-hover: var(--c-accent-soft);
+    --ui-btn-px: 0px;
+    --ui-btn-py: 0px;
+    width: 30px;
+    height: 30px;
+    color: var(--c-muted);
+  }
+  .ui-btn--icon:hover {
+    color: var(--c-fg);
+  }
+  .ui-btn--danger {
+    --ui-btn-ring: var(--ui-btn-danger-ring, var(--c-danger));
+    --ui-btn-ring-hover: var(--ui-btn-danger-ring-hover, var(--c-danger));
+    --ui-btn-fill: var(--ui-btn-danger-fill, var(--c-danger));
+    --ui-btn-fill-hover: var(--ui-btn-danger-fill-hover, var(--c-danger-soft));
+    --ui-btn-fill-active: var(--ui-btn-danger-fill-active, var(--c-danger-soft));
+    color: var(--ui-btn-danger-fg, var(--c-bg));
+  }
+  /* 小号：表格操作列等密集场景；圆角取控件刻度（非胶囊） */
+  .ui-btn--sm {
+    --ui-btn-py: 4px;
+    --ui-btn-px: 10px;
+    --ui-btn-fs: var(--ui-fs-xs);
+    border-radius: var(--ui-r-btn-sm, var(--ui-r-sm));
+  }
+
+  /* ---------------------------------------------------------------------
+   * 主题化卡片
+   * 结构与按钮同构：外层画描边环，内层画"面板底"。
+   * 面板底的透明度与模糊来自材质层 —— Endfield 深档即碳黑玻璃。
+   * ------------------------------------------------------------------- */
+  .ui-card {
+    position: relative;
+    z-index: 0;
+    padding: var(--ui-ring-w, 1px);
+    background: var(--ui-card-ring, var(--c-line));
+    border-radius: var(--ui-r-card);
+    clip-path: var(--ui-clip, none);
+    box-shadow: var(--ui-e1, none);
+    transition:
+      box-shadow var(--ui-dur-base, 150ms) var(--ui-ease, ease),
+      background var(--ui-dur-base, 150ms) var(--ui-ease, ease),
+      transform var(--ui-dur-base, 150ms) var(--ui-ease, ease);
+  }
+  .ui-card__in {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    border-radius: inherit;
+    clip-path: var(--ui-clip, none);
+    background: color-mix(
+      in srgb,
+      var(--ui-card-fill, var(--c-bg)) var(--ui-panel-alpha, 100%),
+      transparent
+    );
+    backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
+    -webkit-backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
+  }
+  /* 强描边款（重要面板：用点缀色作环，内层染柔色底作选中强调） */
+  .ui-card--accent {
+    --ui-card-ring: var(--c-accent);
+  }
+  .ui-card--accent > .ui-card__in {
+    background: var(--c-accent-soft);
+  }
+  /* 横排卡：内层默认纵向（标题+内容堆叠），分栏容器（目录+主区）需要横向。
+     宿主一旦变 flex 容器，内层就从块级收缩为 flex item——必须显式 flex:1
+     撑满宿主宽度，否则内容偏左、右侧露出空白。
+     不能写成 Tailwind 任意值 [&>.ui-card__in]:flex-row —— v4 编译器会把
+     类名里的双下划线断成空格（产出无效选择器 ".ui-card in"），规则静默失效 */
+  .ui-card--row > .ui-card__in {
+    flex-direction: row;
+    flex: 1;
+    min-width: 0;
+  }
+  /* 悬浮：抬一层 + 描边加强（主题各自决定位移与否，此位移用变量控制） */
+  .ui-card--interactive {
+    cursor: pointer;
+  }
+  .ui-card--interactive:hover {
+    --ui-card-ring: var(--ui-card-ring-hover, var(--c-line-strong));
+    box-shadow: var(--ui-e2, none);
+    transform: translateY(var(--ui-lift, 0px));
+  }
+  .ui-card--interactive:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+
+  /* ------------------------------------------------ 排印层快捷类 */
+
+  /* 标题：字重 / 斜体 / 字距由主题排印层决定（BA = 900 斜体，MD3 = 500 常规） */
+  .ui-heading {
+    font-family: var(--ui-font-heading, var(--ui-font-sans));
+    font-weight: var(--ui-heading-weight, 600);
+    font-style: var(--ui-heading-style, normal);
+    letter-spacing: var(--ui-heading-tracking, 0em);
+    color: var(--c-fg);
+  }
+
+  /* 微标签：Endfield 会变成全大写 + 0.22em 字距 */
+  .ui-label {
+    font-size: var(--ui-fs-micro);
+    font-weight: var(--ui-label-weight, 700);
+    letter-spacing: var(--ui-label-tracking, 0.12em);
+    text-transform: var(--ui-label-transform, none);
+    color: var(--c-faint);
+  }
+
+  /* 玻璃面：给 FloatWindow / 菜单 / Toast 复用（Endfield 深档即玻璃） */
+  .ui-surface {
+    background: color-mix(in srgb, var(--c-bg) var(--ui-panel-alpha, 100%), transparent);
+    backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
+    -webkit-backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
+  }
+
+  /* ---------------------------------------------------------------------
+   * 表单控件外壳：给 input / textarea 补上它们自己做不到的「描边环 + 切角 + 玻璃」
+   * （替换元素不支持伪元素，所以由容器承担画环，内部控件被 CSS 透明化）。
+   * 这是纯令牌实现，因此不需要按 kit 分叉。
+   * ------------------------------------------------------------------- */
+  .ui-control {
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    padding: var(--ui-ring-w, 1px);
+    background: var(--c-line);
+    border-radius: var(--ui-r-control, var(--ui-r-md));
+    clip-path: var(--ui-clip-sm, none);
+    transition: background var(--ui-dur-base, 150ms) var(--ui-ease, ease);
+  }
+  .ui-control::before {
+    content: '';
+    position: absolute;
+    inset: var(--ui-ring-w, 1px);
+    z-index: -1;
+    border-radius: inherit;
+    clip-path: var(--ui-clip-sm, none);
+    background: color-mix(in srgb, var(--c-bg) var(--ui-panel-alpha, 100%), transparent);
+    backdrop-filter: blur(var(--ui-blur, 0px));
+    -webkit-backdrop-filter: blur(var(--ui-blur, 0px));
+  }
+  .ui-control:hover {
+    background: var(--c-line-strong);
+  }
+  .ui-control:focus-within {
+    background: var(--c-accent);
+  }
+  .ui-control > input,
+  .ui-control > textarea,
+  .ui-control > select {
+    width: 100%;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: var(--c-fg);
+    font-size: var(--ui-fs-base);
+    padding: 8px 12px;
+  }
+  .ui-control > textarea {
+    resize: none;
+    line-height: 1.6;
+  }
+  .ui-control > input::placeholder,
+  .ui-control > textarea::placeholder {
+    color: var(--c-hint);
+  }
+  /* 控件自带 bg / border 工具类时，在外壳里应当隐形 */
+  .ui-control > input.bg-bg,
+  .ui-control > textarea.bg-bg {
+    background: transparent;
+  }
+}
+
+/* ============================================================ 排印捷径 */
+
+/* 裸 mono 类：等宽字体族简写（kit / 外壳 / 页面大量以 `mono text-2xs` 组合做数据读数） */
+@utility mono {
+  font-family: var(--ui-font-mono);
+}
+
+/* ============================================================ 滚动条 */
+
+/* 隐藏滚动条但保留滚动能力 */
 @utility scrollbar-hide {
   scrollbar-width: none;
   &::-webkit-scrollbar {
@@ -69,7 +467,7 @@ button:not(:disabled) {
   }
 }
 
-/* 细滚动条（搜索结果内容区）：透明槽 + 圆角半透明滑块，hover 加深 */
+/* 细滚动条：透明槽 + 圆角半透明滑块，hover 加深 */
 @utility scrollbar-slim {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--c-fg, #0f0f0f) 20%, transparent) transparent;
@@ -89,7 +487,7 @@ button:not(:disabled) {
   }
 }
 
-/* 点缀色细滚动条（文档详情页文章容器）：透明槽 + 圆角点缀色滑块，悬停加深 */
+/* 点缀色细滚动条 */
 @utility scrollbar-accent {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--c-accent, #0f0f0f) 50%, transparent) transparent;
@@ -110,31 +508,77 @@ button:not(:disabled) {
 }
 
 ::selection {
-  background: var(--c-fg, #0f0f0f);
-  color: var(--c-bg, #ffffff);
+  background: var(--c-accent, #0f0f0f);
+  color: var(--c-accent-fg, #ffffff);
 }
 
 /* ---------------------------------------------------------------------------
- * MD3 风格「色调便签」（surface container）：提示词页把上下文的不同部分做成便签，
- * 以低彩度色调区分角色。底色一律由主题令牌现混（——色相取自角色色、明度贴近底色），
- * 因此浅色/深色/任意自定义主题都自适应，无需为每个主题单独定义。
- *   accent  = 点缀色调（主提示词位）
- *   secondary = 辅色调（同上下文内第二个提示词位）
- *   primary = 主色调（第三个及以后，数量上目前用不到，留作扩展）
- *   neutral = 中性调（只读的运行时素材）
+ * 色调便签（surface container）：提示词页把上下文的不同部分做成便签，
+ * 以低彩度色调区分角色。底色一律由主题令牌现混，五套主题自适应。
  * ------------------------------------------------------------------------- */
 @utility note-tone-accent {
   background-color: color-mix(in srgb, var(--c-accent, #888888) 11%, var(--c-bg, #ffffff));
 }
-
 @utility note-tone-secondary {
   background-color: color-mix(in srgb, var(--c-secondary, #0f0f0f) 13%, var(--c-bg, #ffffff));
 }
-
 @utility note-tone-primary {
   background-color: color-mix(in srgb, var(--c-primary, #0f0f0f) 7%, var(--c-bg, #ffffff));
 }
-
 @utility note-tone-neutral {
   background-color: color-mix(in srgb, var(--c-fg, #0f0f0f) 4%, var(--c-bg, #ffffff));
+}
+
+/* 首页会话抽屉：滑块切入会话模式时的挂载淡入。
+   抽屉挂载即开没有 transition 起点（首帧就是终值），会硬生生闪现；
+   本动画只在元素插入时播一次，之后的拉手开合仍走原滑动 transition */
+@utility panel-fade-in {
+  animation: panel-fade-in 300ms ease-out;
+}
+@keyframes panel-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 机械进场：闸门式分段展开（steps 硬切，消费动效层 mech 令牌）。
+   只声明 from 帧，to 即元素静态样式——结束后无缝交还宿主自身的
+   clip-path / transform，不会覆盖 ui-card 的大切角。
+   挂在无裁切的定位层上使用（如终末地外观终端的弹层容器） */
+@utility mech-in {
+  animation: mech-in var(--ui-dur-slow, 300ms) var(--ui-ease-mech, steps(6, end)) backwards;
+}
+@keyframes mech-in {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+  }
+}
+
+/* 工作台窗口作用域（终末地窗口样式档）：把窗口内部的 --c-* 切到
+   --ui-win-c-* 源，令 FloatWindow 内容呈现浅色印刷环境（纯白底深字、
+   暖灰实线）。值登记于 layers.ts（ENDFIELD_WINDOW_WORKBENCH）；
+   未开启窗口样式档的主题不挂此类 → --c-* 仍取全局值 */
+.ui-win-workbench {
+  --c-bg: var(--ui-win-c-bg);
+  --c-fg: var(--ui-win-c-fg);
+  --c-fg-2: var(--ui-win-c-fg-2);
+  --c-muted: var(--ui-win-c-muted);
+  --c-faint: var(--ui-win-c-faint);
+  --c-dim: var(--ui-win-c-dim);
+  --c-line: var(--ui-win-c-line);
+  --c-line-strong: var(--ui-win-c-line-strong);
+}
+
+/* 进入会话的跨页滚动过渡：滚动条整体透明但槽保留（配合 main 的
+   scrollbar-gutter: stable，宽度恒定无抖动）——两页滚动是在模拟
+   「进入另一个页面」，过渡期间露出滚动条就穿帮了 */
+@utility scrollbar-stealth {
+  scrollbar-color: transparent transparent;
+  &::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
 }

@@ -6,10 +6,10 @@
  * 维护（{@code /api/terminal}），本页额外接上工作空间的文件面（{@code /api/workspaces/*}）。
  * 因此这里不再重复一套环境配置，只是把终端能力组织成一个面向「工作空间」的页面。
  *
- * <p>视觉上按 Material Design 3 组织：surface-container 阶梯做卡片层次，outline/on-surface 系列做
- * 描边与文字，按钮分填充 / 色调 / 描边 / 文本四档（均由主题令牌现混，浅色 / 深色 / 自定义主题自适应）。
+ * <p>视觉交给 PageKit 与主题原语：标题区用 kit.Page，面板用 Card（描边环 + 面板底），
+ * 按钮用 ui-btn 变体（primary / outline / quiet / icon），标签用 kit.Badge，层次随主题令牌自适应。
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { BRAND } from '../branding'
 import {
   ApiError,
@@ -31,23 +31,12 @@ import {
   type WorkspaceDirView,
   type WorkspaceFileView,
 } from '../api/client'
+import { Card, CardHead } from '../components/Card'
 import FloatWindow from '../components/FloatWindow'
 import Toast from '../components/Toast'
 import { Field, INPUT, ModeBtn, Select, linesToPatterns } from '../components/formKit'
-
-/* ---------------- MD3 组件样式 ---------------- */
-
-/* 统一按钮基底：微小圆角 + 12px 排版；实底 / 色调 / 描边 / 文本仅差配色与内边距 */
-const BTN =
-  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm text-[12px] font-medium transition disabled:pointer-events-none disabled:opacity-40'
-const FILLED = `${BTN} bg-accent px-3.5 py-1.5 text-accent-fg hover:bg-accent-hover`
-const TONAL = `${BTN} bg-surface-container-high px-3.5 py-1.5 text-on-surface hover:bg-surface-container-highest`
-const OUTLINED = `${BTN} border border-outline px-3.5 py-1.5 text-on-surface hover:bg-surface-container-high`
-const TEXTBTN = `${BTN} px-2.5 py-1 text-accent hover:bg-accent/10`
-/* 图标按钮（上一层 / 刷新 / 下载 / 关闭预览）：与文字按钮同圆角、同悬停 */
-const ICONBTN =
-  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-on-surface-variant transition hover:bg-surface-container-high disabled:pointer-events-none disabled:opacity-30'
-const CARD = 'rounded-2xl bg-surface-container-low p-5'
+import { btnIcon, btnOutline, btnPrimary, btnQuiet, miniBtn } from '../components/ui'
+import { usePageKit } from '../kit'
 
 /* ---------------- 小工具 ---------------- */
 
@@ -180,28 +169,6 @@ function IconChevron() {
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
       <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
-  )
-}
-
-/* ---------------- MD3 基础件 ---------------- */
-
-/** MD3 芯片 */
-function Chip({
-  children,
-  tone = 'neutral',
-}: {
-  children: ReactNode
-  tone?: 'neutral' | 'on' | 'off'
-}) {
-  const tones = {
-    neutral: 'bg-surface-container-highest text-on-surface-variant',
-    on: 'bg-accent text-accent-fg',
-    off: 'bg-surface-variant text-on-surface-variant',
-  }
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${tones[tone]}`}>
-      {children}
-    </span>
   )
 }
 
@@ -518,18 +485,18 @@ function WorkspaceDialog({
             type="checkbox"
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
-            className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+            className="h-3.5 w-3.5 accent-[color:var(--c-accent)]"
           />
-          <span className="text-[12px] text-on-surface-variant">
+          <span className="text-[12px] text-muted">
             启用（模型可见可用；不启用则模型完全看不到这台环境）
           </span>
         </label>
 
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" className={OUTLINED} onClick={onClose}>
+          <button type="button" className={btnOutline('rounded-sm')} onClick={onClose}>
             取消
           </button>
-          <button type="submit" className={FILLED} disabled={!valid || busy}>
+          <button type="submit" className={btnPrimary('rounded-sm')} disabled={!valid || busy}>
             {busy ? '保存中 …' : '保存'}
           </button>
         </div>
@@ -553,6 +520,7 @@ function FileBrowser({
   workspace: TerminalTarget
   onToast: (t: { kind: 'success' | 'error'; msg: string }) => void
 }) {
+  const kit = usePageKit()
   const [segments, setSegments] = useState<string[]>([])
   const [dir, setDir] = useState<WorkspaceDirView | null>(null)
   const [loading, setLoading] = useState(false)
@@ -622,7 +590,7 @@ function FileBrowser({
   }
 
   return (
-    <div className={`${CARD} flex min-h-0 flex-col`}>
+    <Card pad="lg" className="flex min-h-0 flex-col">
       {/* 面包屑 + 刷新 */}
       <div className="flex shrink-0 items-center gap-2">
         <button
@@ -630,34 +598,34 @@ function FileBrowser({
           title="上一层"
           disabled={segments.length === 0}
           onClick={() => setSegments((s) => s.slice(0, -1))}
-          className={ICONBTN}
+          className={btnIcon('rounded-sm')}
         >
           <IconUp />
         </button>
-        <div className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-[12px]">
+        <div className="scrollbar-hide flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-xs">
           <button
             type="button"
             onClick={() => setSegments([])}
-            className={`shrink-0 rounded-sm px-2 py-1 font-medium transition ${
+            className={`shrink-0 px-2 py-1 font-medium transition ${
               segments.length === 0
-                ? 'bg-surface-container-high text-on-surface'
-                : 'text-on-surface-variant hover:bg-surface-container-high'
+                ? 'bg-accent-soft text-fg'
+                : 'text-muted hover:bg-fg/5 hover:text-fg'
             }`}
           >
             {workspace.name}
           </button>
           {segments.map((seg, i) => (
             <span key={`${seg}-${i}`} className="flex shrink-0 items-center gap-1">
-              <span className="text-outline">
+              <span className="text-faint">
                 <IconChevron />
               </span>
               <button
                 type="button"
                 onClick={() => setSegments((s) => s.slice(0, i + 1))}
-                className={`rounded-sm px-2 py-1 font-mono transition ${
+                className={`mono px-2 py-1 transition ${
                   i === segments.length - 1
-                    ? 'bg-surface-container-high text-on-surface'
-                    : 'text-on-surface-variant hover:bg-surface-container-high'
+                    ? 'bg-accent-soft text-fg'
+                    : 'text-muted hover:bg-fg/5 hover:text-fg'
                 }`}
               >
                 {seg}
@@ -669,47 +637,44 @@ function FileBrowser({
           type="button"
           title="刷新"
           onClick={() => void load()}
-          className={ICONBTN}
+          className={btnIcon('rounded-sm')}
         >
           <IconRefresh />
         </button>
       </div>
 
       {/* 目录项 */}
-      <div className="mt-3 min-h-0 flex-1 overflow-y-auto scrollbar-slim">
-        {loading && <p className="px-3 py-6 text-[12px] text-on-surface-variant">加载中 …</p>}
+      <div className="mt-2 min-h-0 flex-1 overflow-y-auto scrollbar-slim">
+        {loading && <p className="px-3 py-6 text-xs text-muted">加载中 …</p>}
         {!loading && err && (
-          <p className="rounded-xl bg-surface-container-high px-3 py-4 text-[12px] leading-relaxed text-on-surface-variant">
+          <p className="rounded-md border border-line bg-fg/[0.03] px-3 py-4 text-xs leading-relaxed text-muted">
             {err}
           </p>
         )}
         {!loading && !err && dir?.entries.length === 0 && (
-          <p className="px-3 py-6 text-[12px] text-on-surface-variant">（空目录）</p>
+          <p className="px-3 py-6 text-xs text-muted">（空目录）</p>
         )}
         {!loading &&
           !err &&
           dir?.entries.map((e) => {
             const p = entryPath(e.name)
             return (
-              <div
-                key={e.name}
-                className="flex items-center gap-3 rounded-xl px-2.5 py-2 transition hover:bg-surface-container-high"
-              >
-                <span className="shrink-0 text-on-surface-variant">
+              <kit.Row key={e.name} className="gap-3 py-2">
+                <span className="shrink-0 text-muted">
                   {e.dir ? <IconFolder /> : e.link ? <IconLink /> : <IconFile />}
                 </span>
                 <button
                   type="button"
                   onClick={() => (e.dir ? setSegments((s) => [...s, e.name]) : void openFile(e.name))}
                   title={e.name}
-                  className="min-w-0 flex-1 truncate text-left text-[13px] text-on-surface transition hover:text-accent hover:underline"
+                  className="min-w-0 flex-1 truncate text-left text-[13px] text-fg transition hover:underline"
                 >
                   {e.name}
                 </button>
-                <span className="hidden w-32 shrink-0 truncate text-right font-mono text-[11px] text-on-surface-variant sm:block">
+                <span className="mono hidden w-32 shrink-0 truncate text-right text-2xs text-dim sm:block">
                   {e.modified}
                 </span>
-                <span className="w-20 shrink-0 text-right font-mono text-[11px] text-on-surface-variant">
+                <span className="mono w-20 shrink-0 text-right text-2xs text-dim">
                   {e.dir ? '—' : fmtSize(e.size)}
                 </span>
                 <button
@@ -717,29 +682,29 @@ function FileBrowser({
                   title="下载"
                   disabled={downloading === p}
                   onClick={() => void download(e.name)}
-                  className={ICONBTN}
+                  className={btnIcon('rounded-sm')}
                 >
                   <IconDownload />
                 </button>
-              </div>
+              </kit.Row>
             )
           })}
       </div>
 
       {/* 预览 */}
       {(previewLoading || preview || previewErr) && (
-        <div className="mt-4 shrink-0 rounded-xl bg-surface-container">
-          <div className="flex items-center gap-2 px-4 py-2.5">
-            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-on-surface">
+        <div className="mt-3 shrink-0 rounded-md border border-line">
+          <div className="flex items-center gap-2 px-3.5 py-2">
+            <span className="mono min-w-0 flex-1 truncate text-xs font-bold text-fg">
               {previewLoading ? '加载中 …' : preview?.name ?? '预览'}
             </span>
-            {preview && <Chip>{fmtSize(preview.size)}</Chip>}
-            {preview?.truncated && <Chip>已截断</Chip>}
-            {preview?.binary && <Chip>二进制</Chip>}
+            {preview && <kit.Badge>{fmtSize(preview.size)}</kit.Badge>}
+            {preview?.truncated && <kit.Badge tone="warn">已截断</kit.Badge>}
+            {preview?.binary && <kit.Badge>二进制</kit.Badge>}
             {preview && (
               <button
                 type="button"
-                className={TEXTBTN}
+                className={miniBtn}
                 disabled={downloading === preview.path}
                 onClick={() => void download(preview.name)}
               >
@@ -753,7 +718,7 @@ function FileBrowser({
                 setPreview(null)
                 setPreviewErr(null)
               }}
-              className={ICONBTN}
+              className={btnIcon('rounded-sm')}
             >
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
                 <path
@@ -765,33 +730,34 @@ function FileBrowser({
               </svg>
             </button>
           </div>
-          <div className="border-t border-outline-variant px-4 py-3">
+          <div className="border-t border-line px-3.5 py-3">
             {previewLoading && (
-              <p className="text-[12px] text-on-surface-variant">读取中 …</p>
+              <p className="text-xs text-muted">读取中 …</p>
             )}
             {!previewLoading && previewErr && (
-              <p className="text-[12px] leading-relaxed text-on-surface-variant">{previewErr}</p>
+              <p className="text-xs leading-relaxed text-muted">{previewErr}</p>
             )}
             {!previewLoading && preview?.binary && (
-              <p className="text-[12px] leading-relaxed text-on-surface-variant">
+              <p className="text-xs leading-relaxed text-muted">
                 二进制文件（{fmtSize(preview.size)}），不支持文本预览，可下载后查看。
               </p>
             )}
             {!previewLoading && preview && !preview.binary && (
-              <pre className="scrollbar-slim max-h-[360px] overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-on-surface">
+              <pre className="scrollbar-slim max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-[11.5px] leading-5 text-muted">
                 {preview.content?.length ? preview.content : '（空文件）'}
               </pre>
             )}
           </div>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
 /* ---------------- 页面 ---------------- */
 
 export default function Workspace() {
+  const kit = usePageKit()
   const [view, setView] = useState<TerminalView | null>(null)
   const [commands, setCommands] = useState<TerminalCommand[]>([])
   const [loadErr, setLoadErr] = useState<string | null>(null)
@@ -910,243 +876,254 @@ export default function Workspace() {
   }
 
   return (
-    <section className="flex flex-col py-8 lg:h-full">
-      <Toast kind={toast?.kind} message={toast?.msg ?? null} onClose={() => setToast(null)} />
-
-      {/* 页头 */}
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold tracking-tight text-on-surface">工作空间</h1>
-          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-on-surface-variant">
-            以 docker 容器或 SSH 服务器为 agent 的工作空间：模型通过命令行直接在其中作业，
-            你也可以在这里浏览、预览与下载其中的文件。没有全局总开关——启用哪个工作空间，
-            模型就能在哪里执行命令（run_command / list_terminals）。
-          </p>
-          {/* 试跑与执行记录收进浮窗，把页头之下的版面让给文件编辑器 */}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className={TONAL} onClick={() => setRunDlg(true)}>
-              人工试跑
-            </button>
-            <button
-              type="button"
-              className={OUTLINED}
-              onClick={() => {
-                refreshCommands()
-                setCmdDlg(true)
-              }}
-            >
-              最近执行
-            </button>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-4">
-          <button type="button" className={FILLED} disabled={busy} onClick={() => setDlg({ editing: null })}>
+    /* 满幅页：lg 档把 kit.Page 的 section 拉伸到视口高（App 路由已给 h-full），
+       两栏列表与文件浏览器各自内部滚动 */
+    <div className="flex min-h-0 flex-col lg:h-full lg:[&>section]:min-h-0 lg:[&>section]:flex-1">
+      <kit.Page
+        title="工作空间"
+        en="WORKSPACES"
+        meta={
+          <button
+            type="button"
+            className={btnPrimary('rounded-sm')}
+            disabled={busy}
+            onClick={() => setDlg({ editing: null })}
+          >
             新建工作空间
           </button>
+        }
+      >
+        {/* 页头动作条：左侧定位说明，右侧收进浮窗的试跑与执行记录（把版面让给文件浏览器） */}
+        <kit.Toolbar
+          left={
+            <p className="max-w-2xl leading-relaxed">
+              以 docker 容器或 SSH 服务器为 agent 的工作空间：模型通过命令行直接在其中作业，
+              你也可以在这里浏览、预览与下载其中的文件。没有全局总开关——启用哪个工作空间，
+              模型就能在哪里执行命令（run_command / list_terminals）。
+            </p>
+          }
+          right={
+            <>
+              <button type="button" className={btnQuiet('rounded-sm')} onClick={() => setRunDlg(true)}>
+                人工试跑
+              </button>
+              <button
+                type="button"
+                className={btnOutline('rounded-sm')}
+                onClick={() => {
+                  refreshCommands()
+                  setCmdDlg(true)
+                }}
+              >
+                最近执行
+              </button>
+            </>
+          }
+        />
+
+        {loadErr && <kit.Note tone="warn">加载失败：{loadErr}</kit.Note>}
+
+        {/* 工作空间列表 + 文件编辑器：占据页头之下的全部剩余高度 */}
+        <div className="grid min-h-0 gap-5 lg:flex-1 lg:grid-cols-[320px_1fr]">
+          <Card pad="none" className="flex min-h-0 flex-col">
+            <CardHead
+              title="全部工作空间"
+              meta={
+                <span className="mono text-2xs text-dim">
+                  {targets.length > 0 ? `${targets.length} 台` : '—'}
+                </span>
+              }
+            />
+            <div className="scrollbar-slim flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+              {targets.length === 0 && (
+                <kit.Empty>
+                  还没有工作空间。新建一个 docker 容器或 SSH 服务器后，模型才知道能在哪里执行命令。
+                </kit.Empty>
+              )}
+              {targets.map((t) => {
+                const active = t.id === selected?.id
+                return (
+                  <div
+                    key={t.id}
+                    onClick={() => setSelectedId(t.id)}
+                    className={`cursor-pointer rounded-md border p-3.5 transition ${
+                      active
+                        ? 'border-accent bg-accent-soft'
+                        : 'border-line hover:border-line-strong hover:bg-fg/[0.03]'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(t.id)}
+                      className="block w-full text-left"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[13px] font-semibold text-fg">{t.name}</span>
+                        <kit.Badge>{t.kind}</kit.Badge>
+                        {t.enabled ? (
+                          <kit.Badge tone="ok">已启用</kit.Badge>
+                        ) : (
+                          <kit.Badge tone="warn">未启用</kit.Badge>
+                        )}
+                      </div>
+                      <p className="mono mt-1 break-all text-2xs text-dim">{targetWhere(t)}</p>
+                      {t.note && <p className="mt-0.5 text-2xs text-faint">{t.note}</p>}
+                    </button>
+                    {/* 动作行独立于卡片点击：只响应各自按钮，不把点击冒泡成「选中」 */}
+                    <div className="mt-2 flex cursor-default items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className={miniBtn}
+                        disabled={busy || probing !== null}
+                        onClick={() => void probeTarget(t)}
+                      >
+                        {probing === t.id ? '测试中 …' : '测试'}
+                      </button>
+                      <button type="button" className={miniBtn} disabled={busy} onClick={() => setDlg({ editing: t })}>
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className={miniBtn}
+                        disabled={busy}
+                        onClick={() => {
+                          setRunTargetId(t.id)
+                          setSelectedId(t.id)
+                          setLastRun(null)
+                          setRunErr(null)
+                          setRunDlg(true)
+                        }}
+                      >
+                        试跑
+                      </button>
+                      <button type="button" className={miniBtn} disabled={busy} onClick={() => removeTarget(t)}>
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+
+          {selected ? (
+            <FileBrowser
+              key={selected.id}
+              workspace={selected}
+              onToast={(t) => setToast(t)}
+            />
+          ) : (
+            <div className="flex min-h-[320px] items-center justify-center">
+              <kit.Empty>选择左侧的工作空间，即可浏览其中的文件。</kit.Empty>
+            </div>
+          )}
         </div>
-      </header>
 
-      {loadErr && (
-        <p className="mt-6 shrink-0 rounded-2xl bg-surface-container-low px-5 py-4 text-[13px] leading-relaxed text-on-surface-variant">
-          加载失败：{loadErr}
-        </p>
-      )}
-
-      {/* 工作空间列表 + 文件编辑器：占据页头之下的全部剩余高度 */}
-      <div className="mt-6 grid min-h-0 gap-6 lg:flex-1 lg:grid-cols-[320px_1fr]">
-        <div className={`${CARD} flex min-h-0 flex-col`}>
-          <h2 className="shrink-0 px-1 text-[13px] font-semibold text-on-surface">全部工作空间</h2>
-          <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto scrollbar-slim">
-            {targets.length === 0 && (
-              <p className="px-1 py-4 text-[12px] leading-relaxed text-on-surface-variant">
-                还没有工作空间。新建一个 docker 容器或 SSH 服务器后，模型才知道能在哪里执行命令。
+        {/* 人工试跑：页头按钮唤起的浮窗 */}
+        {runDlg && (
+          <FloatWindow title="人工试跑" onClose={() => setRunDlg(false)} width={640}>
+            <p className="text-xs leading-relaxed text-hint">
+              与模型走同一条执行路径：同样上白名单 / 黑名单与超时，同样记入「最近执行」。
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <div className="w-44 shrink-0">
+                <Select
+                  value={runTargetId}
+                  onChange={setRunTargetId}
+                  options={[
+                    { value: '', label: '选择工作空间 …' },
+                    ...targets.map((t) => ({ value: t.id, label: t.name })),
+                  ]}
+                />
+              </div>
+              <input
+                value={runCmd}
+                onChange={(e) => setRunCmd(e.target.value)}
+                className={`${INPUT} min-w-[180px] flex-1 font-mono`}
+                placeholder="uname -a"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className={btnPrimary('rounded-sm')}
+                disabled={running || !runTarget || !runCmd.trim()}
+                onClick={() => void runNow()}
+              >
+                {running ? '执行中 …' : '执行'}
+              </button>
+            </div>
+            {runErr && (
+              <p className="mt-3 rounded-md border border-danger bg-fg/[0.03] px-3 py-3 text-xs leading-relaxed text-muted">
+                {runErr}
               </p>
             )}
-            {targets.map((t) => {
-              const active = t.id === selected?.id
-              return (
+            {lastRun && (
+              <div className="mt-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <kit.Badge tone={lastRun.ok ? 'ok' : 'danger'}>
+                    {lastRun.exitCode == null ? 'exit ?' : `exit ${lastRun.exitCode}`}
+                  </kit.Badge>
+                  <span className="mono text-2xs text-dim">{lastRun.durationMs} ms</span>
+                  {lastRun.timedOut && <kit.Badge tone="warn">已超时终止</kit.Badge>}
+                  {lastRun.truncated && <kit.Badge tone="warn">输出已截断</kit.Badge>}
+                </div>
+                <pre className="scrollbar-slim mt-2 max-h-[45vh] select-text overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-[11.5px] leading-5 text-muted">
+                  {lastRun.stdout?.trim() || '（无输出）'}
+                  {lastRun.stderr?.trim() ? `\n--- stderr ---\n${lastRun.stderr.trim()}` : ''}
+                </pre>
+              </div>
+            )}
+          </FloatWindow>
+        )}
+
+        {/* 最近执行：页头按钮唤起的浮窗 */}
+        {cmdDlg && (
+          <FloatWindow title="最近执行" onClose={() => setCmdDlg(false)} width={560}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs leading-relaxed text-hint">
+                最近 20 条命令记录，人工试跑与模型执行都在此。
+              </p>
+              <button type="button" className={`${miniBtn} shrink-0`} onClick={refreshCommands}>
+                刷新
+              </button>
+            </div>
+            <div className="mt-3 flex flex-col gap-1.5">
+              {commands.length === 0 && <kit.Empty>还没有执行记录。</kit.Empty>}
+              {commands.map((c) => (
                 <div
-                  key={t.id}
-                  onClick={() => setSelectedId(t.id)}
-                  className={`cursor-pointer rounded-2xl border p-3.5 transition ${
-                    active
-                      ? 'border-outline bg-surface-container-high'
-                      : 'border-transparent bg-surface-container hover:bg-surface-container-high'
-                  }`}
+                  key={c.id}
+                  className="flex select-text items-start justify-between gap-3 rounded-md border border-line px-3 py-2.5"
                 >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(t.id)}
-                    className="block w-full text-left"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13px] font-semibold text-on-surface">{t.name}</span>
-                      <Chip>{t.kind}</Chip>
-                      {t.enabled ? <Chip tone="on">已启用</Chip> : <Chip tone="off">未启用</Chip>}
-                    </div>
-                    <p className="mt-1 break-all font-mono text-[11px] text-on-surface-variant">
-                      {targetWhere(t)}
+                  <div className="min-w-0 flex-1">
+                    <p className="mono truncate text-xs text-fg">{c.command}</p>
+                    <p className="mono mt-0.5 text-2xs text-dim">
+                      {c.targetName} · {c.source} · {new Date(c.createdAt).toLocaleString()}
                     </p>
-                    {t.note && (
-                      <p className="mt-0.5 text-[11px] text-on-surface-variant">{t.note}</p>
-                    )}
-                  </button>
-                  {/* 动作行独立于卡片点击：只响应各自按钮，不把点击冒泡成「选中」 */}
-                  <div className="mt-2 flex cursor-default items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className={TEXTBTN}
-                      disabled={busy || probing !== null}
-                      onClick={() => void probeTarget(t)}
-                    >
-                      {probing === t.id ? '测试中 …' : '测试'}
-                    </button>
-                    <button type="button" className={TEXTBTN} disabled={busy} onClick={() => setDlg({ editing: t })}>
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      className={TEXTBTN}
-                      disabled={busy}
-                      onClick={() => {
-                        setRunTargetId(t.id)
-                        setSelectedId(t.id)
-                        setLastRun(null)
-                        setRunErr(null)
-                        setRunDlg(true)
-                      }}
-                    >
-                      试跑
-                    </button>
-                    <button type="button" className={TEXTBTN} disabled={busy} onClick={() => removeTarget(t)}>
-                      删除
-                    </button>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {c.timedOut && <kit.Badge tone="warn">超时</kit.Badge>}
+                    {c.truncated && <kit.Badge tone="warn">截断</kit.Badge>}
+                    <kit.Badge tone={c.ok ? 'ok' : 'danger'}>
+                      {c.exitCode == null ? 'exit ?' : `exit ${c.exitCode}`}
+                    </kit.Badge>
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {selected ? (
-          <FileBrowser
-            key={selected.id}
-            workspace={selected}
-            onToast={(t) => setToast(t)}
-          />
-        ) : (
-          <div className={`${CARD} flex min-h-[320px] items-center justify-center`}>
-            <p className="text-[12px] text-on-surface-variant">
-              选择左侧的工作空间，即可浏览其中的文件。
-            </p>
-          </div>
+              ))}
+            </div>
+          </FloatWindow>
         )}
-      </div>
 
-      {/* 人工试跑：页头按钮唤起的浮窗 */}
-      {runDlg && (
-        <FloatWindow title="人工试跑" onClose={() => setRunDlg(false)} width={640}>
-          <p className="text-[11px] leading-relaxed text-on-surface-variant">
-            与模型走同一条执行路径：同样上白名单 / 黑名单与超时，同样记入「最近执行」。
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <div className="w-44 shrink-0">
-              <Select
-                value={runTargetId}
-                onChange={setRunTargetId}
-                options={[
-                  { value: '', label: '选择工作空间 …' },
-                  ...targets.map((t) => ({ value: t.id, label: t.name })),
-                ]}
-              />
-            </div>
-            <input
-              value={runCmd}
-              onChange={(e) => setRunCmd(e.target.value)}
-              className={`${INPUT} min-w-[180px] flex-1 font-mono`}
-              placeholder="uname -a"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              className={TONAL}
-              disabled={running || !runTarget || !runCmd.trim()}
-              onClick={() => void runNow()}
-            >
-              {running ? '执行中 …' : '执行'}
-            </button>
-          </div>
-          {runErr && (
-            <p className="mt-3 rounded-xl bg-surface-container-high px-3 py-3 text-[12px] leading-relaxed text-on-surface-variant">
-              {runErr}
-            </p>
-          )}
-          {lastRun && (
-            <div className="mt-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Chip tone={lastRun.ok ? 'on' : 'neutral'}>
-                  {lastRun.exitCode == null ? 'exit ?' : `exit ${lastRun.exitCode}`}
-                </Chip>
-                <span className="text-[11px] text-on-surface-variant">{lastRun.durationMs} ms</span>
-                {lastRun.timedOut && <Chip>已超时终止</Chip>}
-                {lastRun.truncated && <Chip>输出已截断</Chip>}
-              </div>
-              <pre className="scrollbar-slim mt-2 max-h-[45vh] select-text overflow-auto whitespace-pre-wrap break-words rounded-xl bg-surface-container px-3 py-3 font-mono text-[11px] leading-relaxed text-on-surface">
-                {lastRun.stdout?.trim() || '（无输出）'}
-                {lastRun.stderr?.trim() ? `\n--- stderr ---\n${lastRun.stderr.trim()}` : ''}
-              </pre>
-            </div>
-          )}
-        </FloatWindow>
-      )}
+        {dlg && (
+          <WorkspaceDialog
+            initial={dlg.editing}
+            busy={busy}
+            onClose={() => setDlg(null)}
+            onSubmit={(req) => void submitTarget(req)}
+          />
+        )}
 
-      {/* 最近执行：页头按钮唤起的浮窗 */}
-      {cmdDlg && (
-        <FloatWindow title="最近执行" onClose={() => setCmdDlg(false)} width={560}>
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] leading-relaxed text-on-surface-variant">
-              最近 20 条命令记录，人工试跑与模型执行都在此。
-            </p>
-            <button type="button" className={`${TEXTBTN} shrink-0`} onClick={refreshCommands}>
-              刷新
-            </button>
-          </div>
-          <div className="mt-3 space-y-1.5">
-            {commands.length === 0 && (
-              <p className="px-1 py-4 text-[12px] text-on-surface-variant">还没有执行记录。</p>
-            )}
-            {commands.map((c) => (
-              <div
-                key={c.id}
-                className="flex select-text items-start justify-between gap-3 rounded-xl bg-surface-container px-3 py-2.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-mono text-[12px] text-on-surface">{c.command}</p>
-                  <p className="mt-0.5 text-[11px] text-on-surface-variant">
-                    {c.targetName} · {c.source} · {new Date(c.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {c.timedOut && <Chip>超时</Chip>}
-                  {c.truncated && <Chip>截断</Chip>}
-                  <Chip tone={c.ok ? 'on' : 'neutral'}>
-                    {c.exitCode == null ? 'exit ?' : `exit ${c.exitCode}`}
-                  </Chip>
-                </div>
-              </div>
-            ))}
-          </div>
-        </FloatWindow>
-      )}
-
-      {dlg && (
-        <WorkspaceDialog
-          initial={dlg.editing}
-          busy={busy}
-          onClose={() => setDlg(null)}
-          onSubmit={(req) => void submitTarget(req)}
-        />
-      )}
-    </section>
+        <Toast kind={toast?.kind} message={toast?.msg ?? null} onClose={() => setToast(null)} />
+      </kit.Page>
+    </div>
   )
 }

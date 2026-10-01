@@ -18,6 +18,7 @@ import FloatWindow from '../components/FloatWindow'
 import GraphMini from '../components/GraphMini'
 import Toast, { type ToastKind } from '../components/Toast'
 import { btnOutline, btnPrimary } from '../components/ui'
+import { usePageKit } from '../kit'
 
 /**
  * 步骤 2：知识提取（步骤条下方为左右布局）。
@@ -136,6 +137,7 @@ function fmtTime(ts: number): string {
 }
 
 export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
+  const kit = usePageKit()
   /** 上下文补完串（Anthropic Contextual：文档标题 + 类型 + 全文概述 + chunk 组合，与后端 chunkContext 保持一致） */
   const contextString = useMemo(() => {
     return `<document>\n<title>${ctx.docTitle}</title>\n<docType>${ctx.docType ?? 'UNKNOWN'}</docType>\n<abstract>${ctx.contextualizing}</abstract>\n</document>\n\n<chunk>\n${ctx.chunk.content}\n</chunk>`
@@ -388,7 +390,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
         <div className="flex min-w-165 flex-1 flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-col">
-              <h2 className="text-base font-semibold text-fg">「{ctx.docTitle}」· chunk #{ctx.chunk.id}</h2>
+              <h2 className="ui-heading text-base">「{ctx.docTitle}」· chunk #{ctx.chunk.id}</h2>
             </div>
             <button
               type="button"
@@ -402,13 +404,13 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
           </div>
 
           {/* 父文档摘要（LLM 生成的全文概述，提取时组装进上下文补完串） */}
-          <p className="text-sm font-medium text-muted">父文档摘要</p>
+          <p className="ui-label">父文档摘要</p>
           <div className="scrollbar-slim max-h-32 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.02] p-3 text-sm leading-relaxed text-muted">
             {ctx.contextualizing || '（暂无概述）'}
           </div>
 
           {/* Chunk 原文（横向自动换行，竖向滚动条；提取时仍组装上下文补完串送入 LLM） */}
-          <p className="text-sm font-medium text-muted">Chunk 原文</p>
+          <p className="ui-label">Chunk 原文</p>
           <div className="scrollbar-slim max-h-96 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.02] p-3.5 text-sm leading-relaxed text-muted">
             {ctx.chunk.content}
           </div>
@@ -417,7 +419,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
         {/* 右：提取到的三元组横长条卡片（stack）+ 提交 */}
         <div className="flex min-w-0 flex-1 flex-col gap-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-fg">
+            <h2 className="ui-heading text-base">
               三元组（{rows.length}）{history ? ' · 已提交' : ` · 勾选 ${checkedCount}`}
             </h2>
             {history ? (
@@ -448,44 +450,46 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
               ))}
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-line px-6 py-10 text-center">
-              <p className="text-sm leading-relaxed text-faint">
+            <div className="flex-1">
+              <kit.Empty>
                 尚未提取到三元组——点击左侧「知识提取」，由大模型从 Chunk 原文中抽取实体与关系。
-              </p>
+              </kit.Empty>
             </div>
           )}
         </div>
       </div>
 
-      {/* Footer：返回选择（左） / 提交 + 下一步（右） */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line py-4">
-        <div className="flex flex-wrap items-center gap-3">
+      {/* Footer：返回选择（左） / 提交 + 下一步（右），分隔线形态随 kit.Toolbar */}
+      <kit.Toolbar
+        left={
           <button type="button" onClick={back} className={btnOutline('rounded-md')}>
             ← 返回选择
           </button>
-        </div>
-        <div className="flex items-center gap-3">
-          {rows.length > 0 && !committed && (
+        }
+        right={
+          <>
+            {rows.length > 0 && !committed && (
+              <button
+                type="button"
+                onClick={() => void commit()}
+                disabled={committing || checkedCount === 0}
+                className={`${btnPrimary('rounded-md')} gap-2`}
+              >
+                {committing && <Spinner className="h-3.5 w-3.5" />}
+                {committing ? '提交中 …' : `提交（${checkedCount}）`}
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => void commit()}
-              disabled={committing || checkedCount === 0}
-              className={`${btnPrimary('rounded-md')} gap-2`}
+              onClick={onAdvance}
+              title="携带当前 chunk 进入 Chunk 增强（步骤 3）"
+              className={btnOutline('rounded-md')}
             >
-              {committing && <Spinner className="h-3.5 w-3.5" />}
-              {committing ? '提交中 …' : `提交（${checkedCount}）`}
+              下一步 →
             </button>
-          )}
-          <button
-            type="button"
-            onClick={onAdvance}
-            title="携带当前 chunk 进入 Chunk 增强（步骤 3）"
-            className={btnOutline('rounded-md')}
-          >
-            下一步 →
-          </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* 轻提示（message box）：提交成功 / 提取·评估·提交失败，视口顶部居中悬浮 */}
       <Toast kind={toast?.kind} message={toast?.text ?? null} onClose={() => setToast(null)} />
