@@ -3,8 +3,10 @@ package cc.ginpika.minis.config;
 import cc.ginpika.minis.ai.llm.EmbeddingClient;
 import cc.ginpika.minis.ai.llm.RerankClient;
 import cc.ginpika.minis.ai.llm.OpenAiChatClient;
+import cc.ginpika.minis.ai.knowledge.anchor.AnchorSeeder;
 import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
 import cc.ginpika.minis.ai.knowledge.store.GraphStore;
+import cc.ginpika.minis.ai.memory.store.MemoryEventStore;
 import cc.ginpika.minis.config.dto.SettingsDtos;
 import cc.ginpika.minis.stats.TokenUsageService;
 import cc.ginpika.minis.stats.client.ModelMetaClient;
@@ -77,10 +79,16 @@ public class SettingsService {
     /* 知识库存储：设置页「重置知识库」直接清空 chunk 与图谱（含相关向量） */
     private final ChunkStore chunkStore;
     private final GraphStore graphStore;
+    /* 时序记忆（memory_event + 向量投影）：一并清除，免残留「说过/做过」 */
+    private final MemoryEventStore memoryStore;
+    /* 重置会连带删掉图谱锚点，清空后须补种（见 resetKnowledgeBase）。
+       @Lazy 断环：AnchorSeeder 的依赖链会绕回本服务，硬注入即构造成环（本类已有同款 @Lazy 惯例）。 */
+    private final AnchorSeeder anchorSeeder;
 
     public SettingsService(LlmProps props, SettingsStore store, ModelMetaClient meta,
                            @Lazy OpenAiChatClient chat, @Lazy EmbeddingClient embedding,
-                           @Lazy RerankClient rerank, ChunkStore chunkStore, GraphStore graphStore) {
+                           @Lazy RerankClient rerank, ChunkStore chunkStore, GraphStore graphStore,
+                           MemoryEventStore memoryStore, @Lazy AnchorSeeder anchorSeeder) {
         this.props = props;
         this.store = store;
         this.meta = meta;
@@ -89,6 +97,8 @@ public class SettingsService {
         this.rerank = rerank;
         this.chunkStore = chunkStore;
         this.graphStore = graphStore;
+        this.memoryStore = memoryStore;
+        this.anchorSeeder = anchorSeeder;
     }
 
     // ---------- 视图 ----------
@@ -359,14 +369,20 @@ public class SettingsService {
 
     /**
      * 重置知识库（设置页「危险操作」）：清空全部 chunk（含双 FTS 索引、chunk_extraction 与
-     * chunk_embedding）与知识图谱的全部实体/关系（含 chunk_entity 关联与 entity_embedding），
-     * 不可恢复。documents 元数据不在删除范围。整个清空在同一事务内完成。
+     * chunk_embedding）、知识图谱的全部实体/关系（含 chunk_entity 关联与 entity_embedding），
+     * 以及全部时序记忆（memory_event 及其向量投影 memory_event_embedding），不可恢复。
+     * documents 元数据不在删除范围。整个清空在同一事务内完成。
+     *
+     * <p>清空会连带删掉图谱锚点（预置「用户」等），故随后立即补种一次——锚点由 clearAll 一并
+     * 抹掉，若不再播种，依赖锚点的功能（用户画像、锚点视图）要到下次重启才恢复。
      */
     @Transactional
     public SettingsDtos.ResetResult resetKnowledgeBase() {
         GraphStore.Cleared graph = graphStore.clearAll();
         int chunks = chunkStore.clearAll();
-        return new SettingsDtos.ResetResult(chunks, graph.entities(), graph.relations());
+        int memories = memoryStore.clearAll();
+        anchorSeeder.seed();
+        return new SettingsDtos.ResetResult(chunks, graph.entities(), graph.relations(), memories);
     }
 
     // ---------- 运行时解析 ----------
@@ -399,6 +415,28 @@ public class SettingsService {
         }
         ModelTarget llm = resolveModelById(e == null ? null : e.llmModelId());
         return new ModelTarget(llm.baseUrl(), llm.apiKey(), model);
+    }
+
+    /**
+     * 本次聊天所用模型的上下文窗口（token 数）：与会话页「上下文占比」同一个数——
+     * 按所选模型取它配置的窗口；内置 / 取不到用 .env 的默认窗口。
+     * 供上下文平面判断「是否已接近临界、该裁历史了」（见 agent.chat.turn.History）。
+     */
+    public int chatContextWindow(String modelId) {
+        String id = normalize(modelId);
+        if (id == null) {
+            SettingRow setting = store.setting().orElse(null);
+            id = normalize(setting == null ? null : setting.defaultModelId());
+        }
+        if (id != null && !ENV_ID.equals(id)) {
+            ModelRow row = store.model(id).orElse(null);
+            Integer configured = positiveOrNull(row == null ? null : row.contextWindow());
+            if (configured != null) {
+                return configured;
+            }
+        }
+        Integer fallback = positiveOrNull(props.getContextWindow());
+        return fallback != null ? fallback : LlmProps.DEFAULT_CONTEXT_WINDOW;
     }
 
     /** 聊天可用性（内置或已配置任一模型） */

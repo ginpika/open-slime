@@ -3,10 +3,12 @@
  *
  * 与 flat / endfield 的本质差异：
  *  · 章法从「网格铺满」改成「窄栏卡片流 + 大留白」，信息密度明显更低；
- *  · 每块内容是一个"糖果卡"：大圆角、蓝调柔影、圆形图标头；
- *  · 标题与数值走粗斜体（由 --ui-heading-style 令牌驱动，不是硬写 italic）；
- *  · 比例用圆角粗进度条 + 发光百分比徽章，而不是方块刻度；
- *  · 页面标题上方有"光环"母题（BA 最核心的识别符号）。
+ *  · 每块内容是一张"档案卡"：冷灰蓝纸底上的纯白胶囊卡（--ui-card-fill），
+ *    层次 = 细描边（border-line）+ 小而软的蓝调投影（--ui-e1），不是大蓝晕；
+ *  · 标题与数值走粗斜体（由 --ui-heading-style 令牌驱动）；次级文本保持
+ *    常规体——斜体只属于"被强调"的位置（demo 排版规范）；
+ *  · 比例用圆角进度条 + 青→浅青渐变（--c-cyan-light），而非发灰的单色；
+ *  · 页面标题上方有"光环"母题（BA 最核心的识别符号，-9° 倾斜 + 辉光）。
  */
 import type { CSSProperties, ReactNode } from 'react'
 import { Control } from '../components/ui'
@@ -27,48 +29,34 @@ import type {
   ToolbarProps,
 } from './types'
 
-/** 光环：BA 的母题，出现在标题与卡片头之上 */
+/** 卡片底：浅档纯白 / 深档比底色亮一档（layers 注册，非 BA 主题回退 --c-bg） */
+const CARD_FILL = 'var(--ui-card-fill, var(--c-bg))'
+
+/** 渐变伙伴色：青 → 浅青（深档自动提亮），替代会发灰的 secondary */
+const GRAD = 'linear-gradient(90deg, var(--c-accent), var(--c-cyan-light, var(--c-accent)))'
+
+/** 光环：BA 的母题，出现在标题与品牌之上（-9° 倾斜 + 辉光 + 真椭圆） */
 function Halo({ className = '' }: { className?: string }) {
   return (
     <span
-      className={`pointer-events-none absolute rounded-full border-2 border-accent ${className}`}
-      style={{ boxShadow: '0 0 12px color-mix(in srgb, var(--c-accent) 55%, transparent)' }}
+      className={`pointer-events-none absolute rounded-[50%] border-2 border-accent ${className}`}
+      style={{
+        transform: 'rotate(-9deg)',
+        boxShadow: '0 0 10px color-mix(in srgb, var(--c-accent) 45%, transparent)',
+      }}
       aria-hidden="true"
     />
   )
 }
 
-/** 圆形图标：卡片头的识别点 */
-function Orb({ glyph, tone = 'accent' }: { glyph: string; tone?: 'accent' | 'secondary' }) {
+/** 小节标：青色渐变短棒（BA 的 section marker，demo .sec-h .bar） */
+function SecMark() {
   return (
     <span
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs"
-      style={{
-        background:
-          tone === 'accent'
-            ? 'color-mix(in srgb, var(--c-accent) 16%, transparent)'
-            : 'color-mix(in srgb, var(--c-secondary) 22%, transparent)',
-        color: tone === 'accent' ? 'var(--c-accent)' : 'var(--c-fg)',
-      }}
-    >
-      {glyph}
-    </span>
-  )
-}
-
-/** 发光徽章（百分比 / 状态） */
-function Glow({ children }: { children: ReactNode }) {
-  return (
-    <span
-      className="rounded-full px-2.5 py-0.5 text-2xs font-black italic"
-      style={{
-        background: 'var(--c-accent)',
-        color: 'var(--c-accent-fg)',
-        boxShadow: '0 0 10px color-mix(in srgb, var(--c-accent) 55%, transparent)',
-      }}
-    >
-      {children}
-    </span>
+      className="h-4 w-[5px] shrink-0 rounded-full"
+      style={{ background: 'linear-gradient(180deg, var(--c-accent), var(--c-cyan-light, var(--c-accent)))' }}
+      aria-hidden="true"
+    />
   )
 }
 
@@ -78,7 +66,7 @@ function Page({ title, en, meta, children }: PageProps) {
     <section className="mx-auto flex w-full max-w-[860px] flex-col gap-6 pt-4">
       <header className="relative flex flex-wrap items-end justify-between gap-4 px-1">
         <div className="relative min-w-0">
-          <Halo className="-top-3.5 left-0.5 h-2.5 w-8" />
+          <Halo className="-top-3.5 left-1 h-2.5 w-8" />
           <p className="ui-label">{en}</p>
           <h1 className="ui-heading mt-1 text-2xl">{title}</h1>
         </div>
@@ -92,11 +80,11 @@ function Page({ title, en, meta, children }: PageProps) {
 function Panel({ title, meta, className = '', children }: PanelProps) {
   return (
     <div
-      className={`flex min-w-0 flex-col rounded-[var(--ui-r-card)]${className ? ` ${className}` : ''}`}
-      style={{ background: 'var(--c-bg)', boxShadow: 'var(--ui-e3)' }}
+      className={`flex min-w-0 flex-col rounded-[var(--ui-r-card)] border-[1.5px] border-line${className ? ` ${className}` : ''}`}
+      style={{ background: CARD_FILL, boxShadow: 'var(--ui-e1)' }}
     >
       <div className="flex items-center gap-2.5 px-4 pb-2.5 pt-3.5">
-        <Orb glyph="✦" />
+        <SecMark />
         <h2 className="ui-heading text-md">{title}</h2>
         <span className="flex-1" />
         {meta}
@@ -111,8 +99,8 @@ function Stat({ label, value, unit, hint, progress, tone = 'default', hero }: St
     tone === 'accent' ? 'var(--c-accent)' : tone === 'muted' ? 'var(--c-muted)' : 'var(--c-fg)'
   return (
     <div
-      className="relative min-w-[120px] flex-1 rounded-[var(--ui-r-md)] px-3.5 py-3"
-      style={{ background: 'var(--c-surface-container-low)' }}
+      className="relative min-w-[120px] flex-1 rounded-[var(--ui-r-md)] border-[1.5px] border-line px-3.5 py-3"
+      style={{ background: CARD_FILL, boxShadow: 'var(--ui-e1)' }}
     >
       <p className="ui-label">{label}</p>
       <p
@@ -125,13 +113,13 @@ function Stat({ label, value, unit, hint, progress, tone = 'default', hero }: St
       {progress != null && (
         <div
           className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full"
-          style={{ background: 'color-mix(in srgb, var(--c-fg) 10%, transparent)' }}
+          style={{ background: 'color-mix(in srgb, var(--c-fg) 8%, transparent)' }}
         >
           <div
             className="h-full rounded-full"
             style={{
               width: `${progress}%`,
-              background: 'linear-gradient(90deg, var(--c-accent), var(--c-secondary))',
+              background: GRAD,
             }}
           />
         </div>
@@ -145,7 +133,7 @@ function Range({ options, value, onChange }: RangeProps) {
   return (
     <div
       className="flex w-fit gap-1 rounded-full p-1"
-      style={{ background: 'var(--c-surface-container-high)' }}
+      style={{ background: 'var(--c-accent-soft)' }}
     >
       {options.map((o) => {
         const on = o.value === value
@@ -154,12 +142,12 @@ function Range({ options, value, onChange }: RangeProps) {
             key={o.value}
             type="button"
             onClick={() => onChange(o.value)}
-            className={`rounded-full px-4 py-1.5 text-sm font-black italic transition ${
+            className={`rounded-full px-4 py-1.5 text-sm font-bold transition ${
               on ? '' : 'text-muted hover:text-fg'
             }`}
             style={
               on
-                ? { background: 'var(--c-bg)', color: 'var(--c-accent)', boxShadow: 'var(--ui-e1)' }
+                ? { background: CARD_FILL, color: 'var(--c-accent)', boxShadow: 'var(--ui-e1)' }
                 : undefined
             }
           >
@@ -176,12 +164,12 @@ function Bar({ name, value, sub, ratio }: BarProps) {
   return (
     <div>
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-bold italic text-fg" title={name}>
+        <span className="min-w-0 flex-1 truncate text-sm font-bold text-fg" title={name}>
           {name}
         </span>
         <span
-          className="text-sm font-black italic"
-          style={{ color: 'var(--c-fg)', fontVariantNumeric: 'tabular-nums' }}
+          className="ui-heading text-sm"
+          style={{ fontVariantNumeric: 'tabular-nums' }}
         >
           {value}
         </span>
@@ -197,7 +185,8 @@ function Bar({ name, value, sub, ratio }: BarProps) {
           className="h-full rounded-full"
           style={{
             width: `${pct}%`,
-            background: 'linear-gradient(90deg, var(--c-accent), var(--c-secondary))',
+            background: GRAD,
+            boxShadow: '0 0 8px color-mix(in srgb, var(--c-accent) 30%, transparent)',
           }}
         />
       </div>
@@ -206,22 +195,16 @@ function Bar({ name, value, sub, ratio }: BarProps) {
 }
 
 function Note({ children, tone = 'info' }: NoteProps) {
+  const warn = tone === 'warn'
   return (
     <div
-      className="flex items-start gap-2.5 rounded-[var(--ui-r-md)] px-4 py-3"
+      className="rounded-[var(--ui-r-md)] border-l-4 py-3 pl-3.5 pr-4"
       style={{
-        background:
-          tone === 'warn'
-            ? 'color-mix(in srgb, var(--c-danger) 12%, transparent)'
-            : 'var(--c-accent-soft)',
+        background: warn ? 'var(--c-danger-soft)' : 'var(--c-accent-soft)',
+        borderLeftColor: warn ? 'var(--c-danger)' : 'var(--c-accent)',
       }}
     >
-      <span
-        className="mt-0.5 h-4 w-4 shrink-0 rounded-full"
-        style={{ background: tone === 'warn' ? 'var(--c-danger)' : 'var(--c-accent)' }}
-      />
       <p className="text-sm leading-relaxed font-medium text-muted">{children as ReactNode}</p>
-      {tone === 'warn' ? <Glow>注意</Glow> : null}
     </div>
   )
 }
@@ -231,20 +214,20 @@ function Toolbar({ left, right, className = '' }: ToolbarProps) {
     <div
       className={`flex flex-wrap items-center justify-between gap-3${className ? ` ${className}` : ''}`}
     >
-      <div className="min-w-0 text-sm font-bold italic text-muted">{left}</div>
+      <div className="min-w-0 text-sm font-bold text-muted">{left}</div>
       <div className="flex shrink-0 items-center gap-2">{right}</div>
     </div>
   )
 }
 
-/** 步骤条：圆形编号 + 胶囊标签，当前步发光（BA 的"进度感"来自发光而非连线） */
+/** 步骤条：圆形编号 + 标签，当前步实底青（进度感来自实底对比，不发光） */
 function Steps({ items }: StepsProps) {
   return (
     <ol className="flex flex-wrap items-center gap-2">
       {items.map((it, i) => (
         <li key={it.label} className="flex items-center gap-2">
           <span
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-2xs font-black italic ${
+            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-2xs font-black ${
               it.state === 'todo' ? 'text-muted' : ''
             }`}
             style={
@@ -252,7 +235,7 @@ function Steps({ items }: StepsProps) {
                 ? {
                     background: 'var(--c-accent)',
                     color: 'var(--c-accent-fg)',
-                    boxShadow: '0 0 12px color-mix(in srgb, var(--c-accent) 60%, transparent)',
+                    boxShadow: 'var(--ui-e1)',
                   }
                 : it.state === 'done'
                   ? { background: 'var(--c-accent-soft)', color: 'var(--c-accent)' }
@@ -262,7 +245,7 @@ function Steps({ items }: StepsProps) {
             {it.state === 'done' ? '✓' : i + 1}
           </span>
           <span
-            className={`text-sm font-black italic ${
+            className={`text-sm font-bold ${
               it.state === 'todo' ? 'text-faint' : it.state === 'current' ? 'text-fg' : 'text-muted'
             }`}
           >
@@ -274,7 +257,7 @@ function Steps({ items }: StepsProps) {
   )
 }
 
-/** 徽章：胶囊 + 粗斜体 + 实底/浅底 */
+/** 徽章：胶囊 + 实底/浅底（斜体留给标题与按钮，徽章保持正体） */
 function Badge({ children, tone = 'default' }: BadgeProps) {
   const style: CSSProperties =
     tone === 'default'
@@ -288,7 +271,7 @@ function Badge({ children, tone = 'default' }: BadgeProps) {
             : { background: 'var(--c-danger-soft)', color: 'var(--c-danger)' }
   return (
     <span
-      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-2xs font-black italic"
+      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-2xs font-bold"
       style={style}
     >
       {children}
@@ -330,10 +313,10 @@ function Empty({ children }: EmptyProps) {
   )
 }
 
-/** 网格单元：糖果卡（白底 + 蓝调柔影 + 悬浮上移）；虚位用粉彩虚线 */
+/** 网格单元：白卡 + 细描边 + 悬浮上移描边转青；虚位用粉彩虚线 */
 function Tile({ children, href, dashed, onClick, className = '' }: TileProps) {
   if (dashed) {
-    const cls = `flex min-h-[104px] flex-col items-center justify-center gap-2 rounded-[var(--ui-r-card)] border-2 border-dashed text-sm font-bold italic text-muted transition hover:text-fg${className ? ` ${className}` : ''}`
+    const cls = `flex min-h-[104px] flex-col items-center justify-center gap-2 rounded-[var(--ui-r-card)] border-2 border-dashed text-sm font-bold text-muted transition hover:text-fg${className ? ` ${className}` : ''}`
     return (
       <a
         href={href}
@@ -344,8 +327,8 @@ function Tile({ children, href, dashed, onClick, className = '' }: TileProps) {
       </a>
     )
   }
-  const cls = `flex flex-col rounded-[var(--ui-r-card)] px-4 py-3.5 text-left shadow-md transition hover:-translate-y-[var(--ui-lift,0px)] hover:shadow-lg${className ? ` ${className}` : ''}`
-  const style = { background: 'var(--c-bg)' }
+  const cls = `flex flex-col rounded-[var(--ui-r-card)] border-[1.5px] border-line px-4 py-3.5 text-left transition hover:-translate-y-[var(--ui-lift,0px)] hover:border-accent${className ? ` ${className}` : ''}`
+  const style = { background: CARD_FILL, boxShadow: 'var(--ui-e1)' }
   if (href)
     return (
       <a href={href} className={cls} style={style}>
@@ -365,11 +348,11 @@ function Tile({ children, href, dashed, onClick, className = '' }: TileProps) {
   )
 }
 
-/** 表单字段：粗斜体标签（与 BA 的标题体系一致） */
+/** 表单字段：粗体标签（斜体只留给标题体系，中文仿斜体在小字号会发糊） */
 function Field({ label, hint, children, wrap = true, className = '' }: FieldProps) {
   return (
     <label className={`flex flex-col gap-1.5${className ? ` ${className}` : ''}`}>
-      <span className="text-sm font-black italic text-muted">{label}</span>
+      <span className="text-sm font-bold text-muted">{label}</span>
       {wrap ? <Control>{children}</Control> : children}
       {hint ? <span className="text-2xs font-bold text-faint">{hint}</span> : null}
     </label>

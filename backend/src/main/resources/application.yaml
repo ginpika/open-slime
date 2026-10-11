@@ -58,12 +58,19 @@ minis:
     graph-hops: 2
     rrf-k: 60
     rerank-candidate: 20                              # RAG 精排候选池：RRF 后送 rerank 的前 N 条
-  subconscious:
-    enabled: ${SUBCONSCIOUS_ENABLED:false}            # 心跳常驻开关：默认关，启动后需在潜意识页手动开启（置 true 可让启动即开始敲）
-    tick-ms: ${SUBCONSCIOUS_TICK_MS:60000}            # 心跳间隔（毫秒）
+  context:                                            # 上下文平面（STEP 2）：主动注入 + 贴临界裁历史
+    inject-knowledge: ${CONTEXT_INJECT_KNOWLEDGE:false}  # 每轮按用户输入先召回知识库注入 system（默认关）
+    inject-memory: ${CONTEXT_INJECT_MEMORY:false}        # 每轮按用户输入先召回相关记忆注入 system（默认关）
+    compress-history: ${CONTEXT_COMPRESS_HISTORY:true}   # 逼近窗口时才降级：先丢最早的轮次，仍超再截断
+    reserve-output-tokens: ${CONTEXT_RESERVE_OUTPUT_TOKENS:8192} # 给模型输出留的 token（输入输出共用窗口）
+    compress-keep-turns: ${CONTEXT_COMPRESS_KEEP_TURNS:2} # 降级时至少保留最近几轮原文
+  heartbeat:                                          # 心跳后台（逐 Agent 各有一套：开关与节拍存在各自那行 heartbeat）
+    enabled: ${SUBCONSCIOUS_ENABLED:false}            # 保留字段（心跳改为逐 Agent 后不再用它作全局开关）
+    tick-ms: ${SUBCONSCIOUS_TICK_MS:60000}            # 播种某 Agent 心跳行时的默认节拍（毫秒）
+    scan-ms: ${SUBCONSCIOUS_SCAN_MS:5000}             # 调度器扫描周期（毫秒）：逐个 Agent 判是否到点
     max-agents-per-beat: ${SUBCONSCIOUS_MAX_AGENTS_PER_BEAT:8} # 单拍派活上限：主会话一拍最多派出几个子代理
     max-tool-rounds: ${SUBCONSCIOUS_MAX_TOOL_ROUNDS:3} # 单个 sub-agent 工具往返上限
-    initial-delay-ms: 15000                            # 启动后到第一次心跳的延迟
+    initial-delay-ms: 15000                            # 启动后到第一次心跳扫描的延迟
   # 命令行终端（run_command / list_terminals）：让模型直接控制目标环境。
   # 目标清单（docker 容器 / SSH 服务器与凭证）不在这里，而在库表 term_target，由工作空间页维护；
   # 这里只是全局护栏（超时 / 输出上限）。没有总开关：能不能用只看逐目标的 enabled，

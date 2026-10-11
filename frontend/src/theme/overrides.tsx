@@ -53,7 +53,7 @@ class VariantBoundary extends Component<{ children: ReactNode }, { error: string
   render() {
     if (this.state.error !== null) {
       return (
-        <p className="mt-10 border border-line p-6 text-[13px] text-muted">
+        <p className="mt-10 border border-line p-6 text-base text-muted">
           渲染版本运行出错：{this.state.error} —— 请将 ACTIVE_VARIANTS 回退至默认。
         </p>
       )

@@ -3,7 +3,7 @@
  *
  * 结构：外壳画 1px 描边环（切角由 --ui-clip 承担），内层画"面板底"——
  * 面板底的透明度与模糊来自材质层，于是同一棵 DOM 在 Endfield 深档是
- * 碳黑玻璃、在 BlueArchive 是纯白实底、在 MD3 是 surface 容器。
+ * 碳黑玻璃、在 BlueArchive 是纯白实底、在 Tailwind Mono 是 surface 容器。
  *
  * 组件内部不含任何主题判断，全部视觉由令牌决定。
  */
@@ -16,7 +16,7 @@ const PAD = {
   lg: 'p-5',
 } as const
 
-/** 面板底色调（映射到同一批 surface 角色词汇，五套主题通用） */
+/** 面板底色调（映射到同一批 surface 角色词汇，各主题通用） */
 const TONE: Record<string, string | undefined> = {
   default: undefined,
   low: 'var(--c-surface-container-low)',

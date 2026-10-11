@@ -60,8 +60,8 @@ public final class SettingsDtos {
                                String defaultModelId) {
     }
 
-    /** 重置知识库结果：删除的 chunk / 实体 / 关系条数 */
-    public record ResetResult(int chunks, int entities, int relations) {
+    /** 重置知识库结果：删除的 chunk / 实体 / 关系 / 时序记忆条数 */
+    public record ResetResult(int chunks, int entities, int relations, int memories) {
     }
 
     private SettingsDtos() {

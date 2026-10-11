@@ -3,6 +3,7 @@ package cc.ginpika.minis.ai.core.tool.graph;
 import cc.ginpika.minis.ai.core.tool.AiTool;
 import cc.ginpika.minis.ai.core.tool.ToolDomain;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Set;
@@ -46,6 +47,26 @@ public class DeleteGraphItemTool implements AiTool {
     @Override
     public ToolDomain domain() {
         return ToolDomain.GRAPH;
+    }
+
+    /**
+     * 校验节点（STEP 4）：按 target 要齐必填字段——删除不可逆，宁可当场回一句「还缺什么」，
+     * 也不要落到执行侧靠猜（缺字段时业务侧会给出难读的失败）。
+     */
+    @Override
+    public String validate(JsonNode args) {
+        String target = args.path("target").asText("").trim();
+        if ("entity".equals(target)) {
+            return args.path("entity").asText("").isBlank()
+                    ? "target=entity 时要给 entity（要删除的实体名）。" : null;
+        }
+        if ("relation".equals(target)) {
+            boolean complete = !args.path("subject").asText("").isBlank()
+                    && !args.path("predicate").asText("").isBlank()
+                    && !args.path("object").asText("").isBlank();
+            return complete ? null : "target=relation 时要给全 subject + predicate + object（三者缺一不可）。";
+        }
+        return "target 必须是 entity 或 relation。";
     }
 
     @Override

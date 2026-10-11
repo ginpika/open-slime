@@ -1,11 +1,9 @@
 package cc.ginpika.minis.web.controller;
 
-import cc.ginpika.minis.agent.chat.ChatLiveStore;
 import cc.ginpika.minis.agent.chat.ChatService;
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +25,12 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-/** AI 会话接口（B4）：/api/sessions*、/api/chat（SSO 门禁见 WebConfig/SsoInterceptor） */
+/**
+ * AI 会话接口（B4）：/api/sessions*、/api/chat（SSO 门禁见 WebConfig/SsoInterceptor）。
+ *
+ * <p>只对接 {@link ChatService} 一个门面：生成 / 会话域 / 在途续传三摊由它分发，控制器不直接认识
+ * 背后的领域对象（执行侧、会话域、在途仓）。
+ */
 @RestController
 public class ChatController {
 
@@ -37,15 +40,12 @@ public class ChatController {
     private static final long STREAM_TIMEOUT_MS = 300_000L;
 
     private final ChatService service;
-    /** 在途生成仓：流式增量在此留痕，供刷新/换标签页后重挂续看（断点续传） */
-    private final ChatLiveStore liveStore;
     private final ObjectMapper om;
     /** 流式会话在独立线程里跑（虚拟线程）：边收 LLM 边推前端，不占请求线程 */
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public ChatController(ChatService service, ChatLiveStore liveStore, ObjectMapper om) {
+    public ChatController(ChatService service, ObjectMapper om) {
         this.service = service;
-        this.liveStore = liveStore;
         this.om = om;
     }
 
@@ -68,8 +68,8 @@ public class ChatController {
      * reasoning、content（增量片段）/ tool（一次工具调用：name+args），
      * 结束推 done（完整回复），异常推 error。
      *
-     * <p>每一片增量同时写进 {@link ChatLiveStore}：发起方这条连接断了（刷新页面等）不再中断生成，
-     * 结果照常落库、在途状态也让后来者能续看（见下面的续传流）。
+     * <p>每一片增量同时写进在途生成仓（经 {@link ChatService}）：发起方这条连接断了（刷新页面等）
+     * 不再中断生成，结果照常落库、在途状态也让后来者能续看（见下面的续传流）。
      */
     @PostMapping(value = "/api/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(@RequestBody ChatDtos.ChatRequest req) {
@@ -89,7 +89,7 @@ public class ChatController {
                             @Override
                             public void meta(String sessionId, long messageId) {
                                 liveSid[0] = sessionId;
-                                liveStore.start(sessionId, messageId, input);
+                                service.liveStart(sessionId, messageId, input);
                                 sendQuiet(emitter, alive, "meta",
                                         Map.of("sessionId", sessionId, "messageId", messageId));
                             }
@@ -97,7 +97,7 @@ public class ChatController {
                             @Override
                             public void round(int round) {
                                 if (liveSid[0] != null) {
-                                    liveStore.round(liveSid[0], round);
+                                    service.liveRound(liveSid[0], round);
                                 }
                                 sendQuiet(emitter, alive, "round", Map.of("round", round));
                             }
@@ -105,7 +105,7 @@ public class ChatController {
                             @Override
                             public void delta(String reasoning, String content) {
                                 if (liveSid[0] != null) {
-                                    liveStore.delta(liveSid[0], reasoning, content);
+                                    service.liveDelta(liveSid[0], reasoning, content);
                                 }
                                 if (reasoning != null) {
                                     sendQuiet(emitter, alive, "reasoning", Map.of("delta", reasoning));
@@ -118,20 +118,20 @@ public class ChatController {
                             @Override
                             public void tool(String name, String args) {
                                 if (liveSid[0] != null) {
-                                    liveStore.tool(liveSid[0], name, args);
+                                    service.liveTool(liveSid[0], name, args);
                                 }
                                 sendQuiet(emitter, alive, "tool", Map.of("name", name, "args", args));
                             }
                         });
                 if (liveSid[0] != null) {
-                    liveStore.finish(liveSid[0], reply.message());
+                    service.liveFinish(liveSid[0], reply.message());
                 }
                 sendQuiet(emitter, alive, "done", reply);
                 emitter.complete();
             } catch (ChatService.ChatCancelledException e) {
                 /* 用户主动停止且无任何正文产出：在途状态落定（有正文的部分回答已由 service 落库），静默收尾不推 error */
                 if (liveSid[0] != null) {
-                    liveStore.finish(liveSid[0], null);
+                    service.liveFinish(liveSid[0], null);
                 }
                 emitter.complete();
             } catch (Exception e) {
@@ -139,7 +139,7 @@ public class ChatController {
                 /* 出错即落日志（含堆栈），便于回溯「请求被打断」的具体成因 */
                 log.warn("流式会话失败：sessionId={} error={}", req.sessionId(), msg, e);
                 if (liveSid[0] != null) {
-                    liveStore.fail(liveSid[0], msg);
+                    service.liveFail(liveSid[0], msg);
                 }
                 sendQuiet(emitter, alive, "error", Map.of("error", msg));
                 emitter.complete();
@@ -151,7 +151,7 @@ public class ChatController {
     /** 该会话此刻的在途生成快照（前端刷新后先查它：running=true 才去订阅下面的续传流） */
     @GetMapping("/api/sessions/{id}/live")
     public ChatDtos.LiveRun live(@PathVariable String id) {
-        return liveStore.snapshot(id);
+        return service.live(id);
     }
 
     /**
@@ -165,7 +165,7 @@ public class ChatController {
     public SseEmitter liveStream(@PathVariable String id) {
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         AtomicBoolean alive = new AtomicBoolean(true);
-        boolean attached = liveStore.attach(id, (name, payload) -> {
+        boolean attached = service.attachLive(id, (name, payload) -> {
             boolean sent = sendQuiet(emitter, alive, name, payload);
             if ("done".equals(name) || "error".equals(name)) {
                 emitter.complete();
@@ -214,11 +214,25 @@ public class ChatController {
         }
     }
 
+    /** 会话的个人待办清单（plan-of-record，由 write_todos 覆盖式写入）：会话页 TODO 卡片读当前进度。
+     *  实时性由会话事件（kind=todo）驱动——清单一变，后端推一条，前端据此重拉本端点 */
+    @GetMapping("/api/sessions/{id}/todos")
+    public List<ChatDtos.TodoItem> todos(@PathVariable String id) {
+        return service.todos(id);
+    }
+
     /** 会话的原始上下文预览：按与真实发送完全一致的规则组装的请求体（model + messages + tools），
-     *  会话页「…」菜单的「查看原始上下文」调用（不发送、不落库） */
+     *  并附各 Turn 在 messages 中的切片；会话页「…」菜单的「查看原始上下文」调用（不发送、不落库） */
     @GetMapping("/api/sessions/{id}/raw-context")
-    public ObjectNode rawContext(@PathVariable String id) {
+    public ChatDtos.RawContext rawContext(@PathVariable String id) {
         return service.rawContext(id);
+    }
+
+    /** 某条回答（一个 Turn）的 LLM 调用留痕：每一轮真正发出的请求体与收到的响应体。
+     *  「查看原始上下文」里每个 Turn 的「请求 / 响应」按钮调用（replyMessageId 取自 raw-context 的切片） */
+    @GetMapping("/api/sessions/{id}/turns/{replyMessageId}/llm-calls")
+    public ChatDtos.TurnCalls turnCalls(@PathVariable String id, @PathVariable long replyMessageId) {
+        return service.turnCalls(id, replyMessageId);
     }
 
     /** 会话配置（「…」菜单在该会话的选择：模型 / 提示词 / 是否显示 CoT）：仅更新传入的字段 */
@@ -240,7 +254,7 @@ public class ChatController {
      * 发送一个 SSE 事件（data 为 JSON 字符串）；写失败即客户端已断开，此时只把这条连接标记作废并返回
      * false，不再抛错。
      *
-     * <p>断开不再中断生成：回答照常产出并落库，在途状态留在 {@link ChatLiveStore} 里，用户刷新回来
+     * <p>断开不再中断生成：回答照常产出并落库，在途状态留在在途生成仓里，用户刷新回来
      * 还能续看（断点续传）；要真正打断由「停止」按钮走 {@code /api/chat/stop}。
      */
     private boolean sendQuiet(SseEmitter emitter, AtomicBoolean alive, String name, Object payload) {

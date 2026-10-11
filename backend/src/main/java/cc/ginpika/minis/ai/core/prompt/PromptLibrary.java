@@ -24,9 +24,8 @@ import java.util.stream.Collectors;
  * <p><b>块 + 上下文</b>——一次 LLM 调用的最终提示词由若干「块」（{@link PromptBlock}，每块一个类，
  * 内置正文写死在块类里）按序拼成，块与块的组合关系在这里按上下文声明（如对话 = 身份 + 增强，
  * parts 的注册顺序即缺省拼装顺序）。本子系统之外的提示词文本只剩一处刻意的例外：
- * 潜意识心跳主会话的正文（{@code SubconsciousPrompts.HEARTBEAT}）——它带 {@code {{插槽}}} 语汇，
- * 与插槽绑定一起存在 {@code sub_heartbeat} 行里、由 {@code SubconsciousInjectors} 现取现填，
- * 因此不纳入本页的版本管理。
+ * 某 Agent 心跳主会话的正文（{@code HeartbeatPrompts.HEARTBEAT}）——它存在 {@code heartbeat} 行里、
+ * 由该 Agent 自己维护，因此不纳入本页的版本管理。
  *
  * <p><b>可覆盖</b>——内置正文只是缺省值：用户可在「潜意识 · 提示词」页为任意块保存多份版本
  * （{@code prompt_version}），并选定一份覆盖内置（{@code prompt_binding}）。解析与组装由
@@ -110,7 +109,8 @@ public final class PromptLibrary {
                     List.of(history(), input("代码控制：用户这一次发送的问题。"))),
             new PromptContext(CTX_ROUNDTABLE, "圆桌",
                     "成员在圆桌上说话时的 system：它自己的人格（上一个分类那套）之后接这段协作规程，"
-                            + "再往下是调度文书。协作规程全局一份——改这里对所有成员生效。",
+                            + "再往下是调度文书。协作规程逐成员一份（存在该成员的 agent_prompt_* 里），"
+                            + "没配的位回退全局这一份。",
                     List.of(CoordinationBlock.KEY),
                     List.of(input("代码控制：公开记录（<transcript>）。本场话题的全部往来——"
                                     + "谁说了什么、圆桌上发生过什么动作（入场 / 转沉默 / 提议结束……），"
@@ -165,8 +165,8 @@ public final class PromptLibrary {
                             CTX_CHUNKER, CTX_DOC_SUMMARY)),
             new PromptCategory(CAT_ROUNDTABLE, "圆桌",
                     "圆桌上的成员说话时用的上下文：人格之后接一段协作规程，再往下是调度文书"
-                            + "（公开记录与此刻局面）。这是全桌共用的一套——只影响圆桌，"
-                            + "首页对话与子代理都不用它。",
+                            + "（公开记录与此刻局面）。协作规程逐成员一份（在智能体内部页维护），"
+                            + "没配的位回退全局这一份。",
                     List.of(CTX_ROUNDTABLE)));
 
     private static final Map<String, PromptContext> CONTEXT_BY_KEY = CONTEXTS.stream()

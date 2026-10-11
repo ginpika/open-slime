@@ -6,8 +6,14 @@
  *
  * <p>说一句话会依次引出一串成员发言：谁先说、说到哪、谁沉默了、谁提议结束、话题何时收束，
  * 全部实时可见（成员状态条与消息流都随 SSE 增量更新）。流式口径：一次发言 = 一段 SSE
- * （speaker → 增量 → speakerEnd），下一位紧接着再来一段。已说完的发言在本地即时落成气泡，
- * 正在说话的单独渲染成一条「直播中」的气泡；整轮结束后以服务端为准重新拉一遍消息。
+ * （speaker → 增量 → speakerEnd），下一位紧接着再来一段。<b>已落库的以服务端为准</b>——
+ * 人的话、状态机动作、说完的发言一落库就重取，正在说话的那一位单独渲染成一条「直播中」的气泡；
+ * 「实时看到的」与「刷新之后看到的」因此是同一个形状。
+ *
+ * <p><b>发言期间可以随便走开</b>：这一轮的运行时状态在应用级模块仓
+ * （{@link useRoundtableRun}，见 components/roundtableLive），不在本组件里——切会话、切 tab、
+ * 切路由都只是「不再渲染」，成员照说；回到这张桌子即从仓里把进度接回来（谁是发言人、说到哪、
+ * 话题什么状态），发送键也按「这张桌子在不在跑」各自判定，别的会话因此照常可用。
  *
  * <p>与首页对话页不复用：多智能体有自己的会话与消息（后端 ma_* 一套表），
  * 页面也因此自成一套——左侧选会话，右侧是这张圆桌。
@@ -24,6 +30,7 @@ import {
 } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ApiError,
   deleteMaSession,
@@ -31,12 +38,11 @@ import {
   getSettings,
   listMaPeers,
   listMaSessions,
-  maChatStream,
   maMessageContext,
   maMessages,
   maTopics,
-  stopMaChat,
   MA_STATE_LABELS,
+  MA_EXEC_LABELS,
   MA_SPEAKER_STRATEGIES,
   type MaMessage,
   type MaPeer,
@@ -49,8 +55,18 @@ import { btnOutline, btnPrimary, miniBtn } from '../components/ui'
 import { Select } from '../components/formKit'
 import PageBoundary from '../components/PageBoundary'
 import PeerAvatar from '../components/PeerAvatar'
+import {
+  clearRunError,
+  getRunningSessionIds,
+  onRoundtableSettled,
+  startRoundtable,
+  stopRoundtable,
+  useRoundtableRun,
+  useRunningSessionIds,
+} from '../components/roundtableLive'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
+import { useThemeState } from '../theme/store'
 
 /** 「不显示思维链」偏好的本地存储 key：离开圆桌再回来不用重设 */
 const HIDE_COT_KEY = 'minis.roundtable.hide-cot'
@@ -71,6 +87,29 @@ const SPEAKER_STRATEGY_KEY = 'minis.roundtable.speaker-strategy'
  * 每开一轮都要看得见，所以由「⋯」菜单控制不了它。
  */
 const NOISY_ACTIONS = ['入场', '退场']
+
+/**
+ * 事件种类 → 状态行文案：与后端 {@code roundtable_topic_event} 的 kind 一一对应。
+ *
+ * <p>有了它，界面就不必靠中文去认「这一行是什么」——{@code kind} 才是协议，文案只是它的显示形态。
+ * 后端改了说法，这里跟着改一处即可，分类与布局不受影响（老数据没有 kind，退回文案匹配兜底）。
+ */
+const EVENT_KIND_ACTION: Record<string, string> = {
+  topic_open: '话题开始',
+  joined: '入场',
+  close: '退场',
+  addressed: '被点名',
+  prompt: '被要求立刻表态',
+  revived: '重新参与讨论',
+  reopen: '撤回结束提议，重新决策',
+  /* 这两个是最常见的表态（渲染成转化卡片，见 TransitionCard）：把动作名钉在 kind 上，
+     不靠从文本里切片——后端改措辞、或理由里带括号，都不会再影响状态的显示 */
+  propose_end: '提议结束',
+  silent: '转入沉默',
+}
+
+/** 默认收起的那几种（「⋯」菜单里可开）；kind 缺失时退回 {@link NOISY_ACTIONS} 的文案匹配 */
+const NOISY_KINDS = new Set(['joined', 'close'])
 
 /** 读一个布尔偏好：没存过就用 fallback */
 function readFlag(key: string, fallback: boolean): boolean {
@@ -109,11 +148,6 @@ function writeText(key: string, value: string) {
   }
 }
 
-/** 本地临时消息还没有落库时间（要等整轮回读）：先用此刻顶上，hover 与话题标记都要它 */
-function nowIso(): string {
-  return new Date().toISOString()
-}
-
 /**
  * 一条消息的时间文案：气泡上是「时:分」，话题开始那条标记带上「月-日」。
  * 拿不到时间或解析不出来就返回空串，由调用方决定退化成什么。
@@ -130,22 +164,13 @@ function fmtTime(iso: string | null | undefined, withDate = false): string {
 type Option = { value: string; label: string }
 
 /**
- * 一轮流式发言的进行态：正在说话的那一位，整轮攒在这里。
+ * 消息流里的一项（虚拟化用）：落库消息 / 直播分段。
  *
- * <p>一次发言可以由好几段组成（边说边想）：每来一次 speak 就多一段，一段一个气泡。
- * 思考链是整轮的、挂在**第一段**上——落到库里也是第一段带 trace、后面几段不带，
- * 于是刷新前后是同一个形状（否则实时几条、刷新后并成一条）。
+ * <p>只存「轻量描述」而非节点：可见时才渲染出 React 节点，否则等于把整棵树照旧建一遍，虚拟化就白做了。
  */
-type Live = {
-  peerId: string
-  peerName: string
-  /** 整轮的思考过程：随增量实时分段（思考 / 调用工具），与落库后的 trace 同形 */
-  trace: TraceSegment[]
-  /** 说出口的段落（一段一个气泡）；最后一段是还在长的那个，一轮没开口时为空 */
-  segments: string[]
-  /** 这条发言的开始时刻：流式途中没有落库时间，hover 时的气泡时间用它 */
-  at: string
-}
+type FeedItem =
+  | { key: string; kind: 'msg'; msg: MaMessage }
+  | { key: string; kind: 'live'; content: string; trace: TraceSegment[] | null; streaming: boolean }
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) {
@@ -186,28 +211,10 @@ function detectMention(value: string, caret: number): { start: number; query: st
   return { start: at, query }
 }
 
-/**
- * 把一段 reasoning 增量并进分段数组：接续上一段普通思考；上一段是工具调用时另起一段
- * （与对话页 chatLive 同一规则，这里拿不到轮次，round 统一留空）。
- * 实时分段与落库后的 trace 同形，于是思考与工具调用能边跑边渲染，不必等整轮跑完回读。
- */
-function appendReasoning(trace: TraceSegment[], delta: string): TraceSegment[] {
-  const last = trace[trace.length - 1]
-  if (last && last.type === 'reasoning') {
-    const next = trace.slice()
-    next[next.length - 1] = { ...last, text: (last.text ?? '') + delta }
-    return next
-  }
-  /* 跨轮时后端会在首个思考分片前补一条分隔线，那不是思考内容 */
-  return [
-    ...trace,
-    { type: 'reasoning', text: delta.replace(/^\n*---\n+/, ''), name: null, args: null, round: null },
-  ]
-}
-
-/** 圆桌页（路由 /roundtable）：左侧选会话，右侧是这张圆桌 */
+/** 圆桌页（路由 /roundtable）：左侧选会话，右侧是这张圆桌。 */
 export default function Roundtable() {
   const kit = usePageKit()
+  const sidebar = useThemeState().mono.sidebar
   const [peers, setPeers] = useState<MaPeer[]>([])
   const [modelOptions, setModelOptions] = useState<Option[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
@@ -248,8 +255,14 @@ export default function Roundtable() {
 
   return (
     /* kit.Page 出扇区头；圆桌本体占满剩余高度，滚动都发生在容器内部——底部的输入框因此始终可见。
-       [&>*]:h-full 把高度传给 kit 渲染的 <section>，于是各主题的 Page 都能撑满整页。 */
-    <div className="h-full p-3 lg:p-5 [&>*]:h-full">
+       [&>*]:h-full 把高度传给 kit 渲染的 <section>，于是各主题的 Page 都能撑满整页。
+       侧边栏档：页眉已被隐藏（见 kit 的 Page），这里再去掉自己的上边距——
+       否则「外层 pt」叠上「Page 的 pt-6」，圆桌页顶部会比别的内容页高出一截。 */
+    <div
+      className={`h-full [&>*]:h-full ${
+        sidebar ? 'px-3 pb-3 lg:px-5 lg:pb-5' : 'p-3 lg:p-5'
+      }`}
+    >
       <kit.Page
         title="圆桌"
         en="ROUNDTABLE"
@@ -301,9 +314,15 @@ function RoundtableBoard({
   const [topics, setTopics] = useState<MaTopic[]>([])
   const [modelId, setModelId] = useState('')
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [live, setLive] = useState<Live | null>(null)
-  const [done, setDone] = useState<MaMessage[]>([])
+  /**
+   * 这张桌子当前那一轮发言的运行时（跑没跑、谁在说、说到哪）：状态在应用级模块仓里，
+   * 组件只是订阅者——本页卸载（切会话 / 切 tab / 切路由）不会中断它，回来接着看（见 roundtableLive）。
+   */
+  const run = useRoundtableRun(sessionId)
+  const busy = run?.running ?? false
+  const live = run?.live ?? null
+  /** 正在发言的会话清单：左侧列表据此打点，一眼看出哪张桌子在跑 */
+  const runningSessions = useRunningSessionIds()
   /** 不显示思维链（默认开，「⋯」菜单里可关）：开了之后成员气泡只渲染发言正文 */
   const [hideCot, setHideCot] = useState(() => readFlag(HIDE_COT_KEY, true))
   /** 显示入场 / 退场（默认关）：每开一个话题全桌都会各来一条，噪声太大 */
@@ -318,9 +337,6 @@ function RoundtableBoard({
   const [contextView, setContextView] = useState<{ title: string; text: string } | null>(null)
   /** 新建会话的选人弹窗开着没 */
   const [pickerOpen, setPickerOpen] = useState(false)
-  const abortRef = useRef<AbortController | null>(null)
-  /** 本地临时消息的递减 id：一次流里会连着来好几条（状态行 / 发言），用时间戳会撞 key */
-  const localSeq = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 正在补全的 @提及：null 表示没在补；query 是 @ 后面已敲的片段，index 是当前高亮项 */
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null)
@@ -370,8 +386,13 @@ function RoundtableBoard({
     try {
       const list = await listMaSessions()
       setSessions(list)
-      /* 还没选中任何一个会话时，默认打开最近一次（列表本来就是按最近排序的） */
-      setSessionId((current) => current ?? list[0]?.id ?? null)
+      setSessionId((current) => {
+        if (current) return current
+        /* 还没选中任何一条：优先落在「正在发言」的那张桌子上——离开再回来要接上的正是它；
+           没有在跑的，就打开最近一次（列表本来就是按最近排序的） */
+        const live = getRunningSessionIds().find((id) => list.some((s) => s.id === id))
+        return live ?? list[0]?.id ?? null
+      })
     } catch (e) {
       notify(errMsg(e), 'err')
     }
@@ -394,13 +415,53 @@ function RoundtableBoard({
     void reloadSessions()
   }, [reloadSessions])
 
+  /**
+   * 重取这张桌子的消息与话题：会话换了要取，这一轮有新内容落库（run.revision 自增）也要取
+   * ——已落库的一律以服务端为准，正在说话的那一位则由仓里的直播气泡补在末尾。
+   */
   useEffect(() => {
     if (sessionId) void reloadSession(sessionId)
-  }, [sessionId, reloadSession])
+  }, [sessionId, reloadSession, run?.revision])
 
+  /* 一轮说完（跑完 / 失败）：会话列表的标题与排序都在此时定下来，刷新一次 */
+  useEffect(() => onRoundtableSettled(() => void reloadSessions()), [reloadSessions])
+
+  /* 这一轮失败过：提醒一次就把它从仓里清掉，免得每次回到这张桌子再弹一遍 */
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [messages, done, live])
+    if (!run?.error) return
+    notify(run.error, 'err')
+    clearRunError(sessionId)
+  }, [run?.error, sessionId, notify])
+
+  /** 用户是否「看得到最新」：只有贴着底时才自动跟随，否则不把他从讨论里拽走 */
+  const [atBottom, setAtBottom] = useState(true)
+  const atBottomRef = useRef(true)
+
+  /** 程序性平滑滚动进行中：这期间的 onScroll 不算「用户自己滚」（否则按钮会闪一下） */
+  const programmaticRef = useRef(false)
+
+  /** 消息区滚动：记下用户是否还贴着底（48px 容差） */
+  const onMessagesScroll = () => {
+    if (programmaticRef.current) return
+    const el = scrollRef.current
+    if (!el) return
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    atBottomRef.current = bottom
+    setAtBottom((prev) => (prev === bottom ? prev : bottom))
+  }
+
+  /** 回到最新：滚到底并恢复自动跟随 */
+  const scrollToBottom = () => {
+    const el = scrollRef.current
+    if (!el) return
+    programmaticRef.current = true
+    atBottomRef.current = true
+    setAtBottom(true)
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    window.setTimeout(() => {
+      programmaticRef.current = false
+    }, 400)
+  }
 
   /* 上下文浮层：Esc 关闭（点背景关闭在浮层自己身上） */
   useEffect(() => {
@@ -412,7 +473,9 @@ function RoundtableBoard({
     return () => document.removeEventListener('keydown', onKey)
   }, [contextView])
 
-  const current = topics.length > 0 ? topics[topics.length - 1] : null
+  /* 话题状态条看的是「此刻这一轮」的快照：仓里有一份就用它（边聊边刷新），
+     没有（没在跑 / 刚进来）就用回读来的最后一条 */
+  const current = run?.topic ?? (topics.length > 0 ? topics[topics.length - 1] : null)
 
   /**
    * 有人调了 ask_user：话题置 waiting，全桌就此暂停、等用户这一句话。
@@ -449,200 +512,56 @@ function RoundtableBoard({
   }
 
   /** 点开一条成员发言：取它当时真正发出去的请求体（system + 历史 + 末尾交代 + 工具面） */
-  const openContext = async (m: MaMessage) => {
-    try {
-      const r = await maMessageContext(m.id)
-      if (!r.context) {
-        notify('这条没有留存上下文（人的发言不是模型调用，不产生上下文）', 'err')
-        return
+  const openContext = useCallback(
+    async (m: MaMessage) => {
+      try {
+        const r = await maMessageContext(m.id)
+        if (!r.context) {
+          notify('这条没有留存上下文（人的发言不是模型调用，不产生上下文）', 'err')
+          return
+        }
+        setContextView({ title: m.peerName ?? '成员', text: prettyJson(r.context) })
+      } catch (e) {
+        notify(errMsg(e), 'err')
       }
-      setContextView({ title: m.peerName ?? '成员', text: prettyJson(r.context) })
-    } catch (e) {
-      notify(errMsg(e), 'err')
-    }
-  }
+    },
+    [notify],
+  )
 
-  const send = async () => {
+  /**
+   * 人往桌上说一句：把这一轮交给运行时仓（见 roundtableLive）去跑。
+   *
+   * <p>本组件只是发起者：这一轮跑起来之后，本页卸载（切会话 / 切 tab / 切路由）都不影响它，
+   * 进度、直播气泡与「停止」都从仓里读——所以这里不需要 await，也不需要自己维护在途状态。
+   * 本张桌子已在发言时再发一句 = 插话：会打断正在说话的那位、把新一轮排进议程（随时可加入讨论）。
+   */
+  const send = () => {
     const text = input.trim()
-    if (!text || busy) return
+    /* 讨论进行中也能发：这一句会打断正在说话的那位、并把新一轮排进议程——
+       随时加入讨论、补充信息是核心设计，故不因 busy 拒绝 */
+    if (!text) return
     if (peers.length === 0) {
       notify('圆桌上还没有人，先去「多智能体」页加几位成员', 'err')
       return
     }
     setInput('')
     setMention(null)
-    setBusy(true)
-    /* 人的话立刻上屏：后端要整轮跑完才回读落库数据，不能让这句话等（它其实一发出就落库了） */
-    setDone([
-      {
-        id: --localSeq.current,
-        sessionId: sessionId ?? '',
-        topicId: null,
-        role: 'user',
-        peerId: null,
-        peerName: null,
-        content: text,
-        reasoning: null,
-        trace: null,
-        createdAt: nowIso(),
-      },
-    ])
-    const controller = new AbortController()
-    abortRef.current = controller
-    let topicId: string | null = null
-    let pending: Live | null = null
-    /**
-     * 把这一轮就地落成气泡：说完了、或轮到下一位时调用。
-     *
-     * <p>一段一行（第一段带上整轮的思考链），与后端落库的形状一致——刷新后回读到的正是这些行。
-     *
-     * <p>先把这一刻的值固化下来：setDone 的 updater 是延迟执行的（React 到渲染期才跑它），
-     * 到那时 pending 早被置空了——直接在 updater 里读 pending! 会在渲染期抛
-     * 「Cannot read properties of null」把整页打成白屏（踩过一次）。
-     */
-    const commitLive = () => {
-      if (!pending) return
-      const finished = pending
-      const finishedTopic = topicId
-      pending = null
-      setLive(null)
-      /* 只落真说了话的段落：一句话没说（如只调 go_silent 转了沉默）就不留气泡——
-         后端那边同样不落行，于是实时与刷新后是同一个形状 */
-      const segments = finished.segments.filter((s) => s.trim())
-      setDone((prev) => [
-        ...prev,
-        ...segments.map(
-          (content, i): MaMessage => ({
-            id: --localSeq.current,
-            sessionId: sessionId ?? '',
-            topicId: finishedTopic,
-            role: 'peer',
-            peerId: finished.peerId,
-            peerName: finished.peerName,
-            content,
-            reasoning: null,
-            trace: i === 0 && finished.trace.length > 0 ? finished.trace : null,
-            createdAt: nowIso(),
-          }),
-        ),
-      ])
-    }
-    /** 把增量并进当前这一段（还没有段落时就开一段） */
-    const appendSegment = (delta: string) => {
-      if (!pending) return
-      const segments = pending.segments.slice()
-      if (segments.length === 0) {
-        segments.push(delta)
-      } else {
-        segments[segments.length - 1] += delta
-      }
-      pending = { ...pending, segments }
-    }
-    try {
-      const result = await maChatStream(
-        text,
-        sessionId ?? undefined,
-        modelId || undefined,
-        speakerStrategy,
-        {
-          onTopic: (t) => {
-            topicId = t.topicId
-            setSessionId(t.sessionId)
-          },
-          onSpeaker: (s) => {
-            pending = {
-              peerId: s.peerId,
-              peerName: s.peerName,
-              trace: [],
-              segments: [],
-              at: nowIso(),
-            }
-            setLive(pending)
-          },
-          onState: (t) => {
-            /* 状态快照随时到：就地替换这个话题，状态条于是边聊边刷新（不必等整轮跑完） */
-            setTopics((prev) => [...prev.filter((x) => x.id !== t.id), t])
-          },
-          onContent: (d) => {
-            appendSegment(d)
-            if (pending) setLive(pending)
-          },
-          onReasoning: (d) => {
-            if (!pending) return
-            pending = { ...pending, trace: appendReasoning(pending.trace, d) }
-            setLive(pending)
-          },
-          onTool: (t) => {
-            if (!pending) return
-            /* 工具调用即时成一段：与思考同一条流，调用一发生就渲染出来，不等整轮跑完 */
-            pending = {
-              ...pending,
-              trace: [
-                ...pending.trace,
-                { type: 'tool', text: null, name: t.name, args: t.args, round: null },
-              ],
-            }
-            setLive(pending)
-          },
-          onSpeech: (text) => {
-            if (!pending) return
-            /* 又开口说了一段（一次 speak）：最后那段已经有内容就另起一格；
-               最后那段还空着（本轮先出思考、话才到）就直接装进它——思考与它引出的话同在一格 */
-            const segments = pending.segments.slice()
-            if (segments.length > 0 && !segments[segments.length - 1].trim()) {
-              segments[segments.length - 1] = text
-            } else {
-              segments.push(text)
-            }
-            pending = { ...pending, segments }
-            setLive(pending)
-          },
-          onSpeakerEnd: () => {
-            /* 这一位说完了：整轮就地落成气泡（一段一格），下一位接着说 */
-            commitLive()
-          },
-          onAction: (text) => {
-            /* 状态机动作行（开话题、入场、转沉默……）：后端一落库就推过来，即刻居中显示 */
-            setDone((prev) => [
-              ...prev,
-              {
-                id: --localSeq.current,
-                sessionId: sessionId ?? '',
-                topicId: topicId,
-                role: 'event',
-                peerId: null,
-                peerName: null,
-                content: text,
-                reasoning: null,
-                trace: null,
-                createdAt: nowIso(),
-              },
-            ])
-          },
-        },
-        controller.signal,
-      )
-      /* 用后端回执里的会话/话题 id 回读：闭包里的 sessionId 在「无会话直接开说」时还是 null */
-      await reloadSession(result.sessionId)
-      /* 草稿态下第一句才让后端建了会话：刷新左侧列表，让它归到历史里 */
-      await reloadSessions()
-      /* 落库那份已到位：本地这批临时气泡（人的话、状态行、发言）就地交出位置，免得一闪重复 */
-      setDone([])
-    } catch (e) {
-      const aborted = e instanceof DOMException && e.name === 'AbortError'
-      if (!aborted) notify(errMsg(e), 'err')
-      setLive(null)
-    } finally {
-      setDone([])
-      setBusy(false)
-      abortRef.current = null
-    }
+    startRoundtable({
+      sessionId,
+      input: text,
+      modelId: modelId || undefined,
+      speakerStrategy,
+      /* 草稿态（还没有会话）时后端会建一个：把它切过去，左侧列表随本轮收尾一起刷新 */
+      onSession: (id) => setSessionId(id),
+    })
   }
 
   const stop = async () => {
-    if (!sessionId) return
+    /* 停的是「正在跑的那张桌子」：用户可能已经切到别的会话在看，别停错了人 */
+    const id = run?.sessionId || sessionId
+    if (!id) return
     try {
-      await stopMaChat(sessionId)
+      await stopRoundtable(id)
       notify('已请当前发言人打住', 'ok')
     } catch (e) {
       notify(errMsg(e), 'err')
@@ -687,6 +606,87 @@ function RoundtableBoard({
   const seated = membersOf(
     sessions.find((s) => s.id === sessionId)?.memberIds ?? peers.map((p) => p.id),
   )
+
+  /**
+   * 本次提问的气泡：说过的话要当场看得见，而后端把它读回来要等一次往返——
+   * 中间这段由它顶着；库里那份一到位（消息回读里出现同内容的 user 行）就撤下，不会重复。
+   */
+  const optimisticUser = useMemo<MaMessage | null>(() => {
+    if (!run?.userText) return null
+    if (messages.some((m) => m.role === 'user' && m.content === run.userText)) return null
+    return {
+      id: -1,
+      sessionId: sessionId ?? '',
+      topicId: null,
+      role: 'user',
+      peerId: null,
+      peerName: null,
+      content: run.userText,
+      reasoning: null,
+      trace: null,
+      createdAt: run.userAt,
+    }
+  }, [run?.userText, run?.userAt, messages, sessionId])
+
+  /**
+   * 消息流的一项（虚拟化用）：落库消息 / 直播分段。key 稳定，跨重排（收起入场行等）也能复用已测高度。
+   * 这里只造「轻量描述」，真正的节点在可见时才渲染——否则等于把整棵树照旧建一遍，虚拟化就白做了。
+   */
+  const feedItems = useMemo<FeedItem[]>(() => {
+    const items: FeedItem[] = []
+    for (const m of messages) {
+      if (!showEventLine(m, showPresence, peerById)) continue
+      items.push({ key: `m:${m.id}`, kind: 'msg', msg: m })
+    }
+    if (optimisticUser) items.push({ key: 'optimistic', kind: 'msg', msg: optimisticUser })
+    if (live) {
+      if (live.segments.length > 0) {
+        live.segments.forEach((content, i) =>
+          items.push({
+            key: `live:${i}`,
+            kind: 'live',
+            content,
+            trace: i === 0 ? live.trace : null,
+            streaming: i === live.segments.length - 1,
+          }),
+        )
+      } else {
+        items.push({ key: 'live:0', kind: 'live', content: '', trace: live.trace, streaming: true })
+      }
+    }
+    return items
+  }, [messages, showPresence, peerById, optimisticUser, live])
+
+  /* 虚拟化：只渲染视口内（含一段缓冲）的那几条。消息一多，打字卡顿的根因就是整列表每敲一个字都重渲一遍
+     （每条都跑 ReactMarkdown），这里把渲染量钉在视口大小上，再把每条 memo 住，输入便与列表长度无关 */
+  const virtualizer = useVirtualizer({
+    count: feedItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 88,
+    overscan: 8,
+    gap: 16,
+    getItemKey: (i) => feedItems[i]?.key ?? i,
+  })
+
+  /* 「显示思维链」开关会整体改变每条气泡的高度：清掉已测高度，让它们按新形态重新测量 */
+  useEffect(() => {
+    virtualizer.measure()
+  }, [hideCot, virtualizer])
+
+  /* 新内容到达：只有用户本来就在底部时才跟着滚——否则让他自己看。
+     讨论滚得太快，无条件到底会把正在围观的人不断拽走（他还想视奸 AGENT 怎么吵）。
+     下一帧再钉一次：虚拟项的高度是测量出来的，这一帧写完、下一帧总高才准 */
+  useEffect(() => {
+    if (!atBottomRef.current) return
+    const el = scrollRef.current
+    if (!el) return
+    const pin = () => {
+      el.scrollTop = el.scrollHeight
+    }
+    pin()
+    const id = requestAnimationFrame(pin)
+    return () => cancelAnimationFrame(id)
+  }, [feedItems, live])
 
   return (
     /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌。
@@ -739,18 +739,26 @@ function RoundtableBoard({
                       />
                     ))}
                   {s.memberIds.length > SESSION_AVATAR_LIMIT && (
-                    <span className="text-[10px] text-hint">
+                    <span className="text-2xs text-hint">
                       +{s.memberIds.length - SESSION_AVATAR_LIMIT}
                     </span>
                   )}
                 </span>
-                <span className="mt-1 block text-[11px] text-muted">
+                <span className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                  {runningSessions.includes(s.id) && (
+                    /* 这张桌子正在发言：离开页面也照跑，点回来就能接着看 */
+                    <span
+                      className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
+                      title="正在发言"
+                      aria-label="正在发言"
+                    />
+                  )}
                   {s.memberIds.length > 0 ? `${s.memberIds.length} 人会话` : '暂无成员'}
                 </span>
               </button>
               <button
                 type="button"
-                className="shrink-0 text-[11px] text-hint opacity-0 transition group-hover:opacity-100 hover:text-danger"
+                className="shrink-0 text-xs text-hint opacity-0 transition group-hover:opacity-100 hover:text-danger"
                 onClick={() => void removeSession(s.id)}
               >
                 删除
@@ -758,14 +766,14 @@ function RoundtableBoard({
             </kit.Row>
           ))}
           {sessions.length === 0 && (
-            <p className="px-3 py-2 text-[11px] text-hint">还没有会话，点上面新建一个</p>
+            <p className="px-3 py-2 text-xs text-hint">还没有会话，点上面新建一个</p>
           )}
         </div>
         {seated.length > 0 && (
           <div className="scrollbar-slim mt-1 flex max-h-40 shrink-0 flex-col gap-1.5 overflow-y-auto border-t border-line pt-3">
             <p className="ui-label">在座</p>
             {seated.map((p) => (
-              <span key={p.id} className="flex items-center gap-2 text-[11.5px] text-muted">
+              <span key={p.id} className="flex items-center gap-2 text-xs text-muted">
                 <PeerAvatar
                   name={p.name}
                   avatar={p.avatar}
@@ -799,6 +807,13 @@ function RoundtableBoard({
                     <span className="ml-1">
                       {name} · {MA_STATE_LABELS[state] ?? state}
                       {speaking ? ' · 正在说' : ''}
+                      {/* 执行状态（二维状态的第二维）：非「就绪」时才补一句，免得状态条被噪声塞满 */}
+                      {(() => {
+                        const exec = current.executions?.[name]
+                        return exec && exec !== 'READY'
+                          ? ` · ${MA_EXEC_LABELS[exec] ?? exec}`
+                          : ''
+                      })()}
                     </span>
                   </kit.Badge>
                 )
@@ -808,66 +823,74 @@ function RoundtableBoard({
         )}
 
         {/* 消息：这一块自己滚（min-h-0 才真的滚得起来），把输入框留给容器底部 */}
-        <div ref={scrollRef} className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          {messages.length === 0 && !live && done.length === 0 && (
+        <div
+          ref={scrollRef}
+          onScroll={onMessagesScroll}
+          className="scrollbar-slim min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4"
+        >
+          {messages.length === 0 && !live && !optimisticUser && (
             <kit.Empty>说一句话，圆桌上的人会依次应答</kit.Empty>
           )}
-          <div className="flex flex-col gap-4">
-            {messages.filter((m) => showEventLine(m, showPresence, peerById)).map((m) => (
-              <MessageItem
-                key={m.id}
-                msg={m}
-                avatar={avatarOf(m.peerId)}
-                showCot={!hideCot}
-                peerById={peerById}
-                /* 只有落库的成员发言才有原始上下文可看（人的话不是一次模型调用）；
-                   这个入口也由「⋯」菜单里的开关控制，默认关 */
-                onClick={
-                  allowContext && m.role === 'peer' ? () => void openContext(m) : undefined
-                }
-              />
-            ))}
-            {done
-              .filter((m) => showEventLine(m, showPresence, peerById))
-              .map((m) => (
-                <MessageItem
-                  key={m.id}
-                  msg={m}
-                  avatar={avatarOf(m.peerId)}
-                  showCot={!hideCot}
-                  peerById={peerById}
-                />
-              ))}
-            {/* 正在说话的那一位：一次发言可能分好几段（边说边想），一段一个气泡；
-                思考链挂在第一段上——与落库后回读到的形状一致，刷新前后不跳 */}
-            {live &&
-              (live.segments.length > 0 ? (
-                live.segments.map((content, i) => (
-                  <Bubble
-                    key={i}
-                    role="peer"
-                    name={live.peerName}
-                    avatar={avatarOf(live.peerId)}
-                    content={content}
-                    trace={i === 0 ? live.trace : null}
-                    createdAt={live.at}
-                    streaming={i === live.segments.length - 1}
-                    showCot={!hideCot}
-                  />
-                ))
-              ) : (
-                <Bubble
-                  role="peer"
-                  name={live.peerName}
-                  avatar={avatarOf(live.peerId)}
-                  content=""
-                  trace={live.trace}
-                  createdAt={live.at}
-                  streaming
-                  showCot={!hideCot}
-                />
-              ))}
+          {/* 虚拟列表：外层固定为「总高度」的定位容器，只有视口内（含缓冲）的项被真正渲染 */}
+          <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
+            {virtualizer.getVirtualItems().map((vi) => {
+              const item = feedItems[vi.index]
+              if (!item) return null
+              return (
+                <div
+                  key={item.key}
+                  data-index={vi.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${vi.start}px)`,
+                  }}
+                >
+                  {item.kind === 'msg' ? (
+                    <MessageItem
+                      msg={item.msg}
+                      avatar={avatarOf(item.msg.peerId)}
+                      showCot={!hideCot}
+                      peerById={peerById}
+                      /* 只有落库的成员发言才有原始上下文可看（人的话不是一次模型调用）；
+                         这个入口也由「⋯」菜单里的开关控制，默认关 */
+                      allowContext={allowContext}
+                      onOpenContext={openContext}
+                    />
+                  ) : (
+                    /* 正在说话的那一位：一次发言可能分好几段（边说边想），一段一个气泡；
+                       思考链挂在第一段上——与落库后回读到的形状一致，刷新前后不跳 */
+                    <Bubble
+                      role="peer"
+                      name={live?.peerName ?? ''}
+                      avatar={avatarOf(live?.peerId ?? null)}
+                      content={item.content}
+                      trace={item.trace}
+                      createdAt={live?.at}
+                      streaming={item.streaming}
+                      showCot={!hideCot}
+                    />
+                  )}
+                </div>
+              )
+            })}
           </div>
+
+          {/* 「回到最新」：新内容到达时不再无条件把用户拽到底——他在围观讨论时给一个按钮即可 */}
+          {!atBottom && (
+            <div className="sticky bottom-0 flex justify-end pr-1 pt-2">
+              <button
+                type="button"
+                onClick={scrollToBottom}
+                className="ui-btn ui-btn--outline px-3 py-1 text-xs shadow-lg"
+              >
+                ↓ 回到最新
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 等待用户：某位成员请了用户表态（话题置 waiting），全桌暂停——这条提示贴在输入框正上方，
@@ -879,10 +902,10 @@ function RoundtableBoard({
               className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
               aria-hidden="true"
             />
-            <p className="text-[12px] font-medium text-fg">
+            <p className="text-sm font-medium text-fg">
               {awaitingName ? `${awaitingName} 在等你表态` : '圆桌在等你表态'}
             </p>
-            <p className="text-[11px] text-muted">全桌已暂停，说一句就继续</p>
+            <p className="text-xs text-muted">全桌已暂停，说一句就继续</p>
           </div>
         )}
 
@@ -899,9 +922,9 @@ function RoundtableBoard({
             )}
             <textarea
               ref={inputRef}
-              className="scrollbar-slim max-h-40 min-h-[40px] w-full resize-none bg-transparent py-2 text-[13px] leading-relaxed text-fg outline-none placeholder:text-hint"
+              className="scrollbar-slim max-h-40 min-h-[40px] w-full resize-none bg-transparent py-2 text-base leading-relaxed text-fg outline-none placeholder:text-hint"
               rows={2}
-              placeholder="说点什么…（@名字 可以让指定的人先应答）"
+              placeholder="说点什么…（@名字 只让指定的人应答）"
               value={input}
               onChange={(e) => {
                 setInput(e.target.value)
@@ -956,39 +979,38 @@ function RoundtableBoard({
               speakerStrategy={speakerStrategy}
               onChangeSpeakerStrategy={changeSpeakerStrategy}
             />
-            {busy ? (
-              /* 停止：描边钮（.ui-btn 体系，形状随主题） */
+            {/* 强制暂停：只在有人说话时出现，且**不占发送键**——用户随时可以发言（核心设计） */}
+            {busy && (
               <button
                 type="button"
                 onClick={() => void stop()}
-                title="停止"
-                aria-label="停止"
+                title="中断全部发言"
+                aria-label="中断全部发言"
                 className="ui-btn ui-btn--outline h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
               >
                 <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <rect x="6" y="6" width="12" height="12" rx="2" />
                 </svg>
               </button>
-            ) : (
-              /* 发送：主行动钮（点缀色实底，圆环 / 切角随主题） */
-              <button
-                type="button"
-                onClick={() => void send()}
-                title="发送"
-                aria-label="发送"
-                className="ui-btn ui-btn--primary h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M21 3 10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8 21 3z"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
             )}
+            {/* 发送：永远可用——讨论进行中也能随时插话补充（那会打断当前发言并排进新一轮） */}
+            <button
+              type="button"
+              onClick={() => void send()}
+              title="发送"
+              aria-label="发送"
+              className="ui-btn ui-btn--primary h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M21 3 10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8 21 3z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -1022,11 +1044,11 @@ function RoundtableBoard({
                 </button>
               }
             />
-            <p className="border-b border-line px-4 py-2 text-[11px] text-hint">
+            <p className="border-b border-line px-4 py-2 text-xs text-hint">
               这是它这次发言当时真正发出去的那一份：system（身份 / 协作规程 / 局面）、
               共享话题历史、末尾的发言权交代，以及挂了哪些工具。
             </p>
-            <pre className="scrollbar-slim flex-1 overflow-auto px-4 py-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-muted">
+            <pre className="scrollbar-slim flex-1 overflow-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-muted">
               {contextView.text}
             </pre>
           </Card>
@@ -1074,7 +1096,7 @@ const CotBlock = memo(function CotBlock({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[11px] text-hint transition hover:text-muted"
+        className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs text-hint transition hover:text-muted"
       >
         <svg
           className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
@@ -1095,10 +1117,10 @@ const CotBlock = memo(function CotBlock({
       {open && (
         <div
           ref={bodyRef}
-          className="scrollbar-slim max-h-64 overflow-y-auto border-t border-line px-3 py-2 text-[12.5px] leading-relaxed text-muted"
+          className="scrollbar-slim max-h-64 overflow-y-auto border-t border-line px-3 py-2 text-sm leading-relaxed text-muted"
         >
           {code !== undefined ? (
-            <pre className="whitespace-pre-wrap break-all font-mono text-[12px]">{code}</pre>
+            <pre className="whitespace-pre-wrap break-all font-mono text-sm">{code}</pre>
           ) : (
             <div className="whitespace-pre-wrap break-words">{text ?? ''}</div>
           )}
@@ -1165,7 +1187,7 @@ function MenuSwitch({
         role="switch"
         aria-checked={on}
         onClick={() => onToggle(!on)}
-        className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition hover:bg-fg/5 ${
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-fg/5 ${
           on ? 'text-fg' : 'text-muted hover:text-fg'
         }`}
       >
@@ -1182,7 +1204,7 @@ function MenuSwitch({
           />
         </span>
       </button>
-      <p className="px-2 pb-1.5 pt-1 text-[11px] leading-relaxed text-hint">{hint}</p>
+      <p className="px-2 pb-1.5 pt-1 text-xs leading-relaxed text-hint">{hint}</p>
     </>
   )
 }
@@ -1211,7 +1233,7 @@ function MenuChoice({
             role="radio"
             aria-checked={active}
             onClick={() => onChange(o.value)}
-            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition hover:bg-fg/5 ${
+            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-fg/5 ${
               active ? 'font-medium text-fg' : 'text-muted hover:text-fg'
             }`}
           >
@@ -1316,7 +1338,7 @@ function DisplayMenu({
             value={speakerStrategy}
             onChange={onChangeSpeakerStrategy}
           />
-          <p className="px-2 pb-1.5 pt-1.5 text-[11px] leading-relaxed text-hint">
+          <p className="px-2 pb-1.5 pt-1.5 text-xs leading-relaxed text-hint">
             这一轮该谁先开口：轮询＝按名册顺序依次交接；随机＝每次掷骰子；发言欲望优先＝每位成员说完
             报一个 0~10 的欲望，高的先开口。下一次发言生效。
           </p>
@@ -1364,7 +1386,7 @@ function MentionMenu({
             }`}
           >
             <PeerAvatar name={p.name} avatar={p.avatar} size="h-7 w-7" textClass="text-[11px]" />
-            <span className="flex-1 truncate text-[12px]">{p.name}</span>
+            <span className="flex-1 truncate text-sm">{p.name}</span>
           </button>
         ))}
       </div>
@@ -1438,7 +1460,7 @@ function Bubble({
   const time = fmtTime(createdAt)
 
   const meta = (
-    <span className="flex items-center gap-1.5 text-[11px] text-hint">
+    <span className="flex items-center gap-1.5 text-xs text-hint">
       {label}
       {streaming && <span className="text-muted">正在说…</span>}
       {onClick && !streaming && <span>· 点开看当时的上下文</span>}
@@ -1449,7 +1471,7 @@ function Bubble({
     <div
       onClick={onClick}
       title={onClick ? '点开看它这次发言的原始上下文' : undefined}
-      className={`rounded-2xl border px-3.5 py-2.5 text-[13px] leading-relaxed ${
+      className={`rounded-2xl border px-3.5 py-2.5 text-md leading-relaxed ${
         mine
           ? 'border-line bg-fg/5 text-fg'
           : `${BUBBLE_MAX_W} border-line bg-fg/[0.04] text-fg`
@@ -1474,7 +1496,7 @@ function Bubble({
     <div className="flex max-w-[86%] flex-col gap-0.5">
       {body}
       {time && (
-        <span className="self-end pr-1 font-mono text-[10.5px] leading-none text-faint">
+        <span className="self-end pr-1 font-mono text-2xs leading-none text-faint">
           {time}
         </span>
       )}
@@ -1515,8 +1537,14 @@ type EventParts = {
   reason: string | null
 }
 
-/** 行尾的（理由）：后端 reason() 只会拼在末尾，所以从尾部切最稳 */
-const REASON_RE = /（([^）]*)）\s*$/
+/**
+ * 行尾的（理由）：后端 {@code line()} 只会把理由拼在末尾，所以从「第一个（ 到最后一个 ）」切最稳。
+ *
+ * <p>用 {@code [\s\S]*}（而非 {@code [^）]*}）是必须的：理由里常再套括号
+ * （如「…跑距离场（rev 2→3、24 格变）…」），一旦限制「不含右括号」就匹配不到结尾，
+ * 整段理由会被当成动作灌进状态标签——表意错、还会撑出横向滚动条（踩过这个坑）。
+ */
+const REASON_RE = /（([\s\S]*)）\s*$/
 
 /** 理由句首 / 句尾要去掉的符号：模型常写成「。理由。」或「，理由…」这种 */
 const EDGE_SYMBOLS = String.raw`\s。，、；：！？…·,.;:!?~～—\-"'“”‘’()（）\[\]【】《》<>「」『』`
@@ -1542,10 +1570,17 @@ function parseEventLine(
   peerId: string | null,
   peerName: string | null,
   peerById: Map<string, MaPeer>,
+  kind: string | null = null,
 ): EventParts {
   const m = REASON_RE.exec(text)
   const reason = m ? cleanReason(m[1]) : null
   const body = (m ? text.slice(0, m.index) : text).trim()
+
+  /* 圆桌层面的事（话题开始 / 本轮结束）：整句就是文案，没有主角。
+     不去猜「谁」——否则「本轮结束：甲、乙 发言」会被中间那个空格切成「名字 + 动作」 */
+  if (kind === 'topic_open' || kind === 'turn_end') {
+    return { peer: null, name: null, action: EVENT_KIND_ACTION[kind] ?? body, reason }
+  }
 
   const byId = peerId ? (peerById.get(peerId) ?? null) : null
   const byPrefix = [...peerById.values()]
@@ -1566,7 +1601,9 @@ function parseEventLine(
     if (sp > 0) name = body.slice(0, sp)
   }
 
-  return { peer, name, action: name ? body.slice(name.length).trim() : body, reason }
+  /* 动作以 kind 为准（协议），没人给 kind 的老数据才从文本里切 */
+  const action = (kind ? EVENT_KIND_ACTION[kind] : undefined) ?? (name ? body.slice(name.length).trim() : body)
+  return { peer, name, action, reason }
 }
 
 /**
@@ -1576,7 +1613,8 @@ function parseEventLine(
  * 话题的表态，跟上下成员气泡摆在同一列反而混淆。「撤回结束提议，重新决策」虽逐人各来一条
  * （重开时每个此前投过结束票的人各撤一条），讲的却是整桌的事：话题被重新打开了，所以也居中。
  *
- * <p>文案取自后端 MaTopicService#line 的固定输出，后端改文案时这里要跟着改。
+ * <p>居中与否现在按事件种类判（{@link CENTERED_KINDS}），不再依赖文案：文案取自后端 line() 的
+ * 输出，改一个字就会静默错位。老数据没有 kind，退回 {@link CENTERED_ACTIONS} 的文案匹配。
  * （「话题开始」在 {@link EventLine} 里单独走时间标记那条分支。）
  */
 const CENTERED_ACTIONS = new Set([
@@ -1586,6 +1624,23 @@ const CENTERED_ACTIONS = new Set([
   '被要求立刻表态',
   '重新参与讨论',
   '撤回结束提议，重新决策',
+  /* 被打断是圆桌层的事（人的新话把某人截了），居中才读得顺 */
+  '的发言被打断',
+])
+
+/**
+ * 居中的那几种事件（按 kind）：圆桌层面的进出、系统动作、被打断、以及「本轮结束」的清单——
+ * 它们都不是某个成员对话题的表态，跟上下成员气泡摆在同一列反而混淆。
+ */
+const CENTERED_KINDS = new Set([
+  'joined',
+  'close',
+  'addressed',
+  'prompt',
+  'revived',
+  'reopen',
+  'interrupt',
+  'turn_end',
 ])
 
 /**
@@ -1604,6 +1659,7 @@ function EventLine({
   peerName,
   createdAt,
   peerById,
+  kind = null,
 }: {
   text: string
   peerId: string | null
@@ -1611,11 +1667,35 @@ function EventLine({
   /** 这条动作发生的时间（话题开始那条标记用它） */
   createdAt: string | null
   peerById: Map<string, MaPeer>
+  /** 事件种类（joined / silent / turn_end …）：分类与渲染按它走，不再依赖中文文案 */
+  kind?: string | null
 }) {
   const kit = usePageKit()
-  const { peer, name, action, reason } = parseEventLine(text, peerId, peerName, peerById)
+  /* 系统提示（全桌已收到受阻 / 报告、正在重新处理）：一条醒目的高亮提示，居中。
+     它不是某个成员对话题的表态，用户最需要一眼看到的正是「其他成员已经在接手」 */
+  if (kind === 'rally') {
+    return (
+      <div className="flex justify-center px-1">
+        <span
+          className="inline-flex max-w-[min(100%,36rem)] min-w-0 items-center gap-1.5 rounded-full px-3 py-1 text-center text-xs leading-relaxed"
+          style={{
+            background: 'color-mix(in srgb, var(--c-accent) 15%, transparent)',
+            color: 'var(--c-accent)',
+          }}
+        >
+          {/* 信号灯钉在最左、相对整块标签垂直居中（多行文案时不再偏到首行） */}
+          <span
+            className="inline-block h-1.5 w-1.5 shrink-0 self-center animate-pulse rounded-full"
+            style={{ background: 'var(--c-accent)' }}
+          />
+          <span className="min-w-0 whitespace-normal break-words">{text}</span>
+        </span>
+      </div>
+    )
+  }
+  const { peer, name, action, reason } = parseEventLine(text, peerId, peerName, peerById, kind)
 
-  if (action === '话题开始') {
+  if (kind === 'topic_open' || action === '话题开始') {
     return (
       <div className="flex justify-center">
         <kit.Badge>{fmtTime(createdAt, true) || '话题开始'}</kit.Badge>
@@ -1623,38 +1703,141 @@ function EventLine({
     )
   }
 
-  /* 徽章是等宽 nowrap 的，模型写的理由可能是一整句——理由单独成 chip 放在徽章旁，长了能换行 */
-  const pill = (
-    <span className="flex flex-wrap items-center gap-1.5">
-      <kit.Badge>
-        {name && (
-          <span className="shrink-0" title={name}>
-            <PeerAvatar
-              name={name}
-              avatar={peer?.avatar ?? null}
-              size="h-4 w-4"
-              textClass="text-[8px]"
-            />
-          </span>
-        )}
-        <span className="ml-1">{action}</span>
-      </kit.Badge>
-      {reason && (
-        <span className="rounded-full bg-fg/[0.07] px-1.5 py-0.5 font-mono text-[10.5px] text-hint">
-          {reason}
-        </span>
-      )}
+  /* 流程转化（提议结束 / 转入沉默）：走卡片式（见 {@link TransitionCard}），
+     kind 优先、老数据（无 kind）退回文案匹配 */
+  const transition =
+    kind === 'propose_end' || action === '提议结束'
+      ? 'propose_end'
+      : kind === 'silent' || action === '转入沉默'
+        ? 'silent'
+        : null
+  if (transition) {
+    return (
+      <TransitionCard
+        kind={transition}
+        name={name}
+        avatar={peer?.avatar ?? null}
+        action={action}
+        reason={reason}
+      />
+    )
+  }
+
+  /* 理由可能是一整句：单独成 chip，限宽并允许换行——绝不撑出消息容器的横向滚动条 */
+  const reasonChip = reason ? (
+    <span className="min-w-0 max-w-full whitespace-normal break-words rounded-full bg-fg/[0.07] px-1.5 py-0.5 font-mono text-2xs leading-relaxed text-hint">
+      {reason}
     </span>
-  )
-  /* 不是成员的主动表态（进出 / 系统动作 / 话题本身）：居中，不占左边那一格头像 */
-  if (CENTERED_ACTIONS.has(action)) {
-    return <div className="flex justify-center">{pill}</div>
+  ) : null
+
+  /* 不是成员的主动表态（进出 / 系统动作 / 本轮结束）：居中，不占左边那一格头像。
+     有 kind 就按它判（协议），老数据退回文案匹配 */
+  const centered = kind ? CENTERED_KINDS.has(kind) : CENTERED_ACTIONS.has(action)
+  if (centered) {
+    /* 自造可换行的 chip：kit.Badge 是 nowrap 的，长文案（如「本轮结束」清单）会撑出横向滚动条 */
+    return (
+      <div className="flex justify-center px-1">
+        <span
+          className="mono inline-flex max-w-[min(100%,40rem)] min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 rounded-full border px-2.5 py-1 text-2xs font-bold tracking-wider uppercase"
+          style={{ borderColor: 'var(--c-line-strong)', color: 'var(--c-muted)' }}
+        >
+          {name && (
+            <span className="shrink-0" title={name}>
+              <PeerAvatar
+                name={name}
+                avatar={peer?.avatar ?? null}
+                size="h-4 w-4"
+                textClass="text-[8px]"
+              />
+            </span>
+          )}
+          <span className="min-w-0 whitespace-normal break-words text-center">{action}</span>
+          {reasonChip}
+        </span>
+      </div>
+    )
   }
   return (
     /* 左边空出头像那一格：状态行于是和上下成员气泡的正文左对齐 */
     <div className="flex items-start gap-2.5">
       <span className={`${BUBBLE_AVATAR_SIZE} shrink-0`} aria-hidden="true" />
-      {pill}
+      <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+        <kit.Badge>
+          {name && (
+            <span className="shrink-0" title={name}>
+              <PeerAvatar
+                name={name}
+                avatar={peer?.avatar ?? null}
+                size="h-4 w-4"
+                textClass="text-[8px]"
+              />
+            </span>
+          )}
+          <span className="ml-1">{action}</span>
+        </kit.Badge>
+        {reasonChip}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * 流程转化卡片：把「提议结束 / 转入沉默」这两种最常出现的表态做成一张卡片——
+ * 头像 + 名字 + 动作 + 理由各归其位，比挤在一条 nowrap 徽章里更好读，也天然限宽（不会撑出横向滚动）。
+ *
+ * <p>目前只适配这两类；其余动作仍走原来的状态行（见 {@link EventLine}）。
+ */
+function TransitionCard({
+  kind,
+  name,
+  avatar,
+  action,
+  reason,
+}: {
+  kind: 'propose_end' | 'silent'
+  name: string | null
+  avatar: string | null
+  action: string
+  reason: string | null
+}) {
+  const end = kind === 'propose_end'
+  return (
+    <div className="flex items-start gap-2.5">
+      <span className={`${BUBBLE_AVATAR_SIZE} shrink-0`} aria-hidden="true" />
+      <div
+        className="flex min-w-0 max-w-[26rem] flex-col gap-1.5 rounded-lg border px-3 py-2"
+        style={{
+          borderColor: end
+            ? 'color-mix(in srgb, var(--c-accent) 45%, var(--c-line))'
+            : 'var(--c-line)',
+          background: end
+            ? 'color-mix(in srgb, var(--c-accent) 8%, transparent)'
+            : 'color-mix(in srgb, var(--c-fg) 4%, transparent)',
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <PeerAvatar name={name ?? '成员'} avatar={avatar} size="h-5 w-5" textClass="text-[9px]" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
+            {name ?? '成员'}
+          </span>
+          <span
+            className="shrink-0 rounded px-1.5 py-0.5 text-2xs font-bold tracking-wide"
+            style={{
+              background: end
+                ? 'var(--c-accent)'
+                : 'color-mix(in srgb, var(--c-fg) 10%, transparent)',
+              color: end ? 'var(--c-accent-fg)' : 'var(--c-muted)',
+            }}
+          >
+            {action}
+          </span>
+        </div>
+        {reason && (
+          <p className="min-w-0 whitespace-normal break-words text-xs leading-relaxed text-fg-2">
+            {reason}
+          </p>
+        )}
+      </div>
     </div>
   )
 }
@@ -1667,25 +1850,37 @@ function showEventLine(
 ): boolean {
   if (msg.role !== 'event') return true
   if (showPresence) return true
+  /* 有 kind 按它判（协议），老数据退回文案匹配 */
+  if (msg.kind) return !NOISY_KINDS.has(msg.kind)
   return !NOISY_ACTIONS.includes(
     parseEventLine(msg.content, msg.peerId, msg.peerName, peerById).action,
   )
 }
 
-/** 一条消息：状态机动作行走居中的说明行，其余（人的话 / 成员发言）走气泡 */
-function MessageItem({
+/**
+ * 一条消息：状态机动作行走状态行 / 转化卡片，其余（人的话 / 成员发言）走气泡。
+ *
+ * <p>用 {@link memo} 包住：虚拟化把渲染量钉在视口内之后，输入框每敲一个字仍会重渲本组件，
+ * 而每条气泡里跑着 ReactMarkdown——memo 让「打字」与列表长度、气泡内容彻底脱钩。
+ * props 必须都是稳定的（msg 取自数组、peerById 是 useMemo、onOpenContext 是 useCallback）。
+ */
+const MessageItem = memo(function MessageItem({
   msg,
   avatar,
   showCot,
   peerById,
-  onClick,
+  allowContext,
+  onOpenContext,
 }: {
   msg: MaMessage
   avatar?: string | null
   showCot: boolean
   /** 状态行要按名字认出主角才能换头像，所以名册得传进来 */
   peerById: Map<string, MaPeer>
-  onClick?: () => void
+  /** 点气泡看原始上下文的开关（默认关） */
+  allowContext: boolean
+  /** 点开一条成员发言时的回调（稳定引用，memo 依赖它保持稳定） */
+  onOpenContext: (m: MaMessage) => void
 }) {
   if (msg.role === 'event') {
     return (
@@ -1695,6 +1890,7 @@ function MessageItem({
         peerName={msg.peerName}
         createdAt={msg.createdAt}
         peerById={peerById}
+        kind={msg.kind ?? null}
       />
     )
   }
@@ -1708,10 +1904,11 @@ function MessageItem({
       trace={msg.trace}
       createdAt={msg.createdAt}
       showCot={showCot}
-      onClick={onClick}
+      /* 只有成员发言才有原始上下文可看（人的话不是一次模型调用）；入口由「⋯」菜单里的开关控制 */
+      onClick={allowContext && msg.role === 'peer' ? () => void onOpenContext(msg) : undefined}
     />
   )
-}
+})
 
 /**
  * 新建会话的选人弹窗：一面头像墙，鼠标移到谁身上、谁就渐入一张卡片（名称 + 备注），
@@ -1751,7 +1948,7 @@ function NewSessionDialog({
             </button>
           }
         />
-        <p className="border-b border-line px-4 py-2 text-[11px] leading-relaxed text-hint">
+        <p className="border-b border-line px-4 py-2 text-xs leading-relaxed text-hint">
           勾选的成员组成这张桌子，没勾的不会出现在这次会话里；一位都不勾就是全体名册。
           选了就定下来——以后往名册里加人，也不会自动加进这张桌子。
         </p>
@@ -1769,7 +1966,7 @@ function NewSessionDialog({
           )}
         </div>
         <div className="flex items-center gap-2 border-t border-line px-4 py-3">
-          <span className="mr-auto text-[11px] text-muted">
+          <span className="mr-auto text-xs text-muted">
             {picked.length > 0 ? `已选 ${picked.length} 位` : '未选 = 全体名册上桌'}
           </span>
           {peers.length > 0 && (
@@ -1824,9 +2021,9 @@ function MemberTile({
           picked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
       >
-        <span className="line-clamp-1 w-full text-[12px] font-medium text-fg">{peer.name}</span>
+        <span className="line-clamp-1 w-full text-sm font-medium text-fg">{peer.name}</span>
         {peer.note && (
-          <span className="line-clamp-3 w-full text-[10.5px] leading-snug text-muted">
+          <span className="line-clamp-3 w-full text-2xs leading-snug text-muted">
             {peer.note}
           </span>
         )}

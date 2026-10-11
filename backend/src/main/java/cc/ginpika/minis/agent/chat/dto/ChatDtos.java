@@ -1,5 +1,6 @@
 package cc.ginpika.minis.agent.chat.dto;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 
 /** AI 会话请求/响应对（ai/ChatService ↔ 前端） */
@@ -15,6 +16,13 @@ public final class ChatDtos {
 
     /** 停止结果：stopped=是否存在进行中的流式生成并被标记停止（false=该会话当前没有在生成的流） */
     public record StopResult(boolean stopped) {
+    }
+
+    /**
+     * 个人待办清单的一项（plan-of-record，由 {@code write_todos} 覆盖式写入）：
+     * 会话页 TODO 卡片读取当前进度用（{@code GET /api/sessions/{id}/todos}）。
+     */
+    public record TodoItem(int seq, String content, String status, String note) {
     }
 
     /** 在途生成快照（断点续传用）：running=true 表示此刻还在生成；
@@ -40,25 +48,27 @@ public final class ChatDtos {
     public record Rewind(String sessionId, int removed) {
     }
 
-    /** GET/POST /api/sessions 项：id=hub 侧 uuid；modelId/promptId/showCot/contextTrace/maxRounds/showRounds
-     *  为「…」菜单在该会话的配置（modelId/promptId 为 null 表示未指定、回退设置页默认项）；
+    /** GET/POST /api/sessions 项：id=hub 侧 uuid；modelId/promptId/agentId/showCot/contextTrace/maxRounds/showRounds
+     *  为「…」菜单在该会话的配置（modelId/promptId 为 null 表示未指定、回退设置页默认项；
+     *  agentId 为 null 表示跟内置 Agent 对话）；
      *  unread=潜意识子代理投递过新消息且用户未查看；
      *  generating=该会话此刻有在途生成（前端据此发现「刚答完」并弹通知，见 ChatLiveStore） */
-    public record SessionItem(String id, String title, String modelId, String promptId, Boolean showCot,
-                              Boolean contextTrace, Integer maxRounds, Boolean showRounds, Boolean unread,
-                              boolean generating, String updatedAt) {
+    public record SessionItem(String id, String title, String modelId, String promptId, String agentId,
+                              Boolean showCot, Boolean contextTrace, Integer maxRounds, Boolean showRounds,
+                              Boolean unread, boolean generating, String updatedAt) {
     }
 
     /** 会话配置（「…」菜单在该会话的选择）：modelId/promptId=null 回退设置页默认项；
+     *  agentId=null 跟内置 Agent 对话（用全局提示词）；
      *  contextTrace=是否把历史思考与工具调用回灌上下文；maxRounds=单次提问的工具调用轮数上限；
      *  showRounds=思维链分段是否在右侧标轮次 */
-    public record SessionConfig(String id, String modelId, String promptId, Boolean showCot,
+    public record SessionConfig(String id, String modelId, String promptId, String agentId, Boolean showCot,
                                 Boolean contextTrace, Integer maxRounds, Boolean showRounds) {
     }
 
     /** PUT /api/sessions/{id}/config body：仅传需要改的字段，null 项保持原值 */
-    public record ConfigRequest(String modelId, String promptId, Boolean showCot, Boolean contextTrace,
-                                Integer maxRounds, Boolean showRounds) {
+    public record ConfigRequest(String modelId, String promptId, String agentId, Boolean showCot,
+                                Boolean contextTrace, Integer maxRounds, Boolean showRounds) {
     }
 
     /** assistant 的一次思考分段：type=reasoning（普通思考，text=思考内容）|
@@ -90,6 +100,28 @@ public final class ChatDtos {
 
     /** DELETE /api/sessions/{id} 返回：removed=一并删除的消息行数 */
     public record SessionDeleted(String sessionId, int removed) {
+    }
+
+    /** 一次 LLM 调用的完整留痕：round=该 Turn 内的第几轮（0 基）；request=当时真正发出的请求体 JSON
+     *  （含 model / messages / tools / stream）；response=收到的响应体 JSON（该轮失败为 null）；
+     *  withTools=该轮是否带工具面（被强制收尾的末轮撤掉 tools 为 false） */
+    public record LlmCall(int round, String request, String response, boolean withTools) {
+    }
+
+    /** 某条回答（一个 Turn）的全部 LLM 调用留痕；calls 按轮次升序 */
+    public record TurnCalls(long replyMessageId, List<LlmCall> calls) {
+    }
+
+    /** 一个 Turn 在请求体 messages 中的切片：from（含）~ to（不含）；source=触发来源
+     *  （USER_INPUT / SUBAGENT_REPORT / HEARTBEAT / PLAN / SYSTEM）；replyMessageId=回答行 id
+     *  （在途 / 未落定为 null，前端据此决定是否展示「请求 / 响应」按钮） */
+    public record TurnSpan(int from, int to, String source, Long replyMessageId) {
+    }
+
+    /** 原始上下文预览：body=按与真实发送完全一致的规则组装的请求体（model + messages + tools）；
+     *  turns=各 Turn 在 messages 中的切片（仅用于前端按 Turn 对齐、并回看某 Turn 的调用留痕，
+     *  不属于请求体本身——复制 JSON 时只取 body） */
+    public record RawContext(ObjectNode body, List<TurnSpan> turns) {
     }
 
     private ChatDtos() {

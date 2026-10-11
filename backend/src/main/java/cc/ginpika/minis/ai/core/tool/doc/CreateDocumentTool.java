@@ -3,6 +3,7 @@ package cc.ginpika.minis.ai.core.tool.doc;
 import cc.ginpika.minis.ai.core.tool.AiTool;
 import cc.ginpika.minis.ai.core.tool.ToolDomain;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Set;
@@ -41,6 +42,18 @@ public class CreateDocumentTool implements AiTool {
     @Override
     public ToolDomain domain() {
         return ToolDomain.DOC;
+    }
+
+    /** 校验节点（STEP 4）：标题 / 正文任一为空都当场拒——空文档入不了检索，只会白占一次分块入库 */
+    @Override
+    public String validate(JsonNode args) {
+        if (args.path("title").asText("").isBlank()) {
+            return "title 为空：请给文档起一个标题（检索与列表都按它指认）。";
+        }
+        if (args.path("content").asText("").isBlank()) {
+            return "content 为空：请给出文档正文（markdown）。";
+        }
+        return null;
     }
 
     @Override

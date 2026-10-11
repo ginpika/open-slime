@@ -1,10 +1,10 @@
 //! 本机后端的生命周期：拉起内置 JRE + fat jar，盯住 stdout 等 READY 握手，再让窗口跳过去。
 //!
-//! 运行时（jlink 裁剪出的 jre/ + minis-backend.jar）由 `scripts/assemble-runtime.*` 组装到
+//! 运行时（jlink 裁剪出的 jre/ + 后端 jar）由 `desktop/assemble-runtime.ps1` 组装到
 //! `desktop/runtime/`，打包时作为 Tauri resources 随应用分发，运行期从 resource_dir 取。
 //! 开发时可用环境变量 `MINIS_DESKTOP_RUNTIME` 直接指向该目录，省去每次重新打包。
 
-use crate::{config, emit_status, navigate, Shell};
+use crate::{config, emit_status, enter_instance, Shell};
 use std::path::{Path, PathBuf};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
@@ -65,7 +65,7 @@ fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
     Err(format!(
-        "未找到内置后端运行时；已尝试：{}。请先执行 desktop/scripts/assemble-runtime.ps1（macOS 为 .sh）",
+        "未找到内置后端运行时；已尝试：{}。请先在 desktop/ 目录执行 assemble-runtime.ps1 组装",
         candidates
             .iter()
             .map(|p| p.display().to_string())
@@ -175,7 +175,7 @@ pub fn start(app: &AppHandle, token: &str) -> Result<(), String> {
                             *shell.port.lock().unwrap() = Some(port);
                         }
                         emit_status(&handle, "ready", &format!("本地服务器已就绪（端口 {port}）"));
-                        navigate(&handle, &format!("http://127.0.0.1:{port}/"));
+                        enter_instance(&handle, &format!("http://127.0.0.1:{port}/"), "local");
                     }
                 }
                 CommandEvent::Stderr(bytes) => {

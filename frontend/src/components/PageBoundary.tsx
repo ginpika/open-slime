@@ -24,8 +24,8 @@ export default class PageBoundary extends Component<
     if (this.state.error) {
       return (
         <div className="rounded-2xl border border-line px-4 py-6">
-          <p className="text-[13px] font-medium text-fg">这一页渲染出错了</p>
-          <p className="mt-2 text-[12px] text-muted">{this.state.error.message}</p>
+          <p className="text-base font-medium text-fg">这一页渲染出错了</p>
+          <p className="mt-2 text-sm text-muted">{this.state.error.message}</p>
           <button
             type="button"
             className={`${btnOutline('rounded-lg')} mt-4`}

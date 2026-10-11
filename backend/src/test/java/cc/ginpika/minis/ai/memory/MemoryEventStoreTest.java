@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import cc.ginpika.minis.ai.llm.EmbeddingClient;
+import cc.ginpika.minis.ai.memory.recall.MemoryRecall;
 import cc.ginpika.minis.ai.memory.store.MemoryEventStore;
 import cc.ginpika.minis.config.LlmProps;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
@@ -69,14 +71,34 @@ class MemoryEventStoreTest {
         MemoryEventStore store = store();
         store.append("chat_message:1", "chat", "user", null, "第一条",
                 MemoryWriter.REF_CHAT_MESSAGE, 1);
-        store.append("sub_exec:9", "exec", "plan", "记忆体检", "结论",
-                MemoryWriter.REF_SUB_EXEC, 9);
+        store.append("task:9", "exec", "plan", "记忆体检", "结论",
+                MemoryWriter.REF_TASK, 9);
         store.append("chat_message:2", "chat", "assistant", null, "最后一条",
                 MemoryWriter.REF_CHAT_MESSAGE, 2);
         /* 同毫秒内连写三行：created_at 并列时按 id 分先后，最新在前 */
         assertEquals("最后一条", store.recent(10).get(0).payload());
-        assertEquals("sub_exec", store.recent(10).get(1).refType());
+        assertEquals("task", store.recent(10).get(1).refType());
         assertEquals("第一条", store.recent(10).get(2).payload());
+    }
+
+    @Test
+    void defaultRecallSkipsBackgroundActors() {
+        MemoryEventStore store = store();
+        store.append("chat_message:1", "chat", "user", "会话", "前台说的话",
+                MemoryWriter.REF_CHAT_MESSAGE, 1);
+        store.append("task:1", "exec", "plan", "记忆体检", "后台跑出来的结论",
+                MemoryWriter.REF_TASK, 1);
+        store.append("task:2", "exec", "agent", "子代理", "后台子代理的结论",
+                MemoryWriter.REF_TASK, 2);
+
+        /* 默认召回（不传 actor）挡掉后台产出——「你对我说过什么」不该被后台自己跑的东西挤占 */
+        List<MemoryEventStore.EventRow> foreground = store.window(
+                null, null, null, null, MemoryRecall.BACKGROUND_ACTORS, 10);
+        assertEquals(1, foreground.size());
+        assertEquals("user", foreground.get(0).actor());
+
+        /* 显式要某一路时以它为准（排除表不再生效） */
+        assertEquals(1, store.window(null, null, null, "plan", 10).size());
     }
 
     @Test

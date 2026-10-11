@@ -1,5 +1,6 @@
 package cc.ginpika.minis.ai.core.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -40,6 +41,17 @@ public interface AiTool {
     }
 
     /**
+     * 风险等级（能力平面 STEP 3）：只读 / 写入 / 执行。
+     *
+     * <p>默认由 {@link #writes()} 推出——写库即 {@link ToolRisk#WRITE}，其余 {@link ToolRisk#READ}；
+     * 「执行」这一档高出写入一截（命令能产生任意副作用），必须由工具显式声明（如 {@code run_command}）。
+     * 授权与沙箱据此放行或拒绝（见 {@code CapabilityGuard}）。
+     */
+    default ToolRisk risk() {
+        return writes() ? ToolRisk.WRITE : ToolRisk.READ;
+    }
+
+    /**
      * 子代理能否调用本工具（默认能）。
      *
      * <p>只有「管子代理本身的工具」为 false——派活、翻过程、创建/改写/删除子代理都属于大模型自己
@@ -58,6 +70,23 @@ public interface AiTool {
      */
     default boolean parallelizable() {
         return false;
+    }
+
+    /**
+     * 调用前的自检（STEP 4 校验节点）：这个工具「现在这次调用」是否可执行，不可执行就回一句可读理由。
+     *
+     * <p>与 {@link #risk()} 的分工：风险等级说「这类工具能把世界改到什么程度」（静态属性，决定要不要授权），
+     * 自检说「这一次的参数能不能落地」（动态判断，如命令为空、要删的对象没给 id）。默认放行（返回 null）——
+     * 只有写入 / 执行类工具才需要覆写它，且应当只做零成本的参数自检，绝不在这里调模型
+     * （架构文档 STEP 4：只给写入 / 执行插校验，不给所有回答统一加一轮自检）。
+     *
+     * <p>由 {@code ToolValidator} 在写入 / 执行前调用：拒了就当一条 tool 结果回给模型，不落执行。
+     *
+     * @param args 本次调用的参数（可能为空对象 / 字段缺失，实现须自行容错）
+     * @return 拒绝理由（可读）；放行返回 null
+     */
+    default String validate(JsonNode args) {
+        return null;
     }
 
     /** parameters 对象 schema（type=object + properties + required） */

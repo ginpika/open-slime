@@ -14,8 +14,8 @@ export const BRAND = {
   nameUpper: raw.displayName.toUpperCase(),
   /** 一句话标语 */
   tagline: raw.tagline,
-  /** 浏览器标签标题：<名称> · <后缀> */
-  title: `${raw.displayName} · ${raw.webTitleSuffix}`,
+  /** 浏览器标签标题：<名称> · <后缀>（后缀为空时仅显示名称） */
+  title: raw.webTitleSuffix ? `${raw.displayName} · ${raw.webTitleSuffix}` : raw.displayName,
   /** 页脚：<名称> · <标语> */
   footer: `${raw.displayName} · ${raw.tagline}`,
   /** 技术标识（小写）：用于容器名等 */

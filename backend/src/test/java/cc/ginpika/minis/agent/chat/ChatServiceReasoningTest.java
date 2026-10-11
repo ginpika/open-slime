@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import cc.ginpika.minis.agent.context.ChatProtocol;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -26,7 +27,7 @@ class ChatServiceReasoningTest {
     void toolCallRoundWithoutReasoningGetsEmptyString() {
         ObjectNode round = toolCallRound();
 
-        JsonNode out = ChatService.withReasoningForToolCalls(round);
+        JsonNode out = ChatProtocol.withReasoningForToolCalls(round);
 
         assertTrue(out.has("reasoning_content"), "缺该字段会被供应商拒绝");
         assertEquals("", out.path("reasoning_content").asText());
@@ -38,7 +39,7 @@ class ChatServiceReasoningTest {
         ObjectNode round = toolCallRound();
         round.put("reasoning_content", "先查一下再答。");
 
-        JsonNode out = ChatService.withReasoningForToolCalls(round);
+        JsonNode out = ChatProtocol.withReasoningForToolCalls(round);
 
         assertEquals("先查一下再答。", out.path("reasoning_content").asText());
     }
@@ -50,7 +51,7 @@ class ChatServiceReasoningTest {
         round.put("role", "assistant");
         round.put("content", "直接回答");
 
-        JsonNode out = ChatService.withReasoningForToolCalls(round);
+        JsonNode out = ChatProtocol.withReasoningForToolCalls(round);
 
         assertFalse(out.has("reasoning_content"));
     }

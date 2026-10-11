@@ -242,6 +242,9 @@ public class OpenAiChatClient {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoning = new StringBuilder();
         ArrayNode toolCalls = objectMapper.createArrayNode();
+        /* 正文的流式解析器：把供应商漏转的原生工具调用标记（DSML 文本）就地识别出来。
+           它逐字符推进，标记被 SSE 拆成任意片段也能正确拼接；块内字符一律不进入正文。 */
+        DsmlToolCallParser dsml = new DsmlToolCallParser(objectMapper);
         boolean anyDelta = false;
         /* 真实用量（usage 尾包；部分供应商只在最后一包给全量，故取最后一个） */
         TokenUsageService.Usage usage = null;
@@ -277,19 +280,22 @@ public class OpenAiChatClient {
                 }
                 anyDelta = true;
                 boolean got = false;
-                String c = delta.path("content").asText(null);
-                if (c != null && !c.isEmpty()) {
-                    content.append(c);
+                /* 正文先过解析器：它只放行「人话」，工具调用标记被扣下（不推给页面、不进正文） */
+                String shown = dsml.feed(delta.path("content").asText(null));
+                if (!shown.isEmpty()) {
+                    content.append(shown);
                     got = true;
+                    if (listener != null) {
+                        listener.onDelta(null, shown);
+                    }
                 }
                 String r = delta.path("reasoning_content").asText(null);
                 if (r != null && !r.isEmpty()) {
                     reasoning.append(r);
                     got = true;
-                }
-                if (got && listener != null) {
-                    listener.onDelta(r == null || r.isEmpty() ? null : r,
-                            c == null || c.isEmpty() ? null : c);
+                    if (listener != null) {
+                        listener.onDelta(r, null);
+                    }
                 }
                 got |= mergeToolCalls(delta.path("tool_calls"), toolCalls);
                 if (got) {
@@ -300,10 +306,29 @@ public class OpenAiChatClient {
         if (!anyDelta) {
             throw new IOException("流式响应无 delta 数据");
         }
+        /* 收尾：把解析器扣下的调用（含跨 chunk 拼好的标记）交出来 */
+        DsmlToolCallParser.Result tail = dsml.finish();
+        if (!tail.visible().isEmpty()) {
+            content.append(tail.visible());
+            if (listener != null) {
+                listener.onDelta(null, tail.visible());
+            }
+        }
+        /* 检测逻辑：结构化 tool_calls 为空 + 正文里解析出了 DSML 工具调用 → 注入 assistant.tool_calls，
+           并把结束原因从 stop 改判为 tool_calls（Hermes / Cherry Studio 同款：不然下游当普通回答，工具不会跑） */
+        if (toolCalls.isEmpty() && !tail.calls().isEmpty()) {
+            tail.calls().forEach(toolCalls::add);
+            if (finishReason == null || "stop".equals(finishReason)) {
+                finishReason = "tool_calls";
+            }
+            log.warn("正文里检测到原生工具调用标记（DSML）：已解析为 {} 次工具调用，finish_reason 改判为 tool_calls",
+                    toolCalls.size());
+        }
+        String text = content.toString();
         ObjectNode message = objectMapper.createObjectNode();
         message.put("role", "assistant");
-        if (content.length() > 0) {
-            message.put("content", content.toString());
+        if (!text.isEmpty()) {
+            message.put("content", text);
         } else {
             message.putNull("content");
         }

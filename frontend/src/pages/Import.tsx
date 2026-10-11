@@ -35,7 +35,7 @@ function frontMatterTitle(content: string): string | null {
   return null
 }
 
-/** 表单控件基类：圆角/描边/字体全部走令牌，因此五套主题自适应 */
+/** 表单控件基类：圆角/描边/字体全部走令牌，因此各主题自适应 */
 const FIELD =
   'w-full rounded-md border border-line bg-bg px-3.5 py-2.5 text-base text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25'
 

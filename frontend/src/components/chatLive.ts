@@ -53,8 +53,6 @@ export type LiveChat = {
 /* ---------------- 仓 + 订阅 ---------------- */
 
 const live = new Map<string, LiveChat>()
-/** 派过子代理、还在等回报的会话：生成结束后仍保留，会话页据此继续轮询把回报刷出来 */
-const awaiting = new Set<string>()
 const listeners = new Set<() => void>()
 
 function emit(): void {
@@ -87,11 +85,6 @@ export function getLive(sessionId: string | null): LiveChat | null {
 /** 丢弃某会话的快照：生成已落定、且要改以会话历史（数据库）为准时调用 */
 export function clearLive(sessionId: string): void {
   if (live.delete(sessionId)) emit()
-}
-
-/** 该会话派出去的子代理是否还在等回报 */
-export function isAwaitingReport(sessionId: string | null): boolean {
-  return sessionId !== null && awaiting.has(sessionId)
 }
 
 /* ---------------- 会话页正在看哪条会话（供通知抑制） ---------------- */
@@ -128,11 +121,6 @@ function emitSettled(sessionId: string): void {
 /** 订阅某会话的生成快照：跨组件挂载存活，重新进入会话即可拿回进度 */
 export function useLiveChat(sessionId: string | null): LiveChat | null {
   return useSyncExternalStore(subscribe, () => getLive(sessionId))
-}
-
-/** 订阅「是否在等子代理回报」（页面据此轮询会话列表） */
-export function useAwaitingReport(sessionId: string | null): boolean {
-  return useSyncExternalStore(subscribe, () => isAwaitingReport(sessionId))
 }
 
 /* ---------------- 生成引擎 ---------------- */
@@ -256,12 +244,6 @@ export function startChat(o: StartArgs): void {
                 { type: 'tool', text: null, name: tool.name, args: tool.args, round: curRound },
               ],
             }))
-            /* 对话侧派活是非阻塞的：结论晚些作为一条新消息投回本会话，
-               记下是哪个会话在等回报，好让会话页轮询把它刷出来 */
-            if (tool.name === 'delegate_subagent') {
-              awaiting.add(o.sessionId)
-              emit()
-            }
           },
         },
         ac.signal,

@@ -6,11 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import cc.ginpika.minis.agent.chat.store.ChatMessageStore;
-import cc.ginpika.minis.agent.runtime.ExecStore;
-import cc.ginpika.minis.agent.subconscious.SubconsciousInjectors;
-import cc.ginpika.minis.agent.subconscious.store.PlanStore;
-import cc.ginpika.minis.ai.knowledge.store.GraphStore;
 import cc.ginpika.minis.ai.llm.EmbeddingClient;
 import cc.ginpika.minis.ai.memory.MemoryEmbeddingWriter;
 import cc.ginpika.minis.ai.memory.MemoryWriter;
@@ -158,8 +153,8 @@ class MemoryRecallTest {
                 MemoryWriter.REF_CHAT_MESSAGE, 1);
         f.events.append("chat_message:2", "chat", "assistant", "闲聊", "晚饭吃火锅吧",
                 MemoryWriter.REF_CHAT_MESSAGE, 2);
-        f.events.append("sub_exec:3", "exec", "plan", "旧计划", "线性代数总结",
-                MemoryWriter.REF_SUB_EXEC, 3);
+        f.events.append("task:3", "exec", "plan", "旧计划", "线性代数总结",
+                MemoryWriter.REF_TASK, 3);
         long now = System.currentTimeMillis();
         f.setCreatedAt(1, now - DAY);
         f.setCreatedAt(2, now - 1_000);
@@ -223,8 +218,8 @@ class MemoryRecallTest {
         Fixture f = new Fixture();
         f.events.append("chat_message:1", "chat", "user", "会话", "欠账的旧事件",
                 MemoryWriter.REF_CHAT_MESSAGE, 1);
-        f.events.append("sub_exec:2", "exec", "plan", "计划", "结论",
-                MemoryWriter.REF_SUB_EXEC, 2);
+        f.events.append("task:2", "exec", "plan", "计划", "结论",
+                MemoryWriter.REF_TASK, 2);
         /* 旧模型留下的行不算「已有向量」，重算覆盖 */
         f.vectors.save(2, "old-model", new float[]{1f, 0f});
 
@@ -243,7 +238,7 @@ class MemoryRecallTest {
     }
 
     @Test
-    void injectorRerouteKeepsM0BehaviorAndGainsSemanticOrder() {
+    void queryDrivesSemanticOrderWhileBlankFallsBackToTimeOrder() {
         Fixture f = new Fixture();
         f.events.append("chat_message:1", "chat", "user", "会话", "记忆维护注意事项",
                 MemoryWriter.REF_CHAT_MESSAGE, 1);
@@ -255,24 +250,40 @@ class MemoryRecallTest {
         f.vectors.save(1, STUB_MODEL, new float[]{1f, 0f});
         f.vectors.save(2, STUB_MODEL, new float[]{0f, 1f});
         f.embedder = t -> t.contains("记忆维护") ? new float[]{1f, 0f} : new float[]{0f, 1f};
+        MemoryRecall recall = f.recall();
 
-        /* documents/chunks 两个重依赖在 memory() 路径不会被触碰，占位 null 即可 */
-        SubconsciousInjectors injectors = new SubconsciousInjectors(f.jdbc, null, null,
-                new GraphStore(f.jdbc, new ObjectMapper()), new PlanStore(f.jdbc),
-                new ExecStore(f.jdbc), new ChatMessageStore(f.jdbc), f.recall());
+        /* 空 query（注入器退役后由调用方直接决定）：纯时间倒序，最新的在前 */
+        List<MemoryRecall.Hit> timeOrder = recall.recall("  ", null, null, null, null, 10);
+        assertEquals("晚饭吃火锅吧", timeOrder.get(0).event().payload());
 
-        /* 主会话路径（无计划）+ 未配置向量 = M0 行为：时间倒序、行格式不变 */
-        f.configured = false;
-        String m0 = injectors.load("slot", "memory", "10", null);
-        assertTrue(m0.startsWith("- "));
-        assertTrue(m0.contains("〔用户·会话〕"));
-        assertTrue(m0.indexOf("晚饭吃火锅吧") < m0.indexOf("记忆维护注意事项"));
+        /* 语义 query：与它相关的旧事件浮到首位（query 由调用方传入，不再经注入器） */
+        List<MemoryRecall.Hit> semantic = recall.recall("负责记忆维护", null, null, null, null, 10);
+        assertEquals("记忆维护注意事项", semantic.get(0).event().payload());
+    }
 
-        /* 计划路径 + 已配置：与计划正文语义相关的旧事件浮到首位 */
-        f.configured = true;
-        PlanStore.PlanRow plan = new PlanStore.PlanRow("p1", "记忆维护", "system",
-                "负责记忆维护的编制", null, null, null, null, null, null, 0, null);
-        String m1 = injectors.load("slot", "memory", "10", plan);
-        assertTrue(m1.indexOf("记忆维护注意事项") < m1.indexOf("晚饭吃火锅吧"));
+    /** 默认召回挡掉后台产出（心跳 / 职责 / 子代理）；显式点名来源时以它为准、排除不再生效 */
+    @Test
+    void defaultRecallExcludesBackgroundButExplicitActorWins() {
+        Fixture f = new Fixture();
+        f.events.append("chat_message:1", "chat", "user", "会话", "你说过的话",
+                MemoryWriter.REF_CHAT_MESSAGE, 1);
+        f.events.append("task:1", "exec", "plan", "记忆体检", "职责跑出来的结论",
+                MemoryWriter.REF_TASK, 1);
+        f.events.append("task:2", "exec", "agent", "子代理", "子代理跑出来的结论",
+                MemoryWriter.REF_TASK, 2);
+        MemoryRecall recall = f.recall();
+
+        /* 不指定来源：只剩前台那条——「你跟我说过什么」不被后台产出挤占 */
+        List<MemoryRecall.Hit> foreground = recall.recall("说了什么", null, null, null, null, 10);
+        assertEquals(1, foreground.size());
+        assertEquals("user", foreground.get(0).event().actor());
+
+        /* 显式点名 plan：以它为准 */
+        List<MemoryRecall.Hit> plans = recall.recall("结论", null, null, null, "plan", 10);
+        assertEquals(1, plans.size());
+        assertEquals("plan", plans.get(0).event().actor());
+
+        /* 排除表为空 = 全都要（后台的也回来） */
+        assertEquals(3, f.events.window(null, null, null, null, List.of(), 10).size());
     }
 }

@@ -1,5 +1,6 @@
 package cc.ginpika.minis.ai.knowledge.recall;
 
+import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.tool.doc.SearchVectorChunksTool;
 import cc.ginpika.minis.ai.core.tool.graph.ExploreSubgraphTool;
 import cc.ginpika.minis.ai.core.tool.graph.QueryEntityPathTool;
@@ -68,8 +69,9 @@ public class RagRecallRecorder {
         }
         String text = result == null ? "" : result;
         try {
+            /* 归属到发起这次召回的那个 Agent（执行最外层用 AgentScope 圈定）；圈不定时为 null */
             store.append(channel, tool, source == null || source.isBlank() ? "unknown" : source,
-                    argsJson, clip(text), text.length());
+                    AgentScope.get(), argsJson, clip(text), text.length());
         } catch (RuntimeException e) {
             log.warn("RAG 召回留痕写入失败（不影响检索）：{} {}", tool, e.getMessage());
         }

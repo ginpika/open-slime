@@ -22,13 +22,13 @@ import org.springframework.stereotype.Repository;
 public class HubSessionStore {
 
     public record HubRow(String id, String title, String mode, String modelId, String promptId,
-                         boolean showCot, boolean contextTrace, int maxRounds, boolean showRounds,
-                         boolean unread, Long createdAt, Long updatedAt) {
+                         String agentId, boolean showCot, boolean contextTrace, int maxRounds,
+                         boolean showRounds, boolean unread, Long createdAt, Long updatedAt) {
     }
 
     private static final String COLS =
-            "id, title, mode, model_id, prompt_id, show_cot, context_trace, max_rounds, show_rounds, "
-                    + "unread, created_at, updated_at";
+            "id, title, mode, model_id, prompt_id, agent_id, show_cot, context_trace, max_rounds, "
+                    + "show_rounds, unread, created_at, updated_at";
 
     private final JdbcTemplate jdbc;
 
@@ -51,7 +51,7 @@ public class HubSessionStore {
     }
 
     /** 更新会话配置（「…」菜单选择）：仅更新非 null 项，未传的保持原值 */
-    public void updateConfig(String hubId, String modelId, String promptId, Boolean showCot,
+    public void updateConfig(String hubId, String modelId, String promptId, String agentId, Boolean showCot,
                              Boolean contextTrace, Integer maxRounds, Boolean showRounds) {
         List<String> sets = new ArrayList<>();
         List<Object> args = new ArrayList<>();
@@ -62,6 +62,11 @@ public class HubSessionStore {
         if (promptId != null) {
             sets.add("prompt_id = ?");
             args.add(promptId);
+        }
+        if (agentId != null) {
+            /* 空串 = 清除，回到内置 Agent（与 model_id/prompt_id 的「空=回退默认」同口径，落 NULL 更干净） */
+            sets.add("agent_id = ?");
+            args.add(agentId.isBlank() ? null : agentId);
         }
         if (showCot != null) {
             sets.add("show_cot = ?");
@@ -94,18 +99,19 @@ public class HubSessionStore {
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
-    /** 最近一个会话（按 COALESCE(updated_at, created_at) 倒序） */
+    /** 最近一个首页会话（按 COALESCE(updated_at, created_at) 倒序）；圆桌会话（mode='multi-agent'）不算 */
     public Optional<HubRow> latest() {
         List<HubRow> rows = jdbc.query(
-                "SELECT " + COLS + " FROM hub_session "
+                "SELECT " + COLS + " FROM hub_session WHERE mode = 'ai' "
                         + "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 1",
                 HubSessionStore::map);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
+    /** 首页「最近会话」列表：只含 mode='ai' 的会话（圆桌由圆桌页单独查，见 RoundtableSessionStore） */
     public List<HubRow> listAll() {
         return jdbc.query(
-                "SELECT " + COLS + " FROM hub_session "
+                "SELECT " + COLS + " FROM hub_session WHERE mode = 'ai' "
                         + "ORDER BY COALESCE(updated_at, created_at) DESC",
                 HubSessionStore::map);
     }
@@ -152,6 +158,7 @@ public class HubSessionStore {
                 rs.getString("mode"),
                 rs.getString("model_id"),
                 rs.getString("prompt_id"),
+                rs.getString("agent_id"),
                 rs.getInt("show_cot") != 0,
                 rs.getInt("context_trace") != 0,
                 rs.getInt("max_rounds"),

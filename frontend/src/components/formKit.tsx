@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 /** 表单控件基底：与 Import 页保持一致的输入框风格 */
 export const INPUT =
-  'w-full rounded-md border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30'
+  'w-full rounded-md border border-line bg-bg px-3 py-2 text-base text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-secondary focus:ring-2 focus:ring-secondary/30'
 
 export function Field({
   label,
@@ -19,11 +19,11 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint">
+      <span className="mb-1 block text-xs font-medium uppercase tracking-[0.12em] text-faint">
         {label}
       </span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-hint">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-hint">{hint}</span>}
     </label>
   )
 }
@@ -98,7 +98,7 @@ export function Select({
                 onChange(o.value)
                 setOpen(false)
               }}
-              className={`block w-full cursor-pointer truncate rounded px-2.5 py-2 text-left text-[13px] transition ${
+              className={`block w-full cursor-pointer truncate rounded px-2.5 py-2 text-left text-base transition ${
                 o.value === value
                   ? 'bg-accent/10 font-medium text-fg'
                   : 'text-muted hover:bg-fg/5 hover:text-fg'
@@ -133,7 +133,7 @@ export function ModeBtn({
         active ? 'border-secondary bg-secondary/10' : 'border-line hover:border-line-strong'
       }`}
     >
-      <span className="flex items-center gap-2 text-[13px] font-semibold text-fg">
+      <span className="flex items-center gap-2 text-base font-semibold text-fg">
         <span
           className={`h-3 w-3 shrink-0 rounded-full border ${
             active ? 'border-secondary bg-secondary' : 'border-line-strong'
@@ -141,7 +141,7 @@ export function ModeBtn({
         />
         {title}
       </span>
-      <span className="mt-1 block text-[11px] leading-relaxed text-faint">{desc}</span>
+      <span className="mt-1 block text-xs leading-relaxed text-faint">{desc}</span>
     </button>
   )
 }

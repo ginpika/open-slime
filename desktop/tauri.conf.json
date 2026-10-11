@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "minis",
+  "productName": "Slime",
   "version": "0.1.0",
   "identifier": "cc.ginpika.minis",
   "build": {
@@ -8,7 +8,8 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [],
+    "windows": [
+    ],
     "security": {
       "csp": null
     }

@@ -43,7 +43,6 @@ export function EndfieldThemePanel({
     !!st.override.seed.accent ||
     !!st.override.seed.base ||
     !!st.override.fontSans ||
-    !!st.override.fontMono ||
     !!st.override.headingStyle
 
   return (

@@ -70,7 +70,7 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
         trigger: 'axis',
         backgroundColor: c.bg,
         borderColor: c.line,
-        textStyle: { color: c.fg, fontSize: 12 },
+        textStyle: { color: c.fg, fontSize: 13 },
         valueFormatter: (v) => Number(v).toLocaleString('zh-CN'),
       },
       legend: {
@@ -79,7 +79,7 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
         icon: 'roundRect',
         itemWidth: 10,
         itemHeight: 3,
-        textStyle: { color: c.muted, fontSize: 11 },
+        textStyle: { color: c.muted, fontSize: 12 },
       },
       xAxis: {
         type: 'category',
@@ -87,14 +87,14 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
         data: labels,
         axisLine: { lineStyle: { color: c.line } },
         axisTick: { show: false },
-        axisLabel: { color: c.faint, fontSize: 11, hideOverlap: true },
+        axisLabel: { color: c.faint, fontSize: 12, hideOverlap: true },
       },
       yAxis: {
         type: 'value',
         axisLine: { show: false },
         axisTick: { show: false },
         splitLine: { lineStyle: { color: c.line, opacity: 0.6 } },
-        axisLabel: { color: c.faint, fontSize: 11, formatter: axisLabel },
+        axisLabel: { color: c.faint, fontSize: 12, formatter: axisLabel },
       },
       series: [series('输入', c.hint, prompt), series('输出', c.accent, completion)],
     }

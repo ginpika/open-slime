@@ -487,7 +487,7 @@ function WorkspaceDialog({
             onChange={(e) => setEnabled(e.target.checked)}
             className="h-3.5 w-3.5 accent-[color:var(--c-accent)]"
           />
-          <span className="text-[12px] text-muted">
+          <span className="text-sm text-muted">
             启用（模型可见可用；不启用则模型完全看不到这台环境）
           </span>
         </label>
@@ -667,7 +667,7 @@ function FileBrowser({
                   type="button"
                   onClick={() => (e.dir ? setSegments((s) => [...s, e.name]) : void openFile(e.name))}
                   title={e.name}
-                  className="min-w-0 flex-1 truncate text-left text-[13px] text-fg transition hover:underline"
+                  className="min-w-0 flex-1 truncate text-left text-base text-fg transition hover:underline"
                 >
                   {e.name}
                 </button>
@@ -743,7 +743,7 @@ function FileBrowser({
               </p>
             )}
             {!previewLoading && preview && !preview.binary && (
-              <pre className="scrollbar-slim max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-[11.5px] leading-5 text-muted">
+              <pre className="scrollbar-slim max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-xs leading-5 text-muted">
                 {preview.content?.length ? preview.content : '（空文件）'}
               </pre>
             )}
@@ -958,7 +958,7 @@ export default function Workspace() {
                       className="block w-full text-left"
                     >
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[13px] font-semibold text-fg">{t.name}</span>
+                        <span className="text-base font-semibold text-fg">{t.name}</span>
                         <kit.Badge>{t.kind}</kit.Badge>
                         {t.enabled ? (
                           <kit.Badge tone="ok">已启用</kit.Badge>
@@ -1067,7 +1067,7 @@ export default function Workspace() {
                   {lastRun.timedOut && <kit.Badge tone="warn">已超时终止</kit.Badge>}
                   {lastRun.truncated && <kit.Badge tone="warn">输出已截断</kit.Badge>}
                 </div>
-                <pre className="scrollbar-slim mt-2 max-h-[45vh] select-text overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-[11.5px] leading-5 text-muted">
+                <pre className="scrollbar-slim mt-2 max-h-[45vh] select-text overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-xs leading-5 text-muted">
                   {lastRun.stdout?.trim() || '（无输出）'}
                   {lastRun.stderr?.trim() ? `\n--- stderr ---\n${lastRun.stderr.trim()}` : ''}
                 </pre>

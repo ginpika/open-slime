@@ -1,6 +1,7 @@
 package cc.ginpika.minis.ai.core.tool.terminal;
 
 import cc.ginpika.minis.ai.core.tool.AiTool;
+import cc.ginpika.minis.ai.core.tool.ToolDomain;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -35,6 +36,12 @@ public class ListTerminalsTool implements AiTool {
     @Override
     public Set<ToolSurface> surfaces() {
         return Set.of(ToolSurface.CHAT, ToolSurface.HEARTBEAT);
+    }
+
+    /** 与 {@link RunCommandTool} 同属终端能力域：路由选「终端」时两件一起进 */
+    @Override
+    public ToolDomain domain() {
+        return ToolDomain.TERMINAL;
     }
 
     /** 只读的「能碰什么」清单，与执行权同进同出：不给子代理 */

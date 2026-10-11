@@ -606,7 +606,7 @@ export default function GraphCanvas({
                   <text
                     x={(x1 + 2 * cx + x2) / 4}
                     y={(y1 + 2 * cy + y2) / 4 - 4}
-                    fontSize="13"
+                    fontSize="14"
                     textAnchor="middle"
                     style={{
                       pointerEvents: 'none',
@@ -671,7 +671,7 @@ export default function GraphCanvas({
                 <text
                   x={p.x}
                   y={p.y + r + 14}
-                  fontSize="13"
+                  fontSize="14"
                   fontWeight={isSel || isCenter ? 700 : 400}
                   textAnchor="middle"
                   style={{

@@ -107,7 +107,7 @@ export default function Articles() {
             <kit.Row
               key={a.url}
               href={`#/article/${encodeURIComponent(a.url)}`}
-              className="group items-start gap-4"
+              className="articles-row group items-start gap-4"
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-md font-semibold text-fg transition group-hover:text-accent group-hover:underline group-hover:underline-offset-4">

@@ -542,7 +542,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
                 </div>
                 {inspect.totals[inspect.tab] >
                   (inspect.graphs[inspect.tab]?.nodes.length ?? 0) - 1 && (
-                  <p className="text-[11px] leading-relaxed text-faint">
+                  <p className="text-xs leading-relaxed text-faint">
                     该实体共 {inspect.totals[inspect.tab]} 个直接关联，图幅有限仅展示前{' '}
                     {Math.max(0, (inspect.graphs[inspect.tab]?.nodes.length ?? 1) - 1)} 个；
                     完整邻域请前往图谱页查看。
@@ -766,7 +766,7 @@ function TripleCard({
               <text
                 x="160"
                 y="54.5"
-                fontSize="13.5"
+                fontSize="14"
                 fontWeight="500"
                 textAnchor="middle"
                 style={{ fill: 'var(--c-hint)' }}
@@ -811,7 +811,7 @@ function TripleCard({
               <text
                 x={cx}
                 y="98"
-                fontSize="13.5"
+                fontSize="14"
                 textAnchor="middle"
                 style={{
                   paintOrder: 'stroke',
@@ -868,7 +868,7 @@ function TripleCard({
                   </button>
                 )
               })}
-              <p className="w-full text-[11px] leading-relaxed text-faint">
+              <p className="w-full text-xs leading-relaxed text-faint">
                 点击标签可忽略对应属性，被忽略的不会随提交写入。
               </p>
             </div>

@@ -248,7 +248,7 @@ export default function DataFlow() {
                     style={{ fill: 'var(--c-fg)' }}
                     opacity={0.03}
                   />
-                  <text x={18} y={y - LVL / 2 + 34} style={{ fill: 'var(--c-faint)', fontSize: 11 }}>
+                  <text x={18} y={y - LVL / 2 + 34} style={{ fill: 'var(--c-faint)', fontSize: 12 }}>
                     L{l} · {g.layerLabels[l]}
                   </text>
                 </g>
@@ -316,7 +316,7 @@ export default function DataFlow() {
                     className="select-none"
                     style={{
                       fill: 'var(--c-fg)',
-                      fontSize: n.kind === 'table' ? 9.5 : 10.5,
+                      fontSize: n.kind === 'table' ? 11 : 12,
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                     }}
                   >
@@ -331,7 +331,7 @@ export default function DataFlow() {
         {/* 图例 */}
         <div className="pointer-events-none absolute left-3 bottom-3 flex max-w-[70%] flex-wrap gap-x-3.5 gap-y-1 rounded-md border border-line bg-bg/90 px-3 py-2 backdrop-blur-sm">
           {legendKinds.map((k) => (
-            <span key={k} className="flex items-center gap-1.5 text-[10.5px] text-muted">
+            <span key={k} className="flex items-center gap-1.5 text-2xs text-muted">
               <span className="h-2 w-2 rounded-full" style={{ background: KIND_META[k].color }} />
               {KIND_META[k].label}
             </span>
@@ -343,7 +343,7 @@ export default function DataFlow() {
           <button
             type="button"
             onClick={() => zoomBy(1.25)}
-            className="flex h-7 w-7 items-center justify-center rounded border border-line bg-bg text-[14px] font-semibold text-muted transition hover:border-line-strong hover:text-fg"
+            className="flex h-7 w-7 items-center justify-center rounded border border-line bg-bg text-md font-semibold text-muted transition hover:border-line-strong hover:text-fg"
             aria-label="放大"
           >
             +
@@ -351,7 +351,7 @@ export default function DataFlow() {
           <button
             type="button"
             onClick={() => zoomBy(1 / 1.25)}
-            className="flex h-7 w-7 items-center justify-center rounded border border-line bg-bg text-[14px] font-semibold text-muted transition hover:border-line-strong hover:text-fg"
+            className="flex h-7 w-7 items-center justify-center rounded border border-line bg-bg text-md font-semibold text-muted transition hover:border-line-strong hover:text-fg"
             aria-label="缩小"
           >
             −
@@ -359,7 +359,7 @@ export default function DataFlow() {
           <button
             type="button"
             onClick={fit}
-            className="flex h-7 w-7 items-center justify-center rounded border border-line bg-bg text-[12px] font-semibold text-muted transition hover:border-line-strong hover:text-fg"
+            className="flex h-7 w-7 items-center justify-center rounded border border-line bg-bg text-sm font-semibold text-muted transition hover:border-line-strong hover:text-fg"
             aria-label="适配视口"
           >
             ⤢
@@ -367,7 +367,7 @@ export default function DataFlow() {
         </div>
 
         {/* 操作提示 */}
-        <span className="pointer-events-none absolute right-3 top-2.5 text-[10.5px] text-faint">
+        <span className="pointer-events-none absolute right-3 top-2.5 text-2xs text-faint">
           滚轮缩放 · 拖拽平移 · 悬停查看设计含义
         </span>
       </div>
@@ -380,22 +380,22 @@ export default function DataFlow() {
         >
           <div className="flex flex-wrap items-center gap-2">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: KIND_META[tip.n.kind].color }} />
-            <span className="font-mono text-[13px] font-semibold text-fg">{tip.n.name}</span>
-            <span className="rounded bg-fg/8 px-1.5 py-px text-[10px] text-muted">{KIND_META[tip.n.kind].label}</span>
-            <span className="ml-auto shrink-0 text-[10px] text-faint">L{tip.n.layer} · {g.layerLabels[tip.n.layer]}</span>
+            <span className="font-mono text-base font-semibold text-fg">{tip.n.name}</span>
+            <span className="rounded bg-fg/8 px-1.5 py-px text-2xs text-muted">{KIND_META[tip.n.kind].label}</span>
+            <span className="ml-auto shrink-0 text-2xs text-faint">L{tip.n.layer} · {g.layerLabels[tip.n.layer]}</span>
           </div>
-          <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted">
+          <p className="mt-2.5 text-xs leading-relaxed text-muted">
             <span className="font-medium text-fg">为何存在 · </span>
             {tip.n.why}
           </p>
           {tip.n.flow && (
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
+            <p className="mt-1.5 text-xs leading-relaxed text-muted">
               <span className="font-medium text-fg">数据流 · </span>
               {tip.n.flow}
             </p>
           )}
           {tip.n.sink && (
-            <p className="mt-1.5 font-mono text-[10.5px] leading-relaxed text-faint">
+            <p className="mt-1.5 font-mono text-2xs leading-relaxed text-faint">
               <span className="font-medium text-fg">落点 · </span>
               {tip.n.sink}
             </p>

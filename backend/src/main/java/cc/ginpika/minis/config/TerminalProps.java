@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>这是「Agent 直接控制所在环境」这一能力面的全局护栏默认值。<b>没有全局总开关</b>：
  * 能力可用与否完全由逐目标开关（{@code term_target.enabled}）决定——想让模型用哪台环境
- * 就开哪台，而超时与输出上限由这里兜底（与 {@code sub_plan} 逐份编制按需派出同一个取舍：
+ * 就开哪台，而超时与输出上限由这里兜底（与 {@code heartbeat_plan} 逐份编制按需派出同一个取舍：
  * 编制才是开关，而不是一个总闸）。
  *
  * <p>目标清单（有哪些环境、凭证是什么）不在配置里，而在库表 {@code term_target}：

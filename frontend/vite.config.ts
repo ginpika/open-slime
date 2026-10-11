@@ -7,7 +7,9 @@ import { defineConfig } from 'vite'
 const branding = JSON.parse(
   readFileSync(fileURLToPath(new URL('../branding.json', import.meta.url)), 'utf-8'),
 )
-const webTitle = `${branding.displayName} · ${branding.webTitleSuffix}`
+const webTitle = branding.webTitleSuffix
+  ? `${branding.displayName} · ${branding.webTitleSuffix}`
+  : branding.displayName
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -30,5 +32,8 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    allowedHosts:[
+      'local.minis.ginpika.cc'
+    ]
   },
 })

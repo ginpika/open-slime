@@ -36,8 +36,166 @@
         }
       })()
     </script>
+    <style>
+      /* ==========================================================================
+       * 桌面壳首帧骨架（仅本机桌面壳，见下面的开关脚本）
+       *
+       * 背景：换文档到 React 挂载之间，窗口里还没有外壳——首帧只有 canvas 底色
+       * （body 的 --c-bg），于是浅色主题下会出现几帧「整窗纯白」，紧接着外壳挂载又是一次
+       * 形状跳变（整块纯色 → 12px 圈 + 深色菜单栏 + 圆角主视图）。这里把外壳预先画出来，
+       * 让首帧就已经是外壳形状；DesktopFrame 挂载时（useLayoutEffect）立即撤掉。
+       *
+       * 数值与配色和 shell/desktopFrame.css、desktop/ui/index.html 严格同源：改一处要三处同步。
+       * ========================================================================== */
+      #minis-df-skeleton {
+        display: none;
+      }
+      /* 把底让给桌面：否则首帧仍是一块不透明的 --c-bg（跳变的一半来自这里） */
+      html.minis-df-skeleton,
+      html.minis-df-skeleton body {
+        background: transparent;
+      }
+      html.minis-df-skeleton #minis-df-skeleton {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        gap: 10px;
+        padding: 12px;
+        border-radius: 20px;
+        overflow: hidden;
+        /* 骨架是占位：可看不可点，免得挡住真实窗口按钮 */
+        pointer-events: none;
+      }
+      /* 最底层：一圈亚克力磨砂（同 .df__acrylic） */
+      .mds-acrylic {
+        position: absolute;
+        inset: 0;
+        border-radius: 20px;
+        background: rgba(200, 200, 200, 0.3);
+      }
+      .mds-acrylic::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(
+          150deg,
+          rgba(255, 255, 255, 0.14) 0%,
+          rgba(255, 255, 255, 0.03) 32%,
+          transparent 60%
+        );
+      }
+      /* 左：菜单栏 88px（同 .df__rail；导航图标等挂载后出现，占位不画） */
+      .mds-rail {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex: none;
+        flex-direction: column;
+        align-items: center;
+        width: 88px;
+        padding: 16px 0 18px;
+        border-radius: 20px;
+        background: #1c1b1d;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+          0 2px 6px rgba(0, 0, 0, 0.08),
+          0 10px 24px rgba(0, 0, 0, 0.14);
+      }
+      .mds-logo {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        background: #fff;
+      }
+      .mds-logo img {
+        width: 46px;
+        height: 46px;
+      }
+      /* 右：主视图（同 .df__stage + .df__titlebar） */
+      .mds-stage {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        flex-direction: column;
+        border-radius: 20px;
+        overflow: hidden;
+        background: var(--c-bg, #ffffff);
+        box-shadow:
+          0 2px 6px rgba(0, 0, 0, 0.08),
+          0 10px 24px rgba(0, 0, 0, 0.14);
+      }
+      .mds-titlebar {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 12px 0 8px;
+      }
+      .mds-drag {
+        flex: 1;
+        align-self: stretch;
+      }
+      /* 身份胶囊 / 窗口按钮的占位块：与真实控件同尺寸同底色，挂载时只换内容不换形状 */
+      .mds-chip,
+      .mds-wbtn {
+        flex: none;
+        background: #1c1b1d;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+          0 1px 2px rgba(0, 0, 0, 0.1),
+          0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+      .mds-chip {
+        width: 132px;
+        height: 32px;
+        border-radius: 16px;
+      }
+      .mds-wbtn {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+      }
+    </style>
+    <script>
+      ;(function () {
+        // 只在本机桌面壳里铺骨架（浏览器里 #minis-df-skeleton 保持 display:none）
+        if (!('__TAURI_INTERNALS__' in window)) return
+        document.documentElement.classList.add('minis-df-skeleton')
+        // 兜底：bundle 跑不起来时也别让骨架一直挂着
+        setTimeout(function () {
+          var el = document.getElementById('minis-df-skeleton')
+          if (el) el.remove()
+          document.documentElement.classList.remove('minis-df-skeleton')
+        }, 6000)
+      })()
+    </script>
   </head>
   <body>
+    <!-- 桌面壳首帧骨架：形状与窗口外壳一致，React 挂载后由 DesktopFrame 撤掉（见上方的样式） -->
+    <div id="minis-df-skeleton" aria-hidden="true">
+      <div class="mds-acrylic"></div>
+      <aside class="mds-rail">
+        <span class="mds-logo"><img src="/icon-64x64.png" alt="" /></span>
+      </aside>
+      <div class="mds-stage">
+        <div class="mds-titlebar">
+          <span class="mds-drag"></span>
+          <span class="mds-chip"></span>
+          <span class="mds-wbtn"></span>
+          <span class="mds-wbtn"></span>
+          <span class="mds-wbtn"></span>
+        </div>
+      </div>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

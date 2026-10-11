@@ -11,9 +11,9 @@
 	</parent>
 
 	<groupId>cc.ginpika</groupId>
-	<artifactId>minis-backend</artifactId>
+	<artifactId>slime-backend</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name>minis-backend</name>
+	<name>slime-backend</name>
 	<description>个人站点中枢（hub-core + BFF）</description>
 
 	<properties>

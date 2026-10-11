@@ -66,14 +66,14 @@ function IdRow({ id }: { id: string }) {
   return (
     <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-fg/5 px-2 py-1">
       <span className="ui-label shrink-0">ID</span>
-      <span title={id} className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
+      <span title={id} className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
         {id}
       </span>
       <button
         type="button"
         onClick={() => void copy()}
         title="复制唯一标识"
-        className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] text-faint transition hover:border-line-strong hover:text-fg"
+        className="shrink-0 rounded-full border border-line px-2 py-0.5 text-2xs text-faint transition hover:border-line-strong hover:text-fg"
       >
         {copied ? '已复制' : '复制'}
       </button>
@@ -486,7 +486,7 @@ export default function Graph() {
 
       {/* 右下角统计胶囊：两引擎共用，按钮式外观（min-w 吸收数字宽度变化，不抖动） */}
       {nodes.length > 0 && (
-        <div className="absolute right-4 bottom-4 z-10 rounded-full border border-line bg-bg/85 px-4 py-1.5 font-mono text-[11px] leading-none text-muted shadow-lg backdrop-blur-md">
+        <div className="absolute right-4 bottom-4 z-10 rounded-full border border-line bg-bg/85 px-4 py-1.5 font-mono text-xs leading-none text-muted shadow-lg backdrop-blur-md">
           <span className="inline-block min-w-[110px] text-center tabular-nums">{stats}</span>
         </div>
       )}
@@ -498,7 +498,7 @@ export default function Graph() {
           onClick={() => void showAnchors()}
           disabled={busy}
           title="列出所有锚点：在画布中渲染系统中全部锚点"
-          className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-[12px] font-semibold text-muted transition hover:border-line-strong hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-sm font-semibold text-muted transition hover:border-line-strong hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
         >
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
             <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
@@ -520,7 +520,7 @@ export default function Graph() {
           type="button"
           onClick={openCreate}
           title="新增实体"
-          className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-[12px] font-semibold text-muted transition hover:border-line-strong hover:text-fg"
+          className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-sm font-semibold text-muted transition hover:border-line-strong hover:text-fg"
         >
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -538,23 +538,23 @@ export default function Graph() {
               onBlur={() => setTimeout(() => setSugOpen(false), 120)}
               onKeyDown={(e) => e.key === 'Escape' && setSugOpen(false)}
               placeholder="搜索实体…"
-              className="w-40 bg-transparent py-1 text-[13px] text-fg outline-none placeholder:text-hint"
+              className="w-40 bg-transparent py-1 text-base text-fg outline-none placeholder:text-hint"
             />
           </form>
           {sugOpen && sugs !== null && (
             <div className="absolute left-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-xl border border-line bg-bg/95 shadow-xl backdrop-blur-md">
               {sugs.length === 0 ? (
-                <p className="px-4 py-2.5 text-[12px] text-faint">没有匹配的实体。</p>
+                <p className="px-4 py-2.5 text-sm text-faint">没有匹配的实体。</p>
               ) : (
                 sugs.map((s) => (
                   <button
                     key={s.id}
                     type="button"
                     onMouseDown={() => chooseCenter(s)}
-                    className="block w-full px-4 py-2 text-left text-[13px] text-fg transition hover:bg-fg/5"
+                    className="block w-full px-4 py-2 text-left text-base text-fg transition hover:bg-fg/5"
                   >
                     {s.name}
-                    <span className="ml-2 text-[11px] text-faint">{s.type}</span>
+                    <span className="ml-2 text-xs text-faint">{s.type}</span>
                   </button>
                 ))
               )}
@@ -572,8 +572,8 @@ export default function Graph() {
               onClick={() => setDepthAndReload(d)}
               className={
                 d === depth
-                  ? 'rounded-full bg-accent px-3 py-1 text-[12px] font-semibold text-accent-fg shadow-sm'
-                  : 'rounded-full px-3 py-1 text-[12px] text-faint transition hover:text-fg'
+                  ? 'rounded-full bg-accent px-3 py-1 text-sm font-semibold text-accent-fg shadow-sm'
+                  : 'rounded-full px-3 py-1 text-sm text-faint transition hover:text-fg'
               }
             >
               {d} 跳
@@ -597,8 +597,8 @@ export default function Graph() {
               }
               className={
                 eng.id === engine
-                  ? 'rounded-full bg-accent px-3 py-1 text-[12px] font-semibold text-accent-fg shadow-sm'
-                  : 'rounded-full px-3 py-1 text-[12px] text-faint transition hover:text-fg'
+                  ? 'rounded-full bg-accent px-3 py-1 text-sm font-semibold text-accent-fg shadow-sm'
+                  : 'rounded-full px-3 py-1 text-sm text-faint transition hover:text-fg'
               }
             >
               {eng.label}
@@ -614,7 +614,7 @@ export default function Graph() {
           onClick={() => setPhysics((v) => !v)}
           aria-pressed={physics}
           title="物理模拟：开启后节点受力晃动，拖拽松手回弹"
-          className="flex items-center gap-2 rounded-full py-1 pl-3 pr-1.5 text-[12px] text-muted transition hover:text-fg"
+          className="flex items-center gap-2 rounded-full py-1 pl-3 pr-1.5 text-sm text-muted transition hover:text-fg"
         >
           物理
           <span
@@ -644,8 +644,8 @@ export default function Graph() {
             onKeyDown={(ev) => ev.key === 'Escape' && setCreateOpen(false)}
             className="relative w-[340px] rounded-2xl border border-line bg-bg/95 p-5 backdrop-blur-md"
           >
-            <h3 className="ui-heading text-[14px]">新增实体</h3>
-            <p className="mt-1 text-[11px] text-faint">
+            <h3 className="ui-heading text-md">新增实体</h3>
+            <p className="mt-1 text-xs text-faint">
               同名实体不会重复创建，将更新其类型。
             </p>
             <label htmlFor="new-entity-name" className="ui-label mt-4 block">
@@ -693,8 +693,8 @@ export default function Graph() {
       {center === null && !busy && !err && (
         <div className="absolute inset-0 z-10 flex items-center justify-center px-4">
           <Card className="w-[380px] text-center" pad="lg">
-            <p className="ui-heading text-[14px]">知识图谱</p>
-            <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+            <p className="ui-heading text-md">知识图谱</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-muted">
               从关系最多的实体开始，或在上方搜索框定位任一实体。
             </p>
             {hubs.length === 0 ? (
@@ -706,7 +706,7 @@ export default function Graph() {
                     key={h.id}
                     type="button"
                     onClick={() => chooseCenter(h)}
-                    className="rounded-full border border-line px-3 py-1.5 text-[12px] text-fg transition hover:border-line-strong hover:bg-fg/5"
+                    className="rounded-full border border-line px-3 py-1.5 text-sm text-fg transition hover:border-line-strong hover:bg-fg/5"
                   >
                     {h.name}
                   </button>
@@ -731,7 +731,7 @@ export default function Graph() {
                 style={{ background: typeColors.get(cardNode.type || 'CONCEPT') ?? 'var(--c-faint)' }}
               />
               <div className="min-w-0">
-                <h3 className="truncate text-[15px] font-bold text-fg">{cardNode.name}</h3>
+                <h3 className="truncate text-md font-bold text-fg">{cardNode.name}</h3>
                 <p className="mt-1 flex flex-wrap items-center gap-1.5 text-2xs text-faint">
                   <kit.Badge>{cardNode.type || 'CONCEPT'}</kit.Badge>
                   <span className="mono">{degreeOf.get(cardNode.id) ?? 0} 条关系</span>
@@ -743,14 +743,14 @@ export default function Graph() {
               <button
                 type="button"
                 onClick={() => chooseCenter(cardNode)}
-                className="rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-accent-fg transition hover:opacity-80"
+                className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-fg transition hover:opacity-80"
               >
                 以此为中心
               </button>
               <button
                 type="button"
                 onClick={() => void expandFrom(cardNode.id)}
-                className="rounded-full border border-line px-3 py-1 text-[11px] text-muted transition hover:border-line-strong hover:text-fg"
+                className="rounded-full border border-line px-3 py-1 text-xs text-muted transition hover:border-line-strong hover:text-fg"
               >
                 展开一层
               </button>
@@ -759,7 +759,7 @@ export default function Graph() {
                 type="button"
                 onClick={() => openRel(cardNode.id)}
                 title="为当前实体新增一条关系"
-                className="rounded-full border border-line px-3 py-1 text-[11px] text-muted transition hover:border-line-strong hover:text-fg"
+                className="rounded-full border border-line px-3 py-1 text-xs text-muted transition hover:border-line-strong hover:text-fg"
               >
                 新增关系
               </button>
@@ -784,34 +784,34 @@ export default function Graph() {
                     onChange={(ev) => setRelName(ev.target.value)}
                     placeholder="目标实体名称"
                     spellCheck={false}
-                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
+                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-sm text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
                   />
                   <input
                     value={relPred}
                     onChange={(ev) => setRelPred(ev.target.value)}
                     placeholder="谓词，留空默认 relates_to"
                     spellCheck={false}
-                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-[12px] text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
+                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-sm text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
                   />
                   <div className="flex justify-end gap-1.5 pt-0.5">
                     <button
                       type="button"
                       onClick={() => setRelFor(null)}
-                      className="rounded-full px-2.5 py-1 text-[11px] text-faint transition hover:text-fg"
+                      className="rounded-full px-2.5 py-1 text-xs text-faint transition hover:text-fg"
                     >
                       取消
                     </button>
                     <button
                       type="submit"
                       disabled={relSaving || !relName.trim()}
-                      className="rounded-full bg-accent px-3 py-1 text-[11px] font-semibold text-accent-fg transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-fg transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {relSaving ? '添加中 …' : '添加'}
                     </button>
                   </div>
                 </form>
               ) : cardRels.length === 0 ? (
-                <p className="mt-1.5 text-[11px] text-faint">暂无关系。</p>
+                <p className="mt-1.5 text-xs text-faint">暂无关系。</p>
               ) : (
                 /* 关系行交给 kit.Row：悬停黄晕染 + 左侧读数条，行内「谓词 + 实体名」 */
                 <div className="scrollbar-accent mt-1.5 max-h-44 overflow-y-auto">
@@ -839,7 +839,7 @@ export default function Graph() {
         {cardEdge && (
           <div>
             <p className="ui-label">Relation</p>
-            <p className="mt-2 inline-block rounded-full bg-fg/5 px-2.5 py-1 text-[13px] font-semibold text-fg">
+            <p className="mt-2 inline-block rounded-full bg-fg/5 px-2.5 py-1 text-base font-semibold text-fg">
               {cardEdge.predicate}
             </p>
             <IdRow id={cardEdge.id} />
@@ -847,7 +847,7 @@ export default function Graph() {
               <button
                 type="button"
                 onClick={() => setSel({ kind: 'node', id: cardEdge.from })}
-                className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1 text-[12px] text-fg transition hover:border-line-strong"
+                className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1 text-sm text-fg transition hover:border-line-strong"
               >
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
@@ -863,7 +863,7 @@ export default function Graph() {
               <button
                 type="button"
                 onClick={() => setSel({ kind: 'node', id: cardEdge.to })}
-                className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1 text-[12px] text-fg transition hover:border-line-strong"
+                className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line px-2 py-1 text-sm text-fg transition hover:border-line-strong"
               >
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
@@ -876,7 +876,7 @@ export default function Graph() {
                 <span className="truncate">{nameOf(cardEdge.to)}</span>
               </button>
             </div>
-            <p className="mt-2.5 text-[11px] text-faint">点击端点查看实体详情。</p>
+            <p className="mt-2.5 text-xs text-faint">点击端点查看实体详情。</p>
             <PropsEditor
               props={cardEdge.props ?? []}
               onSave={(next) => saveEdgeProps(cardEdge.id, next)}
@@ -893,14 +893,14 @@ export default function Graph() {
             <button
               type="button"
               onClick={() => setAllTypesHidden(true)}
-              className="text-[10px] text-faint transition hover:text-fg"
+              className="text-2xs text-faint transition hover:text-fg"
             >
               全部隐藏
             </button>
             <button
               type="button"
               onClick={() => setAllTypesHidden(false)}
-              className="text-[10px] text-faint transition hover:text-fg"
+              className="text-2xs text-faint transition hover:text-fg"
             >
               全部显示
             </button>
@@ -912,7 +912,7 @@ export default function Graph() {
                 type="button"
                 onClick={() => toggleType(tp)}
                 title="点击显示 / 隐藏该类型实体"
-                className={`flex items-center gap-1.5 text-[11px] transition ${
+                className={`flex items-center gap-1.5 text-xs transition ${
                   hiddenTypes.has(tp)
                     ? 'text-faint line-through opacity-60'
                     : 'text-muted hover:text-fg'
@@ -933,14 +933,14 @@ export default function Graph() {
                 <button
                   type="button"
                   onClick={() => setAllPredsHidden(true)}
-                  className="text-[10px] text-faint transition hover:text-fg"
+                  className="text-2xs text-faint transition hover:text-fg"
                 >
                   全部隐藏
                 </button>
                 <button
                   type="button"
                   onClick={() => setAllPredsHidden(false)}
-                  className="text-[10px] text-faint transition hover:text-fg"
+                  className="text-2xs text-faint transition hover:text-fg"
                 >
                   全部显示
                 </button>
@@ -951,14 +951,14 @@ export default function Graph() {
                     key={p}
                     type="button"
                     onClick={() => togglePredicate(p)}
-                    className={`rounded-full border border-line px-2 py-0.5 text-[11px] transition ${
+                    className={`rounded-full border border-line px-2 py-0.5 text-xs transition ${
                       hidden.has(p)
                         ? 'text-faint line-through opacity-60'
                         : 'text-fg hover:border-line-strong'
                     }`}
                   >
                     {p}
-                    <span className="ml-1 font-mono text-[10px] text-faint">{count}</span>
+                    <span className="ml-1 font-mono text-2xs text-faint">{count}</span>
                   </button>
                 ))}
               </div>

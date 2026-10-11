@@ -27,7 +27,7 @@ const SOURCE_LABELS: Record<string, string> = {
   'doc-summary': '全文概述',
   'chunk-questions': '假设性问题',
   'chunk-summary': '段落摘要',
-  subconscious: '潜意识',
+  heartbeat: '心跳',
   embedding: '向量化',
   rerank: '精排',
   'model-test': '模型测试',

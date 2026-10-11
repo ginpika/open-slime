@@ -137,7 +137,7 @@ export function EndfieldShell({
           {/* 主题 + 用户 */}
           <div className="flex shrink-0 items-center gap-2 px-3">
             {tools}
-            {userSlot}
+            {userSlot({ placement: 'down', withName: false })}
           </div>
 
           {/* 条码 */}
@@ -196,11 +196,11 @@ export function EndfieldShell({
   )
 }
 
-/** 顶栏读数单元：8.5px 上标签 + 等宽数值（分隔线由容器的 divide-x 负责） */
+/** 顶栏读数单元：11px 微标签 + 等宽数值（分隔线由容器的 divide-x 负责） */
 function Readout({ k, v, mono = false, ok = false }: { k: string; v: string; mono?: boolean; ok?: boolean }) {
   return (
     <div className="flex flex-col justify-center gap-0.5 px-4">
-      <span className="ui-label" style={{ fontSize: '9px' }}>
+      <span className="ui-label" style={{ fontSize: '11px' }}>
         {k}
       </span>
       <span

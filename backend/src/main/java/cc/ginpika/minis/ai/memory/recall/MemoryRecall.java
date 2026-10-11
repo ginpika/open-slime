@@ -40,6 +40,14 @@ public class MemoryRecall {
     /** 单次召回条数上限（与注入器/工具面的 clamp 一致） */
     private static final int LIMIT_MAX = 50;
 
+    /**
+     * 后台产出（心跳主会话 / 职责被派出 / 子代理 的自动跑动）：默认召回一律挡掉。
+     *
+     * <p>记忆回答的是「你对我说过什么、我答应过什么」，后台自己跑出来的东西不该挤占候选池；
+     * 它们的结论另有 {@code recent_results} 注入器专供，不需要从记忆里再捞一遍。
+     */
+    public static final List<String> BACKGROUND_ACTORS = List.of("heartbeat", "plan", "agent");
+
     private static final DateTimeFormatter STAMP =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
@@ -61,12 +69,17 @@ public class MemoryRecall {
     /**
      * 融合召回：时间窗（可单侧开放）+ kind/actor 过滤收敛候选，再在窗口内按与 query 的
      * 语义相关度排序（拿不到查询向量时就是纯时间倒序）。limit 上限 50。
+     *
+     * <p>没指定 {@code actor} 时按默认挡掉后台产出（{@link #BACKGROUND_ACTORS}）——
+     * 混池会让「我上次跟你说过什么」变脏；要专看某一路就显式传 {@code actor}，
+     * 那时以它为准、不再另加排除。
      */
     public List<Hit> recall(String query, Long sinceMs, Long untilMs, String kind, String actor,
                             int limit) {
         int cap = Math.max(1, Math.min(limit, LIMIT_MAX));
-        List<MemoryEventStore.EventRow> candidates =
-                events.window(sinceMs, untilMs, kind, actor, CANDIDATE_LIMIT);
+        List<MemoryEventStore.EventRow> candidates = actor == null || actor.isBlank()
+                ? events.window(sinceMs, untilMs, kind, null, BACKGROUND_ACTORS, CANDIDATE_LIMIT)
+                : events.window(sinceMs, untilMs, kind, actor, CANDIDATE_LIMIT);
         if (candidates.isEmpty()) {
             return List.of();
         }

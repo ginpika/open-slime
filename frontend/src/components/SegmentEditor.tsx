@@ -55,7 +55,7 @@ function SegmentBlock({
     >
       {/* hover 悬浮提示（仅预览态）：部分名称 + 操作引导 */}
       {!editing && (
-        <span className="pointer-events-none absolute -top-2.5 left-2 z-20 hidden rounded-sm border border-line bg-bg px-1.5 py-0.5 text-[10px] font-medium text-faint shadow-sm group-hover:block">
+        <span className="pointer-events-none absolute -top-2.5 left-2 z-20 hidden rounded-sm border border-line bg-bg px-1.5 py-0.5 text-2xs font-medium text-faint shadow-sm group-hover:block">
           {seg.label} · 点击编辑
         </span>
       )}

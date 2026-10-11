@@ -180,7 +180,7 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
               type="button"
               onClick={() => setDraft((prev) => prev.filter((_, j) => j !== i))}
               aria-label="删除该行"
-              className="shrink-0 px-0.5 text-[13px] leading-none text-faint transition hover:text-danger"
+              className="shrink-0 px-0.5 text-base leading-none text-faint transition hover:text-danger"
             >
               ×
             </button>

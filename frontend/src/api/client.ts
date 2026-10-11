@@ -138,6 +138,8 @@ export type SessionItem = {
   title: string | null
   modelId: string | null
   promptId: string | null
+  /** 本会话跟哪位 Agent 对话（agent.id）；null = 内置 Agent（用全局提示词） */
+  agentId: string | null
   showCot: boolean | null
   /** 本会话单次提问的工具调用轮数上限（「…」菜单可改，缺省 30） */
   maxRounds: number | null
@@ -406,11 +408,94 @@ export async function sessionLiveStream(
   }
 }
 
+/* ---------- 会话事件流（STEP 4）：即时推送，取代前端定时轮询会话列表 ---------- */
+
+/** 一条会话事件：kind=delivered（有新消息投递，如子代理回报）| answered（该会话答完了）
+ *  | todo（该会话的个人待办清单更新，前端据此刷新 TODO 卡片） */
+export type SessionEvent = {
+  /** 事件游标（SSE id）：重连时作为 Last-Event-ID 带去，后端据此补推断线期间漏掉的 */
+  id: number
+  sessionId: string
+  kind: 'delivered' | 'answered' | 'todo'
+  /** 该会话此刻是否未读（delivered 有意义：前端据此弹「有新消息」气泡） */
+  unread: boolean
+  /** 会话标题（便于通知直接显示，省一次列表请求） */
+  title: string | null
+}
+
+/**
+ * 订阅全局会话事件流（SSE）：每条事件实时到达。
+ *
+ * <p>EventSource 只支持 GET 且不便带自定义头（这里要带 Last-Event-ID），故与其它流一样用
+ * fetch + ReadableStream 手工解析；resolve 表示本次连接结束（服务端掐断 / 超时），调用方重挂即可。
+ *
+ * @param lastEventId 上次收到的最后一条事件 id；带上它后端会把断线期间的事件补推一遍
+ */
+export async function sessionEventsStream(
+  handlers: { onEvent: (e: SessionEvent) => void },
+  signal: AbortSignal,
+  lastEventId?: number | null,
+): Promise<void> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+  const headers: Record<string, string> = { Accept: 'text/event-stream' }
+  if (lastEventId != null) headers['Last-Event-ID'] = String(lastEventId)
+  const res = await apiFetch('/api/events/stream', {
+    credentials: 'same-origin',
+    headers,
+    signal,
+  })
+  if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''))
+  if (!res.body) throw new ApiError(res.status, '响应无流式内容')
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let curId: number | null = null
+
+  /** 解析一个 SSE 事件块（id: / event: / data: 行，data 可能多行） */
+  const dispatch = (block: string) => {
+    const data: string[] = []
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith('id:')) {
+        const v = Number(line.slice(3).trim())
+        if (Number.isFinite(v)) curId = v
+      } else if (line.startsWith('data:')) {
+        data.push(line.slice(5).replace(/^ /, ''))
+      }
+    }
+    if (data.length === 0) return
+    try {
+      const payload = JSON.parse(data.join('\n')) as Omit<SessionEvent, 'id'>
+      handlers.onEvent({ id: curId ?? 0, ...payload })
+    } catch {
+      /* 坏帧忽略：推送是尽力而为，漏一条由下一批刷新兜底 */
+    }
+  }
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let m: RegExpExecArray | null
+      while ((m = /\r?\n\r?\n/.exec(buffer)) !== null) {
+        const block = buffer.slice(0, m.index)
+        buffer = buffer.slice(m.index + m[0].length)
+        dispatch(block)
+      }
+    }
+  } catch (e) {
+    await reader.cancel().catch(() => {})
+    throw e
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 /** 新建空会话；后续 chat 需显式传该 id，否则会续接到最近会话 */
 export function createSession(): Promise<NewSession> {
   return requestJson<NewSession>('/api/sessions', { method: 'POST' })
 }
-
 /** 删除会话（连同其消息正本）；removed=一并删除的消息行数 */
 export function deleteSession(id: string): Promise<{ sessionId: string; removed: number }> {
   return requestJson<{ sessionId: string; removed: number }>(
@@ -424,12 +509,40 @@ export function sessionMessages(id: string): Promise<SessionMessage[]> {
   return requestJson<SessionMessage[]>(`/api/sessions/${encodeURIComponent(id)}/messages`)
 }
 
-/** 会话的原始上下文预览：后端按与真实发送完全一致的规则组装的 /chat/completions 请求体
- *  （仅预览，不发送）；message 含 role/content，assistant 历史可能带 tool_calls 等原生协议字段 */
-export type RawContext = {
+/** 个人待办清单的一项（plan-of-record）：status ∈ pending | in_progress | done | failed */
+export type SessionTodo = {
+  seq: number
+  content: string
+  status: string
+  note: string | null
+}
+
+/** 某会话的个人待办清单（plan-of-record，由 write_todos 覆盖式写入）：会话页 TODO 卡片读当前进度 */
+export function sessionTodos(id: string): Promise<SessionTodo[]> {
+  return requestJson<SessionTodo[]>(`/api/sessions/${encodeURIComponent(id)}/todos`)
+}
+
+/** 请求体（与真实发送一致：model + messages + tools；stream 等由后端在出站前补上） */
+export type RawContextBody = {
   model: string
   messages: Record<string, unknown>[]
   tools?: unknown[]
+}
+
+/** 一个 Turn 在请求体 messages 中的切片（后端按会话 Turn 序列给出）：
+ *  from（含）~ to（不含）；source=触发来源；replyMessageId=回答行 id（在途 / 未落定为 null） */
+export type RawContextTurn = {
+  from: number
+  to: number
+  source: string
+  replyMessageId: number | null
+}
+
+/** 会话的原始上下文预览：body=请求体本身；turns=各 Turn 的切片（仅用于按 Turn 对齐与回看，
+ *  不属于请求体——复制 JSON 时只取 body） */
+export type RawContext = {
+  body: RawContextBody
+  turns: RawContextTurn[]
 }
 
 /** 查看某会话的原始上下文：此刻在该会话发消息时系统发给大模型接口的内容 */
@@ -437,11 +550,32 @@ export function sessionRawContext(id: string): Promise<RawContext> {
   return requestJson<RawContext>(`/api/sessions/${encodeURIComponent(id)}/raw-context`)
 }
 
+/** 一次 LLM 调用的留痕：round=该 Turn 内第几轮（0 基）；request=当时真正发出的请求体 JSON 文本；
+ *  response=收到的响应体 JSON 文本（该轮失败为 null）；withTools=该轮是否带工具面（末轮撤掉为 false） */
+export type TurnLlmCall = {
+  round: number
+  request: string
+  response: string | null
+  withTools: boolean
+}
+
+/** 某条回答（一个 Turn）的全部 LLM 调用留痕；replyMessageId 取自 raw-context 的 Turn 切片 */
+export function sessionTurnCalls(
+  id: string,
+  replyMessageId: number,
+): Promise<{ replyMessageId: number; calls: TurnLlmCall[] }> {
+  return requestJson(
+    `/api/sessions/${encodeURIComponent(id)}/turns/${replyMessageId}/llm-calls`,
+  )
+}
+
 /** 会话配置（「…」菜单在该会话的选择）：null=未设置（回退设置页默认 / CoT 默认显示；
  *  maxRounds 为 null 时后端保持原值，缺省 30） */
 export type SessionConfig = {
   modelId: string | null
   promptId: string | null
+  /** 跟哪位 Agent 对话（agent.id）；null / 空串 = 内置 Agent */
+  agentId: string | null
   showCot: boolean | null
   maxRounds: number | null
   showRounds: boolean | null
@@ -1119,10 +1253,10 @@ export function saveRerank(req: RerankRequest): Promise<SettingsView> {
   })
 }
 
-/** 重置知识库的结果：删除的 chunk / 实体 / 关系条数 */
-export type ResetResult = { chunks: number; entities: number; relations: number }
+/** 重置知识库的结果：删除的 chunk / 实体 / 关系 / 时序记忆条数 */
+export type ResetResult = { chunks: number; entities: number; relations: number; memories: number }
 
-/** 重置知识库（危险操作）：清空全部 chunk、知识图谱实体与关系，并移除相关 embedding，不可恢复 */
+/** 重置知识库（危险操作）：清空全部 chunk、图谱实体与关系、时序记忆及相关 embedding，不可恢复 */
 export function resetKnowledgeBase(): Promise<ResetResult> {
   return requestJson<ResetResult>('/api/settings/knowledge-base/reset', { method: 'POST' })
 }
@@ -1340,19 +1474,10 @@ export function getStats(days = 30): Promise<StatsView> {
   return requestJson<StatsView>(`/api/stats?days=${days}`)
 }
 
-/* ---------- 潜意识（HeartBeat 驱动的任务计划编排）+ 子代理 ---------- */
+/* ---------- 后台（每 Agent 一份：心跳 / 常驻职责 / 子代理 / RAG 召回 / 任务）+ 全局系统 ---------- */
 
-/** 插槽绑定：模板里的 {{slot}} 交给哪个注入器从存储层现取内容填充；args 为注入器自己的参数 */
-export type InjectorBinding = { slot: string; injector: string; args: string | null }
-
-/** 插槽词典的一条：注入器名 + 它取什么、参数怎么给、从哪儿取（只读参考） */
-export type InjectorInfo = { name: string; summary: string; args: string; source: string }
-
-/** 插槽词典：全部可用注入器（只读展示） */
-export type InjectorGuide = { injectors: InjectorInfo[] }
-
-/** 工具词典的一条：名字 + 描述 + 所属工具面 + 写库/子代理可调/可并行标记 + 参数 schema */
-export type SubTool = {
+/** 工具词典的一条（全局工具一览用）：名字 + 描述 + 所属工具面 + 写库/子代理可调/可并行标记 + 参数 schema */
+export type ToolInfoView = {
   name: string
   description: string
   /** 该工具出现在哪些工具面（CHAT / HEARTBEAT / THREAD / PEER / EXTRACT / COMMIT） */
@@ -1361,6 +1486,26 @@ export type SubTool = {
   agentsMayCall: boolean
   parallelizable: boolean
   parameters: { properties?: Record<string, { type?: string; description?: string }>; required?: string[] }
+}
+
+/** 某位 Agent 的心跳配置：正文 + 模型 + 开关 + 节拍 + 最近一次敲响时刻 */
+export type AgentHeartbeat = {
+  agentId: string
+  content: string
+  modelId: string | null
+  enabled: boolean
+  tickMs: number
+  lastBeatAt: number | null
+}
+
+/** 观测台里一位 Agent 的心跳状态 */
+export type HeartbeatState = {
+  agentId: string
+  name: string
+  enabled: boolean
+  tickMs: number
+  lastBeatAt: number | null
+  running: boolean
 }
 
 /** 交付渠道：silent=只留痕（结果落库，供回溯）；thread=可自己开会话并往里投递说给人听的消息 */
@@ -1373,28 +1518,33 @@ export const SUB_CHANNEL_LABELS: Record<SubChannel, string> = {
   thread: '投递首页会话',
 }
 
-/** 任务计划（一份常驻编制）：自带正文/角色/工具 + 交付渠道；
- *  由大模型经工具立/改/撤（create_plan / update_plan / delete_plan），页面只读；
- *  由心跳主会话按需派出（没有开关，派不派完全由主会话看着名册决定）。content 含 {{插槽}} */
-export type SubPlan = {
+/** 常驻职责（一份常驻的岗位定义）：自带正文/角色/工具 + 交付渠道；
+ *  由大模型经工具立/改/撤（create_heartbeat / update_heartbeat / delete_heartbeat）；
+ *  页面只读，唯一的人工写入口是 enabled 这个刹车（停用不删，只挡自动派出）。 */
+export type PlanView = {
   id: string
+  agentId: string
   name: string
   role: string
   content: string
   tools: string[]
-  injectors: InjectorBinding[]
-  channels: SubChannel[]
+  channels: string[]
   /** 节拍参考：null=每拍都可以考虑派它（只是给主会话的参考，不是硬时刻表） */
   intervalMs: number | null
   input: string | null
   modelId: string | null
   sort: number
   lastBeatAt: number | null
+  /** 立它时给的一句「为什么立」：页面展示，供人隔月回看名册时认由来 */
+  rationale: string | null
+  /** 人工刹车：false=已停用（心跳不派它、模型也看不见它；定义与留痕都保留） */
+  enabled: boolean
 }
 
 /** 一批执行：一次心跳（beat）/ 页面点名（manual）/ 一次对话委托（chat） */
-export type SubRun = {
+export type RunView = {
   id: string
+  agentId: string
   beat: number
   trigger: string
   status: string
@@ -1405,7 +1555,7 @@ export type SubRun = {
 }
 
 /** 写库清单项：一次执行里的某次写库工具调用 */
-export type SubEdit = {
+export type ExecEdit = {
   id: number
   tool: string
   args: string | null
@@ -1413,15 +1563,15 @@ export type SubEdit = {
   createdAt: number
 }
 
-/** 执行种类：心跳主会话登场 / 任务计划被派出 / 一次匿名子代理调用 */
-export type SubExecKind = 'heartbeat' | 'plan' | 'agent'
+/** 执行种类：心跳主会话登场 / 常驻职责被派出 / 一次匿名子代理调用 */
+export type ExecKind = 'heartbeat' | 'plan' | 'agent'
 
 /** 一次执行；context 仅详情接口返回（messages JSON，可能很大）。
- *  kind 决定 planId 与 title 的含义：heartbeat=主会话；plan=编制被派出；agent=匿名子代理 */
-export type SubExec = {
+ *  kind 决定 planId 与 title 的含义：heartbeat=主会话；plan=常驻职责被派出；agent=匿名子代理 */
+export type ExecView = {
   id: number
   runId: string
-  kind: SubExecKind
+  kind: ExecKind
   planId: string | null
   title: string | null
   status: string
@@ -1429,14 +1579,22 @@ export type SubExec = {
   output: string | null
   reasoning: string | null
   trace: TraceSegment[]
-  edits: SubEdit[]
+  edits: ExecEdit[]
   error: string | null
   startedAt: number
   finishedAt: number | null
+  /** 归属任务 id（仅子代理列表返回；进程重启打断后可据此重跑），其余场景为 null */
+  taskId: number | null
+}
+
+/** 重跑一条任务的结果：taskId=被重跑的原任务，execId=新一次执行的留痕 id */
+export type TaskRunView = {
+  taskId: number
+  execId: number
 }
 
 /** 一次心跳/派活的结果：started=false 表示已有另一轮在跑（或目标不存在），本次被跳过 */
-export type SubBeat = {
+export type BeatView = {
   started: boolean
   runId: string | null
   beat: number
@@ -1444,26 +1602,32 @@ export type SubBeat = {
   agents: number
 }
 
-/** 观测台状态 */
-export type SubState = {
-  heartbeatEnabled: boolean
-  tickMs: number
-  running: boolean
-  channels: string[]
-  /** 可用注入器名（heartbeat 页插槽绑定下拉用） */
-  injectors: string[]
+/** 一条任务：kind 见后端 TaskStore（session/subagent/plan/code）；
+ *  parentId=派它的那个任务（心跳主会话 → 计划 → 子代理），顶层为 null；
+ *  execId=它落到的执行留痕（可点开看全过程）。 */
+export type TaskView = {
+  id: number
+  parentId: number | null
+  kind: string
+  status: string
+  title: string | null
+  sessionId: string | null
+  agentId: string
+  execId: number | null
+  createdAt: number
+  updatedAt: number
 }
 
 /** 一批执行 + 这一批里的各次执行 */
-export type SubRunBundle = { run: SubRun; execs: SubExec[] }
+export type RunBundle = { run: RunView; execs: ExecView[] }
 
-/** 观测台快照：状态 + 最近几批（倒序，各带本批执行） */
-export type SubPulse = { state: SubState; recentRuns: SubRunBundle[] }
+/** 观测台快照：全部 Agent 的心跳状态 + 最近几批（倒序，各带本批执行） */
+export type PulseView = { heartbeats: HeartbeatState[]; recentRuns: RunBundle[] }
 
 /* ---- 资源使用视图 ---- */
 
 /** 窗口内某一类的用量；estTokens 由字符量粗估（量级参考） */
-export type SubUsage = {
+export type Usage = {
   runs: number
   done: number
   failed: number
@@ -1473,129 +1637,177 @@ export type SubUsage = {
   estTokens: number
 }
 
-/** 窗口内某份编制被派出的用量 */
-export type SubPlanUsage = SubUsage & {
+/** 窗口内某份常驻职责被派出的用量 */
+export type PlanUsage = Usage & {
   planId: string
-  /** 编制名；已被撤掉的历史留痕为 null */
+  /** 常驻职责名；已被撤掉的历史留痕为 null */
   name: string | null
   lastRunAt: number | null
 }
 
-/** 资源快照：名册规模 + 心跳状态 + 窗口内的总量（全部 / 子代理 / 计划 / 心跳四档）+ 逐份编制的用量 */
-export type SubResources = {
-  heartbeatEnabled: boolean
+/** 资源快照：名册规模 + 心跳状态 + 窗口内的总量（全部 / 子代理 / 职责 / 心跳四档）+ 逐份职责的用量 */
+export type ResourceView = {
+  enabled: boolean
   tickMs: number
   running: boolean
   windowHours: number
   rosterCount: number
-  totals: SubUsage
-  agents: SubUsage
-  plans: SubUsage
-  heartbeat: SubUsage
-  planUsage: SubPlanUsage[]
+  totals: Usage
+  agents: Usage
+  plans: Usage
+  heartbeat: Usage
+  planUsage: PlanUsage[]
+  /** 自启动以来被预筛跳过的拍数（名册里没有到点的职责就没叫模型）= 省下的空转 */
+  idleSkips: number
 }
 
-/** 心跳主会话（总线）的上下文：正文（含 {{插槽}}）+ 插槽绑定 + 模型；没有「本次交代」这一层 */
-export type SubHeartbeatContext = {
-  content: string
-  injectors: InjectorBinding[]
-  modelId: string | null
+/* ---- 每 Agent 后台接口（base /api/agents/{agentId}） ---- */
+
+/** 拼 per-agent 后台接口的 base 路径 */
+function agentBase(id: string): string {
+  return `/api/agents/${encodeURIComponent(id)}`
 }
 
-export function subState(): Promise<SubState> {
-  return requestJson<SubState>('/api/subconscious/state')
+/** 某位 Agent 的心跳配置（正文/模型/开关/节拍/最近一次） */
+export function agentHeartbeat(id: string): Promise<AgentHeartbeat> {
+  return requestJson<AgentHeartbeat>(`${agentBase(id)}/heartbeat`)
 }
 
-/** 插槽词典：全部注入器的说明（只读，进「插槽」子页时拉一次） */
-export function subInjectorGuide(): Promise<InjectorGuide> {
-  return requestJson<InjectorGuide>('/api/subconscious/injectors')
-}
-
-/** 工具词典：全部工具的说明（只读，进「工具」子页时拉一次） */
-export function subTools(): Promise<SubTool[]> {
-  return requestJson<SubTool[]>('/api/subconscious/tools')
-}
-
-export function subPulse(): Promise<SubPulse> {
-  return requestJson<SubPulse>('/api/subconscious/pulse')
-}
-
-/** 心跳开关 / 节拍（运行时生效，不改配置文件） */
-export function subHeartbeat(req: {
-  enabled?: boolean | null
-  tickMs?: number | null
-}): Promise<SubState> {
-  return requestJson<SubState>('/api/subconscious/heartbeat', {
+/** 保存某位 Agent 的心跳配置（只传需要改的字段） */
+export function saveAgentHeartbeat(
+  id: string,
+  req: { content?: string; modelId?: string | null; enabled?: boolean; tickMs?: number },
+): Promise<AgentHeartbeat> {
+  return requestJson<AgentHeartbeat>(`${agentBase(id)}/heartbeat`, {
     method: 'PUT',
     body: JSON.stringify(req),
   })
 }
 
-/** 心跳主会话的上下文（总线自己那份正文与插槽绑定） */
-export function subHeartbeatContext(): Promise<SubHeartbeatContext> {
-  return requestJson<SubHeartbeatContext>('/api/subconscious/heartbeat/context')
+/** 手动敲一次心跳：让这位 Agent 的心跳主会话立刻出场，由它决定这一拍派谁 */
+export function agentBeat(id: string): Promise<BeatView> {
+  return requestJson<BeatView>(`${agentBase(id)}/heartbeat/beat`, { method: 'POST' })
 }
 
-export function subSaveHeartbeatContext(
-  req: SubHeartbeatContext,
-): Promise<SubHeartbeatContext> {
-  return requestJson<SubHeartbeatContext>('/api/subconscious/heartbeat/context', {
+/** 名册：这位 Agent 的全部常驻职责 */
+export function agentPlans(id: string): Promise<PlanView[]> {
+  return requestJson<PlanView[]>(`${agentBase(id)}/plans`)
+}
+
+/** 启用 / 停用一份常驻职责（停用不删，只挡自动派出） */
+export function agentSetPlanEnabled(
+  id: string,
+  planId: string,
+  enabled: boolean,
+): Promise<PlanView> {
+  return requestJson<PlanView>(`${agentBase(id)}/plans/${encodeURIComponent(planId)}/enabled`, {
     method: 'PUT',
-    body: JSON.stringify(req),
+    body: JSON.stringify({ enabled }),
   })
 }
 
-/** 手动敲一次心跳：让心跳主会话立刻出场，由它决定这一拍派谁 */
-export function subBeat(): Promise<SubBeat> {
-  return requestJson<SubBeat>('/api/subconscious/beat', { method: 'POST' })
-}
-
-/** 人工把某份编制单跑一次（页面上的「立即执行」）：绕过主会话，独占一批 */
-export function subRunPlan(id: string): Promise<SubBeat> {
-  return requestJson<SubBeat>(`/api/subconscious/plans/${encodeURIComponent(id)}/run`, {
+/** 人工把某份常驻职责单跑一次（「立即执行」）：绕过主会话，独占一批 */
+export function agentRunPlan(id: string, planId: string): Promise<BeatView> {
+  return requestJson<BeatView>(`${agentBase(id)}/plans/${encodeURIComponent(planId)}/run`, {
     method: 'POST',
   })
 }
 
+/** 某份常驻职责最近若干次被派出的记录 */
+export function agentPlanExecs(id: string, planId: string, limit = 20): Promise<ExecView[]> {
+  return requestJson<ExecView[]>(
+    `${agentBase(id)}/plans/${encodeURIComponent(planId)}/execs?limit=${limit}`,
+  )
+}
+
 /** 最近若干批执行（倒序） */
-export function subRuns(limit = 30): Promise<SubRun[]> {
-  return requestJson<SubRun[]>(`/api/subconscious/runs?limit=${limit}`)
+export function agentRuns(id: string, limit = 30): Promise<RunView[]> {
+  return requestJson<RunView[]>(`${agentBase(id)}/runs?limit=${limit}`)
 }
 
 /** 某批里的各次执行 */
-export function subRunExecs(runId: string): Promise<SubExec[]> {
-  return requestJson<SubExec[]>(`/api/subconscious/runs/${encodeURIComponent(runId)}/execs`)
+export function agentRunExecs(id: string, runId: string): Promise<ExecView[]> {
+  return requestJson<ExecView[]>(`${agentBase(id)}/runs/${encodeURIComponent(runId)}/execs`)
 }
 
 /** 某一次执行的完整过程：组装出的上下文、思维链、过程分段、写库清单 */
-export function subExec(id: number): Promise<SubExec> {
-  return requestJson<SubExec>(`/api/subconscious/execs/${id}`)
+export function agentExec(id: string, execId: number): Promise<ExecView> {
+  return requestJson<ExecView>(`${agentBase(id)}/execs/${execId}`)
 }
 
-/* ---- 任务计划（只读：立改撤都在大模型的工具里） ---- */
-
-/** 名册：全部编制的完整定义 */
-export function subPlans(): Promise<SubPlan[]> {
-  return requestJson<SubPlan[]>('/api/subconscious/plans')
+/** 最近若干条任务（倒序） */
+export function agentTasks(id: string, limit = 100): Promise<TaskView[]> {
+  return requestJson<TaskView[]>(`${agentBase(id)}/tasks?limit=${limit}`)
 }
 
-/** 某份编制最近若干次被派出的记录 */
-export function subPlanExecs(planId: string, limit = 20): Promise<SubExec[]> {
-  return requestJson<SubExec[]>(
-    `/api/subconscious/plans/${encodeURIComponent(planId)}/execs?limit=${limit}`,
-  )
+/** 重跑一条任务（子代理列表里「重跑」按钮调用）：按任务留下的输入重新派一次 */
+export function agentRerunTask(id: string, taskId: number): Promise<TaskRunView> {
+  return requestJson<TaskRunView>(`${agentBase(id)}/tasks/${taskId}/run`, { method: 'POST' })
 }
 
 /* ---- 子代理（匿名 worker：不建档案，只有跑过的记录） ---- */
 
 /** 最近若干次子代理调用 */
-export function subAgentRuns(limit = 30): Promise<SubExec[]> {
-  return requestJson<SubExec[]>(`/api/subconscious/agents?limit=${limit}`)
+export function agentSubagentRuns(id: string, limit = 30): Promise<ExecView[]> {
+  return requestJson<ExecView[]>(`${agentBase(id)}/subagents?limit=${limit}`)
 }
 
-/** 资源使用视图：名册规模 + 窗口内的总量（全部/子代理/计划/心跳）+ 逐份编制的用量 */
-export function subResources(hours = 24): Promise<SubResources> {
-  return requestJson<SubResources>(`/api/subconscious/resources?hours=${hours}`)
+/** 最近若干条三路召回留痕（倒序）；channel 缺省表示全部 */
+export function agentRagRecalls(
+  id: string,
+  limit = 100,
+  channel?: SubRagChannel | null,
+): Promise<RagRecallView[]> {
+  const q = new URLSearchParams({ limit: String(limit) })
+  if (channel) q.set('channel', channel)
+  return requestJson<RagRecallView[]>(`${agentBase(id)}/rag-recalls?${q.toString()}`)
+}
+
+/** 清空召回留痕，返回删除条数 */
+export function agentClearRagRecalls(id: string): Promise<{ removed: number }> {
+  return requestJson<{ removed: number }>(`${agentBase(id)}/rag-recalls`, { method: 'DELETE' })
+}
+
+/** 资源使用视图：名册规模 + 窗口内的总量（全部/子代理/职责/心跳）+ 逐份职责的用量 */
+export function agentResources(id: string, hours = 24): Promise<ResourceView> {
+  return requestJson<ResourceView>(`${agentBase(id)}/resources?hours=${hours}`)
+}
+
+/** 观测台快照：这位 Agent 的心跳状态 + 最近几批执行 */
+export function agentPulse(id: string): Promise<PulseView> {
+  return requestJson<PulseView>(`${agentBase(id)}/pulse`)
+}
+
+/**
+ * 这位 Agent 的观测台实时流：后端只在快照有变化时推 pulse（整份），无变化时发注释帧保活；
+ * 单条流有最长保持时长，故调用方应在结束后重连。
+ */
+export function agentStream(
+  id: string,
+  onPulse: (pulse: PulseView) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return consumePulseStream(`${agentBase(id)}/stream`, onPulse, signal)
+}
+
+/* ---- 全局系统接口（base /api/system）：工具一览 + 全 Agent 观测台 ---- */
+
+/** 工具词典：全部工具的说明（只读，进「工具」子页时拉一次） */
+export function systemTools(): Promise<ToolInfoView[]> {
+  return requestJson<ToolInfoView[]>('/api/system/tools')
+}
+
+/** 观测台快照：全部启用心跳的 Agent + 跨 Agent 的最近几批执行 */
+export function systemPulse(): Promise<PulseView> {
+  return requestJson<PulseView>('/api/system/dashboard/pulse')
+}
+
+/** 全局观测台实时流（跨 Agent）：事件名 pulse，整份快照随事件到达 */
+export function systemStream(
+  onPulse: (pulse: PulseView) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return consumePulseStream('/api/system/dashboard/stream', onPulse, signal)
 }
 
 /* ---- RAG 召回留痕（三路召回工具调用的一次记录） ---- */
@@ -1611,22 +1823,23 @@ export const SUB_RAG_CHANNEL_LABELS: Record<SubRagChannel, string> = {
   memory: '时序事件',
 }
 
-/** 召回来源：这条检索发生在哪条流（对话 / 智能体群聊 / 心跳 / 计划 / 子代理） */
+/** 召回来源：这条检索发生在哪条流（对话 / 智能体群聊 / 心跳 / 职责 / 子代理） */
 export const SUB_RAG_SOURCE_LABELS: Record<string, string> = {
   chat: '对话',
   multiagent: '智能体群聊',
   heartbeat: '心跳主会话',
-  plan: '任务计划',
+  plan: '常驻职责',
   agent: '子代理',
   unknown: '未知',
 }
 
 /** 一条 RAG 召回留痕：query=调用参数原文，result=回给模型的 tool 消息原文（大模型实际拿到的原始数据） */
-export type SubRagRecall = {
+export type RagRecallView = {
   id: number
   channel: SubRagChannel
   tool: string
   source: string
+  agentId: string
   query: string | null
   result: string | null
   /** result 截断前的原始字符数 */
@@ -1634,31 +1847,18 @@ export type SubRagRecall = {
   createdAt: number
 }
 
-/** 最近若干条三路召回留痕（倒序）；channel 缺省表示全部 */
-export function subRagRecalls(
-  limit = 100,
-  channel?: SubRagChannel | null,
-): Promise<SubRagRecall[]> {
-  const q = new URLSearchParams({ limit: String(limit) })
-  if (channel) q.set('channel', channel)
-  return requestJson<SubRagRecall[]>(`/api/subconscious/rag-recalls?${q.toString()}`)
-}
-
-/** 清空召回留痕，返回删除条数 */
-export function subClearRagRecalls(): Promise<{ removed: number }> {
-  return requestJson<{ removed: number }>('/api/subconscious/rag-recalls', { method: 'DELETE' })
-}
-
 /**
- * 观测台实时流：后端只在「有变化」时推 pulse（整份快照），无变化时发注释帧保活；
- * 单条流有最长保持时长，故调用方应在结束后重连（见 Subconscious 页的循环重连）。
+ * 观测台实时流（fetch + ReadableStream 手工解析 SSE，事件名 pulse）：后端只在「有变化」时推整份快照，
+ * 无变化时发注释帧保活；单条流有最长保持时长，故调用方应在结束后重连。
+ * per-agent 的 agentStream 与全局的 systemStream 都复用这一份解析。
  */
-export async function subStream(
-  onPulse: (pulse: SubPulse) => void,
+async function consumePulseStream(
+  path: string,
+  onPulse: (pulse: PulseView) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-  const res = await apiFetch('/api/subconscious/stream', {
+  const res = await apiFetch(path, {
     credentials: 'same-origin',
     headers: { Accept: 'text/event-stream' },
     signal,
@@ -1678,7 +1878,7 @@ export async function subStream(
       else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
     }
     if (name === 'pulse' && data.length > 0) {
-      onPulse(JSON.parse(data.join('\n')) as SubPulse)
+      onPulse(JSON.parse(data.join('\n')) as PulseView)
     }
   }
 
@@ -1705,11 +1905,12 @@ export async function subStream(
 /* ---------- 多智能体（圆桌：一群具名成员在同一话题里轮流发言） ---------- */
 
 /** 成员：一个具名、常驻的发言者。每位成员自己那套「对话」提示词见下方 *MaPeerPrompt* 接口，
- *  与首页对话的全局提示词隔离；promptId 是旧字段，已不参与解析 */
+ *  与首页对话的全局提示词隔离 */
 export type MaPeer = {
   id: string
   name: string
-  promptId: string | null
+  /** 内置 Agent：不可删除、默认存在 */
+  builtin: boolean
   /** 额外允许调用的工具名；空数组 = 默认只读检索（外加状态机三件） */
   tools: string[]
   /** 绑定的工作空间（term_target.id）；非空才授予 run_command / list_terminals，且只能访问这几台 */
@@ -1717,6 +1918,10 @@ export type MaPeer = {
   modelId: string | null
   sort: number
   note: string | null
+  /** 角色：展示用的一句话岗位（如「产品经理」）；只在执行态卡片右上角的小标签上露面 */
+  role: string | null
+  /** 角色标签的颜色（#RRGGBB）；null=用默认灰 */
+  roleColor: string | null
   /** 头像：data:image/...;base64,... 的小图（前端压到 256px 后存库，不落磁盘）；null=用首字母兜底 */
   avatar: string | null
 }
@@ -1724,12 +1929,13 @@ export type MaPeer = {
 /** 新建 / 改写成员的请求体（改时只传要动的字段；avatar 传空串 = 移除头像） */
 export type MaPeerRequest = {
   name?: string | null
-  promptId?: string | null
   tools?: string[] | null
   terminals?: string[] | null
   modelId?: string | null
   sort?: number | null
   note?: string | null
+  role?: string | null
+  roleColor?: string | null
   avatar?: string | null
 }
 
@@ -1739,6 +1945,8 @@ export type MaToolOption = {
   description: string
   /** 会写知识库（文档 / 图谱）的工具，页面上给出提醒 */
   writes: boolean
+  /** 默认订阅（只读检索那一批）：无需勾选就始终可用；页面把它显示成已勾选并锁定 */
+  defaultGranted: boolean
   /** 业务领域 key（doc / graph / memory / general），页面按它分 Tab */
   domain: string
   /** 业务领域展示名（文档 / 图谱 / 记忆 / 其他） */
@@ -1780,6 +1988,13 @@ export type MaMessage = {
   reasoning: string | null
   trace: TraceSegment[] | null
   createdAt: string | null
+  /**
+   * 事件种类（仅 role=event 有）：joined / silent / propose_end / turn_end / topic_open …
+   *
+   * <p>它是「这一行是什么」的<b>协议</b>——界面按它分类与渲染，不再去匹配中文文案
+   * （后端改一个字，匹配就会静默错位）。老数据没有这一列，读侧按文案兜底。
+   */
+  kind?: string | null
 }
 
 /** 一次话题：一段有始有终的圆桌讨论（status: open 进行中 / closing 正在向沉默者确认 / closed 已收束） */
@@ -1793,6 +2008,10 @@ export type MaTopic = {
   resolveRound: number
   /** 成员名 → 状态名（INACTIVE / ACTIVE / SPEAKING / SILENT / PROMPTED / PROPOSE_END） */
   states: Record<string, string>
+  /** 成员名 → 发言状态（SPEAKING / LISTENING / SILENT）：与 executions 构成二维状态（设计一 §四） */
+  communications?: Record<string, string>
+  /** 成员名 → 执行状态（READY / RUNNING / WAITING_EVENT / BLOCKED / COMPLETED / CANCELLED） */
+  executions?: Record<string, string>
   participants: string[]
   createdAt: number
   closedAt: number | null
@@ -1818,6 +2037,20 @@ export const MA_STATE_LABELS: Record<string, string> = {
 }
 
 /**
+ * 成员的执行状态标签（二维状态的第二维，设计一 §四）：与 MA_STATE_LABELS 一起把
+ * 「向不向讨论室发言」×「工作走到哪」分开表达——于是「不说话但在跑」这类场面看得见。
+ */
+export const MA_EXEC_LABELS: Record<string, string> = {
+  READY: '就绪',
+  ADVANCED: '待推进',
+  RUNNING: '执行中',
+  WAITING_EVENT: '等待事件',
+  BLOCKED: '被阻塞',
+  COMPLETED: '已完成',
+  CANCELLED: '已取消',
+}
+
+/**
  * 圆桌的应答者策略（与后端 SpeakerStrategy 的 key 一一对应）：这一轮该谁说话。
  * 轮询是缺省——按名册顺序依次交接；随机每次掷骰子；发言欲望优先让「更想说的人」先开口。
  */
@@ -1828,30 +2061,30 @@ export const MA_SPEAKER_STRATEGIES: { value: string; label: string }[] = [
 ]
 
 export function listMaPeers(): Promise<MaPeer[]> {
-  return requestJson<MaPeer[]>('/api/multi-agent/peers')
+  return requestJson<MaPeer[]>('/api/agents/peers')
 }
 
 /** 可授予智能体的工具清单（成员页「可用工具」的候选） */
 export function listMaTools(): Promise<MaToolOption[]> {
-  return requestJson<MaToolOption[]>('/api/multi-agent/tools')
+  return requestJson<MaToolOption[]>('/api/agents/tools')
 }
 
 export function createMaPeer(req: MaPeerRequest): Promise<MaPeer> {
-  return requestJson<MaPeer>('/api/multi-agent/peers', {
+  return requestJson<MaPeer>('/api/agents/peers', {
     method: 'POST',
     body: JSON.stringify(req),
   })
 }
 
 export function updateMaPeer(id: string, req: MaPeerRequest): Promise<MaPeer> {
-  return requestJson<MaPeer>(`/api/multi-agent/peers/${encodeURIComponent(id)}`, {
+  return requestJson<MaPeer>(`/api/agents/peers/${encodeURIComponent(id)}`, {
     method: 'PUT',
     body: JSON.stringify(req),
   })
 }
 
 export function deleteMaPeer(id: string): Promise<{ id: string }> {
-  return requestJson<{ id: string }>(`/api/multi-agent/peers/${encodeURIComponent(id)}`, {
+  return requestJson<{ id: string }>(`/api/agents/peers/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   })
 }
@@ -1860,19 +2093,19 @@ export function deleteMaPeer(id: string): Promise<{ id: string }> {
 
 /** 这位成员的锚点视图（未绑定时 anchor=null） */
 export function getPeerAnchor(peerId: string): Promise<MaPeerAnchor> {
-  return requestJson<MaPeerAnchor>(`/api/multi-agent/peers/${encodeURIComponent(peerId)}/anchor`)
+  return requestJson<MaPeerAnchor>(`/api/agents/peers/${encodeURIComponent(peerId)}/anchor`)
 }
 
 /** 新建并绑定：以成员名落一个锚点实体；已绑定时幂等返回当前视图 */
 export function createPeerAnchor(peerId: string): Promise<MaPeerAnchor> {
-  return requestJson<MaPeerAnchor>(`/api/multi-agent/peers/${encodeURIComponent(peerId)}/anchor`, {
+  return requestJson<MaPeerAnchor>(`/api/agents/peers/${encodeURIComponent(peerId)}/anchor`, {
     method: 'POST',
   })
 }
 
 /** 解除绑定：只断开关联，锚点实体与其关系保留在图中 */
 export function deletePeerAnchor(peerId: string): Promise<MaPeerAnchor> {
-  return requestJson<MaPeerAnchor>(`/api/multi-agent/peers/${encodeURIComponent(peerId)}/anchor`, {
+  return requestJson<MaPeerAnchor>(`/api/agents/peers/${encodeURIComponent(peerId)}/anchor`, {
     method: 'DELETE',
   })
 }
@@ -1881,7 +2114,7 @@ export function deletePeerAnchor(peerId: string): Promise<MaPeerAnchor> {
 
 /** 这位成员自己那套「对话」提示词的全量视图（大类只有「对话」，版本 / 生效项 / 顺序都是它自己的） */
 export function getPeerPrompts(peerId: string): Promise<PromptsView> {
-  return requestJson<PromptsView>(`/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts`)
+  return requestJson<PromptsView>(`/api/agents/peers/${encodeURIComponent(peerId)}/prompts`)
 }
 
 export function createPeerPromptVersion(
@@ -1890,7 +2123,7 @@ export function createPeerPromptVersion(
   req: { name: string; content: string },
 ): Promise<PromptsView> {
   return requestJson<PromptsView>(
-    `/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts/slots/${encodeURIComponent(slot)}/versions`,
+    `/api/agents/peers/${encodeURIComponent(peerId)}/prompts/slots/${encodeURIComponent(slot)}/versions`,
     { method: 'POST', body: JSON.stringify(req) },
   )
 }
@@ -1901,14 +2134,14 @@ export function updatePeerPromptVersion(
   req: { name: string; content: string },
 ): Promise<PromptsView> {
   return requestJson<PromptsView>(
-    `/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts/versions/${encodeURIComponent(id)}`,
+    `/api/agents/peers/${encodeURIComponent(peerId)}/prompts/versions/${encodeURIComponent(id)}`,
     { method: 'PUT', body: JSON.stringify(req) },
   )
 }
 
 export function deletePeerPromptVersion(peerId: string, id: string): Promise<PromptsView> {
   return requestJson<PromptsView>(
-    `/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts/versions/${encodeURIComponent(id)}`,
+    `/api/agents/peers/${encodeURIComponent(peerId)}/prompts/versions/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   )
 }
@@ -1920,7 +2153,7 @@ export function bindPeerPromptSlot(
   versionId: string | null,
 ): Promise<PromptsView> {
   return requestJson<PromptsView>(
-    `/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts/slots/${encodeURIComponent(slot)}/binding`,
+    `/api/agents/peers/${encodeURIComponent(peerId)}/prompts/slots/${encodeURIComponent(slot)}/binding`,
     { method: 'PUT', body: JSON.stringify({ versionId }) },
   )
 }
@@ -1932,7 +2165,7 @@ export function savePeerPromptSlotContent(
   content: string,
 ): Promise<PromptsView> {
   return requestJson<PromptsView>(
-    `/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts/slots/${encodeURIComponent(slot)}/content`,
+    `/api/agents/peers/${encodeURIComponent(peerId)}/prompts/slots/${encodeURIComponent(slot)}/content`,
     { method: 'PUT', body: JSON.stringify({ content }) },
   )
 }
@@ -1943,18 +2176,18 @@ export function savePeerPromptContextOrder(
   slots: string[],
 ): Promise<PromptsView> {
   return requestJson<PromptsView>(
-    `/api/multi-agent/peers/${encodeURIComponent(peerId)}/prompts/contexts/${encodeURIComponent(context)}/order`,
+    `/api/agents/peers/${encodeURIComponent(peerId)}/prompts/contexts/${encodeURIComponent(context)}/order`,
     { method: 'PUT', body: JSON.stringify({ slots }) },
   )
 }
 
 export function listMaSessions(): Promise<MaSession[]> {
-  return requestJson<MaSession[]>('/api/multi-agent/sessions')
+  return requestJson<MaSession[]>('/api/agents/sessions')
 }
 
 /** 新建会话：memberIds 是勾选上桌的成员；空数组 = 全体名册 */
 export function createMaSession(memberIds: string[] = []): Promise<{ sessionId: string }> {
-  return requestJson<{ sessionId: string }>('/api/multi-agent/sessions', {
+  return requestJson<{ sessionId: string }>('/api/agents/sessions', {
     method: 'POST',
     body: JSON.stringify({ memberIds }),
   })
@@ -1962,7 +2195,7 @@ export function createMaSession(memberIds: string[] = []): Promise<{ sessionId: 
 
 export function deleteMaSession(id: string): Promise<{ sessionId: string }> {
   return requestJson<{ sessionId: string }>(
-    `/api/multi-agent/sessions/${encodeURIComponent(id)}`,
+    `/api/agents/sessions/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   )
 }
@@ -1970,11 +2203,128 @@ export function deleteMaSession(id: string): Promise<{ sessionId: string }> {
 /** 会话的消息；带 topicId 时只看那一次话题 */
 export function maMessages(id: string, topicId?: string): Promise<MaMessage[]> {
   const q = topicId ? `?topicId=${encodeURIComponent(topicId)}` : ''
-  return requestJson<MaMessage[]>(`/api/multi-agent/sessions/${encodeURIComponent(id)}/messages${q}`)
+  return requestJson<MaMessage[]>(`/api/agents/sessions/${encodeURIComponent(id)}/messages${q}`)
 }
 
 export function maTopics(id: string): Promise<MaTopic[]> {
-  return requestJson<MaTopic[]>(`/api/multi-agent/sessions/${encodeURIComponent(id)}/topics`)
+  return requestJson<MaTopic[]>(`/api/agents/sessions/${encodeURIComponent(id)}/topics`)
+}
+
+/** 一个智能体此刻的执行态（讨论态 × 执行态 + 名下任务计数） */
+export type MaWorkflowAgent = {
+  id: string
+  name: string
+  /** 发言状态：SPEAKING / LISTENING / SILENT；全局视角（不挂会话）下无意义，为 null */
+  communication: string | null
+  /** 执行状态：READY / RUNNING / WAITING_EVENT / BLOCKED / COMPLETED / CANCELLED */
+  execution: string
+  /** 此刻是否有执行线程（worker）在跑 */
+  working: boolean
+  pending: number
+  doing: number
+  done: number
+  /** 角色标签（执行态卡片右上角）：文案 + 颜色（#RRGGBB）；未设置时为 null */
+  role: string | null
+  roleColor: string | null
+}
+
+/** 共享任务区里的一条 */
+export type MaWorkflowTodo = {
+  id: string
+  title: string
+  detail: string | null
+  /** pending | doing | blocked | done | dropped */
+  status: string
+  ownerPeer: string | null
+  ownerName: string | null
+  createdBy: string | null
+  createdByName: string | null
+  result: string | null
+  blockReason: string | null
+  seq: number
+  /** 前置依赖的 todo id 清单（未完成的那些就是「它在等谁」；标题由页面按 id 解） */
+  dependsOn: string[]
+}
+
+/** 执行态图的数据源：一张桌子当前的编排全貌（讨论节点 + 成员 + 共享任务区） */
+export type MaWorkflow = {
+  sessionId: string | null
+  title: string | null
+  topicId: string | null
+  topicStatus: string | null
+  floorPeer: string | null
+  discussing: boolean
+  /** 整桌「推进集结」：全员顺利做完、正等共识决定交付或新一轮（全局视角下恒为 false） */
+  advancing: boolean
+  agents: MaWorkflowAgent[]
+  todos: MaWorkflowTodo[]
+}
+
+/**
+ * 执行态图（Agent 视角）：全局名册上所有智能体此刻的执行态，**不绑定会话**——
+ * 成员是否在跑跨会话取并集，任务计数跨会话聚合。
+ */
+export function maWorkflowOverview(): Promise<MaWorkflow> {
+  return requestJson<MaWorkflow>('/api/agents/workflow')
+}
+
+/** 执行态图（任务视角）：某会话的编排全貌；sessionId 缺省时后端返回全局总览 */
+export function maWorkflow(sessionId?: string): Promise<MaWorkflow> {
+  const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
+  return requestJson<MaWorkflow>(`/api/agents/workflow${q}`)
+}
+
+/** 一次执行的过程留痕（点开一条任务时回放：Agent 到底在干嘛） */
+export type MaWorkRun = {
+  id: number
+  todoId: string
+  peerId: string | null
+  peerName: string | null
+  /** running | done | failed | blocked */
+  status: string
+  output: string | null
+  reasoning: string | null
+  trace: TraceSegment[]
+  error: string | null
+  startedAt: number
+  finishedAt: number | null
+}
+
+/** 某条待办的执行历史（含思考链与过程分段） */
+export function maTodoRuns(todoId: string, limit = 10): Promise<MaWorkRun[]> {
+  return requestJson<MaWorkRun[]>(
+    `/api/agents/todos/${encodeURIComponent(todoId)}/runs?limit=${limit}`,
+  )
+}
+
+/** 人对任务板一次干预（放弃 / 暂时跳过 / 立刻检查）的结果：改完之后的这条 */
+export type MaTodoPatch = {
+  /** 是否真的改了（条目不存在或该动作不适用时为 false） */
+  ok: boolean
+  id: string
+  status: string | null
+  priority: number
+}
+
+function todoAction(id: string, action: 'drop' | 'defer' | 'check'): Promise<MaTodoPatch> {
+  return requestJson<MaTodoPatch>(`/api/agents/todos/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+  })
+}
+
+/** 放弃一条任务：置 dropped（它的下游依赖随之解锁） */
+export function dropMaTodo(id: string): Promise<MaTodoPatch> {
+  return todoAction(id, 'drop')
+}
+
+/** 暂时跳过：把这条压到最低优先级，有别的活就先做别的 */
+export function deferMaTodo(id: string): Promise<MaTodoPatch> {
+  return todoAction(id, 'defer')
+}
+
+/** 立刻检查：拉满优先级插到该成员队首，并把它的执行线程叫起来（不打断正在跑的那次） */
+export function checkMaTodo(id: string): Promise<MaTodoPatch> {
+  return todoAction(id, 'check')
 }
 
 /** 某条发言**当时真正发出去的原始上下文**（组装出的 messages + tools）。
@@ -1983,7 +2333,7 @@ export function maMessageContext(
   messageId: number,
 ): Promise<{ messageId: number; context: string | null }> {
   return requestJson<{ messageId: number; context: string | null }>(
-    `/api/multi-agent/messages/${messageId}/context`,
+    `/api/agents/messages/${messageId}/context`,
   )
 }
 
@@ -2020,7 +2370,7 @@ export async function maChatStream(
   signal?: AbortSignal,
 ): Promise<MaTurnResult> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-  const res = await apiFetch('/api/multi-agent/chat/stream', {
+  const res = await apiFetch('/api/agents/chat/stream', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -2095,7 +2445,7 @@ export async function maChatStream(
 
 /** 打断当前发言（页面的「停止」按钮）：正在说话的那位就此打住，已说出的部分照常落库 */
 export function stopMaChat(sessionId: string): Promise<{ stopped: boolean }> {
-  return requestJson<{ stopped: boolean }>('/api/multi-agent/chat/stop', {
+  return requestJson<{ stopped: boolean }>('/api/agents/chat/stop', {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
   })

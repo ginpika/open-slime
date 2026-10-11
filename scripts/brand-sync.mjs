@@ -10,7 +10,7 @@
  * 其余各处（前端 Vite、后端 classpath、桌面壳 build.rs）都在构建期直接读 branding.json，
  * 无需本脚本。改正式名称时：改 branding.json → 跑一次本脚本（或被下列构建入口自动调用）：
  *   - desktop/package.json 的 predev / prebuild
- *   - compile-desktop.cmd、desktop/scripts/assemble-runtime.{ps1,sh} 的起始处
+ *   - desktop/assemble-runtime.ps1 的起始处
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'

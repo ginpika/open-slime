@@ -176,7 +176,7 @@ export default function GraphECharts({
           position: 'bottom' as const,
           color: em ? c.fg : c.muted,
           fontWeight: em ? 700 : 400,
-          fontSize: 12,
+          fontSize: 13,
           textBorderColor: c.bg,
           textBorderWidth: 3,
         },
@@ -197,7 +197,7 @@ export default function GraphECharts({
           formatter: (p: { data?: unknown }) =>
             (p.data as { predicate?: string } | undefined)?.predicate ?? '',
           color: hi ? c.fg : c.faint,
-          fontSize: 11,
+          fontSize: 12,
           textBorderColor: c.bg,
           textBorderWidth: 3,
         },
@@ -226,8 +226,8 @@ export default function GraphECharts({
           autoCurveness: true,
           edgeSymbol: ['none', 'arrow'],
           edgeSymbolSize: 6,
-          /* hover 节点：突出其邻接子图，其余淡出 */
-          emphasis: { focus: 'adjacency' as const, scale: 1.15 },
+          /* hover 节点：仅放大自身，不淡出其他实体（避免来回移动时画面闪烁） */
+          emphasis: { scale: 1.15 },
           data,
           links,
         },

@@ -2,6 +2,7 @@ package cc.ginpika.minis.ai.knowledge.ingest;
 
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolResult;
+import cc.ginpika.minis.ai.core.tool.NowTool;
 import cc.ginpika.minis.ai.core.util.LlmJson;
 import cc.ginpika.minis.ai.core.tool.doc.CreateDocumentTool;
 import cc.ginpika.minis.ai.core.tool.doc.ReadDocumentTool;
@@ -30,6 +31,8 @@ import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
 import cc.ginpika.minis.ai.knowledge.store.DocumentStore;
 import cc.ginpika.minis.ai.knowledge.store.GraphStore;
 import com.fasterxml.jackson.databind.JsonNode;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -78,6 +81,10 @@ public class KnowledgeToolbox {
     private static final float VECTOR_RESOLVE_MIN = 0.55f;
     private static final float VECTOR_GAP_MIN = 0.05f;
     private static final float VECTOR_CANDIDATE_MIN = 0.40f;
+
+    /** now 工具的时间戳格式 */
+    private static final DateTimeFormatter NOW_STAMP =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final FastSearchService fast;
     private final GraphStore graph;
@@ -134,6 +141,7 @@ public class KnowledgeToolbox {
             case ReadDocumentTool.NAME -> readDocumentTool(args);
             case RecallMemoryTool.NAME -> recallMemoryTool(args);
             case BackfillMemoryVectorsTool.NAME -> backfillMemoryVectorsTool(args);
+            case NowTool.NAME -> nowText();
             default -> "未知工具: " + name;
         };
         /* 三路召回（向量 / 图 / 时序事件）的工具调用留一行：查询与回给模型的原始数据原样记下 */
@@ -562,6 +570,11 @@ public class KnowledgeToolbox {
                 MemoryEmbeddingWriter.BACKFILL_MAX));
         return done == 0 ? "没有缺向量的记忆事件（或本次全部跳过）"
                 : "已补齐 " + done + " 条记忆事件的向量（模型: " + embedding.model() + "）";
+    }
+
+    /** now：当前本地日期时间（yyyy-MM-dd HH:mm:ss）——运行时素材不再注入，由模型按需现取 */
+    private static String nowText() {
+        return LocalDateTime.now().format(NOW_STAMP);
     }
 
     /** 空白串归一为 null（过滤条件的「缺省不限」）；数值夹取到 [min, max] */

@@ -17,6 +17,7 @@ import {
   deleteSession,
   getPrompts,
   getSettings,
+  listMaPeers,
   listSessions,
   loginUrlOf,
   PROMPT_BUILTIN,
@@ -25,14 +26,19 @@ import {
   sessionLive,
   sessionMessages,
   sessionRawContext,
+  sessionTodos,
   updateSessionConfig,
+  type MaPeer,
   type PromptsView,
+  type RawContext,
   type SessionItem,
   type SessionMessage,
+  type SessionTodo,
   type SettingsView,
   type TraceSegment,
 } from '../api/client'
 import FloatWindow from '../components/FloatWindow'
+import { RawContextView } from '../components/JsonViewer'
 import Toast from '../components/Toast'
 import { registerChatOpener } from '../components/ChatNotifier'
 import {
@@ -42,11 +48,12 @@ import {
   setActiveChatSession,
   startChat,
   stopChat,
-  useAwaitingReport,
   useLiveChat,
   type ChatMsg,
   type LiveChat,
 } from '../components/chatLive'
+import { subscribeSessionEvents } from '../components/sessionEvents'
+import { useThemeState } from '../theme/store'
 
 type Props = { connErr: string | null }
 
@@ -130,13 +137,13 @@ function fmtTime(iso: string | null): string {
  *  ReactMarkdown 每次父级重渲染都要全量重新解析 markdown，是长会话打字卡顿的主因之一 */
 const makeMdComponents = (onBubble: boolean): Components => ({
   h1: (p: object) => (
-    <h1 className="my-2 text-[15px] font-semibold first:mt-0 last:mb-0" {...p} />
+    <h1 className="my-2 text-lg font-semibold first:mt-0 last:mb-0" {...p} />
   ),
   h2: (p: object) => (
-    <h2 className="my-2 text-[14.5px] font-semibold first:mt-0 last:mb-0" {...p} />
+    <h2 className="my-2 text-md font-semibold first:mt-0 last:mb-0" {...p} />
   ),
   h3: (p: object) => (
-    <h3 className="my-2 text-[14px] font-semibold first:mt-0 last:mb-0" {...p} />
+    <h3 className="my-2 text-base font-semibold first:mt-0 last:mb-0" {...p} />
   ),
   p: (p: object) => <p className="my-1.5 first:mt-0 last:mb-0" {...p} />,
   a: (p: object) => (
@@ -167,12 +174,12 @@ const makeMdComponents = (onBubble: boolean): Components => ({
   ),
   code: ({ className, children, ...rest }: { className?: string; children?: React.ReactNode }) =>
     className?.includes('language-') ? (
-      <code className="font-mono text-[12.5px] leading-6" {...rest}>
+      <code className="font-mono text-sm leading-6" {...rest}>
         {children}
       </code>
     ) : (
       <code
-        className={`rounded px-1 py-0.5 font-mono text-[12px] ${
+        className={`rounded px-1 py-0.5 font-mono text-sm ${
           onBubble ? 'bg-primary-fg/15' : 'bg-fg/5'
         }`}
         {...rest}
@@ -182,14 +189,14 @@ const makeMdComponents = (onBubble: boolean): Components => ({
     ),
   pre: (p: object) => (
     <pre
-      className={`scrollbar-slim my-2 overflow-x-auto rounded-lg border p-3 font-mono text-[12.5px] leading-6 first:mt-0 last:mb-0 ${
+      className={`scrollbar-slim my-2 overflow-x-auto rounded-lg border p-3 font-mono text-sm leading-6 first:mt-0 last:mb-0 ${
         onBubble ? 'border-primary-fg/20 bg-primary-fg/5' : 'border-line bg-fg/[0.03]'
       }`}
       {...p}
     />
   ),
   table: (p: object) => (
-    <table className="my-2 w-full border-collapse text-[13px] first:mt-0 last:mb-0" {...p} />
+    <table className="my-2 w-full border-collapse text-base first:mt-0 last:mb-0" {...p} />
   ),
   th: (p: object) => (
     <th
@@ -303,7 +310,7 @@ const CotBlock = memo(function CotBlock({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-faint transition hover:text-muted"
+        className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium uppercase tracking-[0.12em] text-faint transition hover:text-muted"
       >
         <svg
           className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
@@ -325,10 +332,10 @@ const CotBlock = memo(function CotBlock({
       {open && (
         <div
           ref={bodyRef}
-          className="scrollbar-slim max-h-64 overflow-y-auto border-t border-line px-3 py-2 text-[12.5px] leading-relaxed text-muted"
+          className="scrollbar-slim max-h-64 overflow-y-auto border-t border-line px-3 py-2 text-sm leading-relaxed text-muted"
         >
           {code !== undefined ? (
-            <pre className="whitespace-pre-wrap break-all font-mono text-[12px]">{code}</pre>
+            <pre className="whitespace-pre-wrap break-all font-mono text-sm">{code}</pre>
           ) : plain ? (
             <div className="whitespace-pre-wrap break-words">{text ?? ''}</div>
           ) : (
@@ -464,7 +471,7 @@ const UserRow = memo(function UserRow({
 }) {
   return (
     <div className="group relative flex justify-end">
-      <div className="max-w-[85%] break-words rounded-2xl rounded-br-sm bg-fg px-4 py-2.5 text-[14px] leading-relaxed text-primary-fg">
+      <div className="max-w-[85%] break-words rounded-2xl rounded-br-sm bg-fg px-4 py-2.5 text-md leading-relaxed text-primary-fg">
         <BubbleMd content={msg.content} onBubble />
       </div>
       {/* hover 气泡时浮现在其下方消息间隙里的回退按钮：删掉这条提问及其后的对话，
@@ -475,7 +482,7 @@ const UserRow = memo(function UserRow({
           onClick={() => onRewind(index)}
           title="回到这条提问之前（内容放回输入框）"
           aria-label="回到这条提问之前"
-          className="absolute -bottom-5 right-1 flex cursor-pointer items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-[11px] text-faint opacity-0 shadow-sm transition group-hover:opacity-100 hover:text-fg"
+          className="absolute -bottom-5 right-1 flex cursor-pointer items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-xs text-faint opacity-0 shadow-sm transition group-hover:opacity-100 hover:text-fg"
         >
           <svg
             className="h-3 w-3"
@@ -510,7 +517,7 @@ const AssistantRow = memo(function AssistantRow({
   showRounds: boolean
 }) {
   return (
-    <div className="break-words border-l border-line pl-4 text-[14px] leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
+    <div className="break-words border-l border-line pl-4 text-md leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
       {/* 正在流式生成的这条默认展开跟随输出；历史回放的默认收起 */}
       {showCot && <TraceBlocks msg={msg} live={!!msg.streaming} showRounds={showRounds} />}
       {msg.streaming ? (
@@ -519,6 +526,70 @@ const AssistantRow = memo(function AssistantRow({
       ) : (
         <BubbleMd content={msg.content} />
       )}
+    </div>
+  )
+})
+
+/** 待办项状态 → 文本样式（plan-of-record 的四态；未知态按 pending 兜底） */
+const TODO_TONE: Record<string, string> = {
+  pending: 'text-fg',
+  in_progress: 'text-accent',
+  done: 'text-hint line-through',
+  failed: 'text-red-500',
+}
+
+/** 待办项左侧标记：完成=勾、失败=叉、进行中=实心脉冲点、待做=空心圈 */
+function TodoMark({ status }: { status: string }) {
+  if (status === 'done') {
+    return (
+      <svg className="mt-[3px] h-3.5 w-3.5 shrink-0 text-accent" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+  if (status === 'failed') {
+    return (
+      <svg className="mt-[3px] h-3.5 w-3.5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      </svg>
+    )
+  }
+  return (
+    <span className="mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden="true">
+      <span
+        className={
+          status === 'in_progress'
+            ? 'h-2 w-2 animate-pulse rounded-full bg-accent'
+            : 'h-2 w-2 rounded-full border border-line-strong'
+        }
+      />
+    </span>
+  )
+}
+
+/** 会话 TODO 卡片：把 agent 的 plan-of-record（write_todos 覆盖式写入）显示成一张进度卡。
+ *  内容为空时不渲染（由调用处判空）。 */
+const TodoCard = memo(function TodoCard({ todos }: { todos: SessionTodo[] }) {
+  const done = todos.filter((t) => t.status === 'done').length
+  const failed = todos.filter((t) => t.status === 'failed').length
+  return (
+    <div className="ui-surface flex max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] flex-col rounded-xl border border-line px-4 py-3 shadow-xl">
+      <div className="mb-2 flex shrink-0 items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-faint">
+        <span>待办清单</span>
+        <span className="tabular-nums">{done}/{todos.length}</span>
+        {failed > 0 && <span className="normal-case tracking-normal text-red-500">{failed} 步失败</span>}
+      </div>
+      <ul className="scrollbar-slim min-h-0 space-y-1.5 overflow-y-auto">
+        {todos.map((t) => (
+          <li key={t.seq} className="flex items-start gap-2 text-base leading-relaxed">
+            <TodoMark status={t.status} />
+            <span className={`min-w-0 flex-1 ${TODO_TONE[t.status] ?? TODO_TONE.pending}`}>
+              {t.content}
+              {t.note && <span className="ml-1 text-hint">— {t.note}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 })
@@ -552,17 +623,17 @@ const SubagentBubble = memo(function SubagentBubble({
             className={`h-1.5 w-1.5 shrink-0 rounded-full ${failed ? 'bg-red-500' : 'bg-accent'}`}
             aria-hidden="true"
           />
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-fg">{title}</span>
-          <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10.5px] font-medium tracking-wide text-faint">
+          <span className="min-w-0 flex-1 truncate text-base font-semibold text-fg">{title}</span>
+          <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-2xs font-medium tracking-wide text-faint">
             {failed ? '子代理未完成' : '子代理回报'}
           </span>
         </div>
         {brief?.summary && (
-          <p className="mt-1.5 line-clamp-3 text-[12.5px] leading-relaxed text-muted">
+          <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-muted">
             {brief.summary}
           </p>
         )}
-        <span className="mt-2 flex items-center gap-1 text-[11px] text-accent">
+        <span className="mt-2 flex items-center gap-1 text-xs text-accent">
           查看完整结论
           <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path
@@ -584,11 +655,36 @@ const SubagentBubble = memo(function SubagentBubble({
  *  过渡效果；滚轮拦截让两页各自锁定（搜索页不向下、对话页不外溢），拖拽选中文本期间再把
  *  main 临时锁为不可滚，防止选中自动滚动把视口带回搜索页。左侧抽屉可切换/新建会话。 */
 export default function Home({ connErr }: Props) {
+  /** 当前主题（蔚蓝档案下首页标题换主题专属 title.png）；mono.sidebar 决定 Tailwind Mono 是否走侧边栏档 */
+  const { themeId, mono } = useThemeState()
+  /** BA 动画背景开关（层叠天空 + 会话白幕），记忆到 localStorage */
+  const [skyOn, setSkyOn] = useState(() => {
+    try {
+      return localStorage.getItem('minis.ba.sky') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const toggleSky = () => {
+    setSkyOn((v) => {
+      const next = !v
+      try {
+        localStorage.setItem('minis.ba.sky', next ? '1' : '0')
+      } catch {
+        /* 隐私模式等场景忽略 */
+      }
+      return next
+    })
+  }
+  const showSky = themeId === 'bluearchive' && skyOn
   /** 底部输入框是否有内容：仅在空↔非空翻转时更新，用于发送按钮禁用态。
    *  打字本身只重渲染输入框组件，不触发这里（否则长会话会随击键全量重渲染） */
   const [hasText, setHasText] = useState(false)
   const [chatMode, setChatMode] = useState(false)
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
+  /** 当前会话的个人待办清单（plan-of-record）：TODO 卡片的数据源；
+   *  由会话事件（kind=todo）与生成结束（busy→false）驱动刷新（见下方两个效应） */
+  const [todos, setTodos] = useState<SessionTodo[]>([])
   /** 错误轻提示（message box，替代页内错误文案：发送失败 / 会话加载失败 / 后端未连通） */
   const [toast, setToast] = useState<string | null>(null)
 
@@ -607,8 +703,6 @@ export default function Home({ connErr }: Props) {
      它跨页面挂载存活，所以离开会话/切到别的页再回来，仍能续看推理进度、续点「停止」 */
   const live = useLiveChat(sessionId)
   const busy = live?.running === true
-  /** 该会话派出去的子代理是否还在等回报：有它才开轮询——结论是异步投回的，前端得自己发现它到了 */
-  const awaitingReport = useAwaitingReport(sessionId)
 
   /** 消息列表的展示副本：历史 + 本次生成中的两条（提问 + 流式回答）。
    *  生成落定后由下面的效应并回 msgs 并清掉快照，此后以 msgs 为准 */
@@ -620,8 +714,9 @@ export default function Home({ connErr }: Props) {
   /** 正在弹窗查看完整结论的子代理气泡（null=未打开）：气泡只显示标题+摘要，全文在这里看 */
   const [reportView, setReportView] = useState<ChatMsg | null>(null)
 
-  /** 正在弹窗查看的原始上下文（null=未打开）：model 用于标题，json 为格式化后的请求体全文 */
-  const [rawView, setRawView] = useState<{ model: string; json: string } | null>(null)
+  /** 正在弹窗查看的原始上下文（null=未打开）：ctx=后端按真实发送规则组装的请求体 + 逐 Turn 切片，
+   *  sessionId 供回看某个 Turn 的调用留痕（用 Turn 感知的 JSON 预览器 RawContextView 展示） */
+  const [rawView, setRawView] = useState<{ sessionId: string; ctx: RawContext } | null>(null)
 
   /* 本次会话使用的模型 / 系统提示词 / 是否显示 CoT / 工具轮数上限 / 思维链轮次计数：
      属会话级配置（「…」菜单），随会话存取——进入历史会话时从后端恢复，菜单变更时回写后端 */
@@ -630,6 +725,10 @@ export default function Home({ connErr }: Props) {
   const [prompts, setPrompts] = useState<PromptsView | null>(null)
   const [modelId, setModelId] = useState('')
   const [promptId, setPromptId] = useState('')
+  /** 本会话跟哪位 Agent 对话（「…」菜单切换）：'' = 内置 Agent（用全局「对话身份」提示词） */
+  const [agentId, setAgentId] = useState('')
+  /** 可选智能体名册（「…」菜单的「智能体」分区）：展开菜单时拉取 */
+  const [peers, setPeers] = useState<MaPeer[]>([])
   /** 输入框左侧「…」菜单：向上弹出，切换模型 / 提示词 / CoT 显示 */
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -660,14 +759,19 @@ export default function Home({ connErr }: Props) {
     }
   }, [menuOpen])
 
-  /* 「…」菜单展开时静默刷新提示词视图：身份版本/绑定可能在提示词页改过（含其它标签页），
-     菜单里的版本列表与「跟随提示词页」的解析结果要跟那边保持一致；失败不打扰 */
+  /* 「…」菜单展开时静默刷新提示词视图与智能体名册：身份版本/绑定可在提示词页改过、
+     成员名册可在智能体页改过（含其它标签页），菜单里的列表要跟那边保持一致；失败不打扰 */
   useEffect(() => {
     if (!menuOpen) return
     let alive = true
     getPrompts()
       .then((p) => {
         if (alive) setPrompts(p)
+      })
+      .catch(() => {})
+    listMaPeers()
+      .then((list) => {
+        if (alive) setPeers(list)
       })
       .catch(() => {})
     return () => {
@@ -700,6 +804,30 @@ export default function Home({ connErr }: Props) {
     return () => ro.disconnect()
   }, [])
 
+  /* 最近会话抽屉的左缘基准：外壳带左侧栏时要贴着主视图左缘弹出，不能盖在侧栏上。
+     两种带左侧栏的排布——Tailwind Mono 侧边栏档、桌面壳的 88px 菜单栏——抽屉都得避开：
+       · 侧边栏档：<main> 本就贴着主视图左缘，直接量它；
+       · 桌面壳：主视图在菜单栏右侧，此时 <main> 是居中的内容列，得量主容器 .df__stage；
+       · 默认（Web + 顶部横排）：保持贴视口最左侧，即 0。
+     侧栏宽度/菜单栏宽度都是常量，量一次即可，窗口缩放或排布切换时再量 */
+  const [panelLeft, setPanelLeft] = useState(0)
+  useLayoutEffect(() => {
+    const main = searchPageRef.current?.closest('main')
+    if (!main) return
+    const update = () => {
+      const anchor = mono.sidebar ? main : main.closest('.df__stage')
+      setPanelLeft(anchor ? anchor.getBoundingClientRect().left : 0)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(main)
+    window.addEventListener('resize', update)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', update)
+    }
+  }, [mono.sidebar])
+
   /* 「对话身份」提示词位：内置（.env）+ 用户版本，会话可在「…」菜单里单独切换 */
   const identity = useMemo(
     () =>
@@ -721,6 +849,11 @@ export default function Home({ connErr }: Props) {
     promptId && identityOptions.some((o) => o.id === promptId) ? promptId : ''
   /* 本会话实际使用的身份版本：会话显式钉住 → 提示词页的绑定 → 内置 */
   const effectivePromptId = pinnedPromptId || identity?.activeVersionId || PROMPT_BUILTIN
+
+  /* 本会话实际对话的 Agent：'' / 名册里找不到（已删除）→ 内置 Agent（与后端 agentOf 同口径） */
+  const effectiveAgentId = agentId && peers.some((p) => p.id === agentId) ? agentId : 'builtin'
+  /** 当前所选 Agent 的展示名（内置 Agent 不在名册时回退文案） */
+  const currentAgentName = peers.find((p) => p.id === effectiveAgentId)?.name ?? '内置 Agent'
 
   /* 上下文占比：系统提示词 + 会话消息按 token 估算，除以所选模型的上下文窗口（未配置按默认值） */
   const contextPct = useMemo(() => {
@@ -789,33 +922,57 @@ export default function Home({ connErr }: Props) {
     }
   }, [])
 
-  /* 子代理的结论是异步投回的（后端跑完才把它作为一条新消息落库并打未读点）：派过活之后
-     轮询会话列表，等本会话出现未读——那说明结论到了，重新拉一次消息把它刷出来。
-     只在本会话派过活时开（awaitingReport 按会话记，跨挂载存活）；刻意不取消轮询，
-     一次派好几件时每一件的回报都能各自触发一次刷新 */
+  /* 子代理的结论是异步投回的（后端跑完才把它作为一条新消息落库并打未读点）：STEP 4 起不再每 4 秒
+     轮询会话列表，改由会话事件推送即时告知——本会话一有消息投递就重新拉一次把它刷出来（无轮询延迟）。
+     正在生成时不刷：流式视图在渲染，等它收尾由落定逻辑并回，免得与在途快照打架 */
   useEffect(() => {
-    if (!awaitingReport || sessionId === null || busy) return
-    let stopped = false
-    const timer = setInterval(async () => {
-      try {
-        const list = await listSessions()
-        if (stopped) return
-        /* 本会话没有新投递：什么都不动——避免每几秒无谓地重渲染整个消息列表 */
-        if (!list.find((s) => s.id === sessionId)?.unread) return
-        const rows = await sessionMessages(sessionId) // 顺带把该会话的未读清零
-        if (stopped) return
-        setMsgs(toChatMsgs(rows))
-        /* 未读点后端已清零：本地列表同步改掉，免得抽屉上还挂着点 */
-        setSessions(list.map((s) => (s.id === sessionId ? { ...s, unread: false } : s)))
-      } catch {
-        /* 轮询失败静默：下一拍再试 */
-      }
-    }, 4000)
-    return () => {
-      stopped = true
-      clearInterval(timer)
+    if (sessionId === null || busy) return
+    return subscribeSessionEvents((e) => {
+      if (e.sessionId !== sessionId || e.kind !== 'delivered') return
+      void sessionMessages(sessionId) // 顺带把该会话的未读清零
+        .then((rows) => {
+          setMsgs(toChatMsgs(rows))
+          /* 未读点后端已清零：本地列表同步改掉，免得抽屉上还挂着点 */
+          setSessions((cur) => cur.map((s) => (s.id === sessionId ? { ...s, unread: false } : s)))
+        })
+        .catch(() => {
+          /* 取消息失败静默：历史仍在，下次事件或切页时会再拉 */
+        })
+    })
+  }, [sessionId, busy])
+
+  /* 个人待办清单（plan-of-record）：切会话时拉一次，本次生成收尾（busy→false）后再拉一次——
+     把生成期间 write_todos 覆盖写入的最终清单刷进来（生成中不刷，免得与在途视图交叠） */
+  useEffect(() => {
+    if (sessionId === null) {
+      setTodos([])
+      return
     }
-  }, [awaitingReport, sessionId, busy])
+    let alive = true
+    void sessionTodos(sessionId)
+      .then((rows) => {
+        if (alive) setTodos(rows)
+      })
+      .catch(() => {
+        /* 取清单失败静默：下次生成结束 / 事件到达时会再拉 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [sessionId, busy])
+
+  /* 生成中 write_todos 一落库，后端即推 kind=todo：这条订阅不受 busy 限制，够即时把卡片刷成最新 */
+  useEffect(() => {
+    if (sessionId === null) return
+    return subscribeSessionEvents((e) => {
+      if (e.sessionId !== sessionId || e.kind !== 'todo') return
+      void sessionTodos(sessionId)
+        .then(setTodos)
+        .catch(() => {
+          /* 静默：下一轮事件或生成结束时兜底 */
+        })
+    })
+  }, [sessionId])
 
   /* 对话页滚轮只作用于消息列表：内容不足一屏或已到边界时不再外溢回搜索页 */
   useEffect(() => {
@@ -1005,6 +1162,7 @@ export default function Home({ connErr }: Props) {
     cfg: {
       modelId?: string | null
       promptId?: string | null
+      agentId?: string | null
       showCot?: boolean
       maxRounds?: number
       showRounds?: boolean
@@ -1014,6 +1172,8 @@ export default function Home({ connErr }: Props) {
       await updateSessionConfig(sid, {
         modelId: cfg.modelId || null,
         promptId: cfg.promptId ?? null,
+        /* undefined=不改；空串=清除所选 Agent、回到内置 Agent（后端把它落成 NULL）；否则=所选成员 id */
+        agentId: cfg.agentId === undefined ? null : cfg.agentId,
         showCot: cfg.showCot ?? null,
         maxRounds: cfg.maxRounds ?? null,
         showRounds: cfg.showRounds ?? null,
@@ -1044,8 +1204,8 @@ export default function Home({ connErr }: Props) {
     }
   }
 
-  /** 「查看原始上下文」：拉取后端按真实发送规则组装的 /chat/completions 请求体，弹窗展示
-   *  （不发送、不落库；此刻再发一条消息时系统发给大模型接口的就是这份内容） */
+  /** 「查看原始上下文」：拉取后端按真实发送规则组装的 /chat/completions 请求体，弹出 Turn 感知的
+   *  JSON 预览器展示（不发送、不落库；此刻再发一条消息时系统发给大模型接口的就是这份内容） */
   const viewRawContext = async () => {
     if (!sessionId) {
       setToast('当前还没有会话')
@@ -1053,8 +1213,8 @@ export default function Home({ connErr }: Props) {
     }
     setMenuOpen(false)
     try {
-      const body = await sessionRawContext(sessionId)
-      setRawView({ model: body.model, json: JSON.stringify(body, null, 2) })
+      const ctx = await sessionRawContext(sessionId)
+      setRawView({ sessionId, ctx })
     } catch (e) {
       const msg = errorText(e)
       if (msg !== null) setToast(`原始上下文加载失败：${msg}`)
@@ -1087,6 +1247,7 @@ export default function Home({ connErr }: Props) {
       if (item) {
         setModelId(item.modelId ?? settings?.defaultModelId ?? '')
         setPromptId(item.promptId ?? '')
+        setAgentId(item.agentId ?? '')
         setShowCot(item.showCot ?? true)
         setMaxRounds(item.maxRounds ?? 30)
         setShowRounds(item.showRounds ?? false)
@@ -1175,10 +1336,11 @@ export default function Home({ connErr }: Props) {
       setSessionActive(true)
       setMsgs([])
       setPanelOpen(false)
-      /* 新会话延续模型 / CoT / 轮数上限 / 轮次计数显示选择；身份提示词不延续——新会话默认跟随提示词页的「对话身份」绑定 */
+      /* 新会话延续模型 / Agent / CoT / 轮数上限 / 轮次计数显示选择；身份提示词不延续——新会话默认跟随提示词页的「对话身份」绑定 */
       setPromptId('')
       await saveConfig(s.id, {
         modelId: modelId || null,
+        agentId: agentId || null,
         showCot,
         maxRounds,
         showRounds,
@@ -1203,8 +1365,8 @@ export default function Home({ connErr }: Props) {
         sid = s.id
         setSessionId(s.id)
         setSessionActive(true)
-        /* 模型/提示词随本次请求落库，这里补记 CoT 显示、轮数上限与轮次计数，便于再次进入该会话时回显 */
-        await saveConfig(s.id, { showCot, maxRounds, showRounds })
+        /* 模型/提示词随本次请求落库，这里补记 Agent 选择、CoT 显示、轮数上限与轮次计数，便于再次进入该会话时回显 */
+        await saveConfig(s.id, { agentId: agentId || null, showCot, maxRounds, showRounds })
       }
       startChat({
         sessionId: sid,
@@ -1303,6 +1465,55 @@ export default function Home({ connErr }: Props) {
 
   return (
     <>
+      {/* BA 专属：官网抠像的层叠天空背景（bg → cloud-b → cloud-a → frame），
+          云层钟摆漂移的编排见 shell.css 的 .ba-homesky；由右上角悬浮钮开关 */}
+      {showSky && (
+        <div className="ba-homesky" aria-hidden="true">
+          <img src="/theme/blue-archive/students-bg.jpg" alt="" />
+          <img
+            src="/theme/blue-archive/students-bg-cloud-b.png"
+            alt=""
+            className="ba-homesky__cloud ba-homesky__cloud--b"
+          />
+          <img
+            src="/theme/blue-archive/students-bg-cloud-a.png"
+            alt=""
+            className="ba-homesky__cloud ba-homesky__cloud--a"
+          />
+          <img src="/theme/blue-archive/students-bg-frame.png" alt="" />
+        </div>
+      )}
+      {/* BA 天空的可读性白幕：进入会话界面（chatMode）时 fadeIn，
+          罩在天空四层之上、页面内容之下（见 shell.css 的 .ba-homesky-veil） */}
+      {showSky && (
+        <div
+          className={`ba-homesky-veil${chatMode ? ' ba-homesky-veil--on' : ''}`}
+          aria-hidden="true"
+        />
+      )}
+      {/* 内容区右上角悬浮钮：隐藏/显示动画背景（仅 BA 主题） */}
+      {themeId === 'bluearchive' && (
+        <button
+          type="button"
+          onClick={toggleSky}
+          title={skyOn ? '隐藏动画背景' : '显示动画背景'}
+          aria-label={skyOn ? '隐藏动画背景' : '显示动画背景'}
+          aria-pressed={skyOn}
+          className="ba-sky-toggle fixed right-5 top-[84px] z-20 flex h-9 w-9 items-center justify-center rounded-full border-[1.5px] border-line bg-[var(--ui-card-fill,var(--c-bg))] transition hover:border-accent"
+          style={{
+            color: skyOn ? 'var(--c-accent)' : 'var(--c-faint)',
+          }}
+        >
+          <svg className="h-4.5 w-4.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M7.2 17.8a4 4 0 0 1-.5-7.97 5.3 5.3 0 0 1 10.3-1.13 4.1 4.1 0 0 1-.4 9.1z" />
+          </svg>
+          {!skyOn && (
+            <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
+              <span className="h-[1.5px] w-6 rotate-45 bg-faint" />
+            </span>
+          )}
+        </button>
+      )}
       {/* 错误轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
       {/* 欢迎语 + 居中搜索框（Google 式首页）；点左侧图标在检索/会话模式间切换。
@@ -1314,30 +1525,49 @@ export default function Home({ connErr }: Props) {
       >
         {/* 标题到搜索框的整体区域，在 content 内垂直居中 */}
         <div className="relative my-auto">
-          {/* 净空层：标题区压一记底色光晕，把背景层的网格/全息噪声让开，裸排文本才有层级 */}
-          <div
-            className="sh-clear pointer-events-none absolute -inset-y-14 inset-x-0"
-            aria-hidden="true"
-          />
+          {/* 净空层：标题区压一记底色光晕，把背景层的网格/全息噪声让开，裸排文本才有层级。
+              BA 除外——它假设「背景≈底色」才隐形，BA 的实景天空上会显影成中心糊斑 */}
+          {themeId !== 'bluearchive' && (
+            <div
+              className="sh-clear pointer-events-none absolute -inset-y-14 inset-x-0"
+              aria-hidden="true"
+            />
+          )}
           <div className="relative">
-            <p className="ui-label text-center">// SYSTEM ONLINE</p>
-            <h1 className="ui-heading mt-2 text-center text-4xl tracking-tight">
-              欢迎回来, 我的朋友!
-            </h1>
-            <p className="mt-2.5 text-center text-[12px] text-faint">
+            {themeId !== 'bluearchive' && (
+              /* 军事 HUD 语汇的标签只随其它主题；BA 不显示（其标题图自带氛围） */
+              <p className="ui-label text-center">// SYSTEM ONLINE</p>
+            )}
+            {themeId === 'bluearchive' ? (
+              /* 主题专属标题图（public/theme/blue-archive/）：width/height 登记原图
+                 906×250 防加载抖动，CSS 收到 720px 宽、高按比例 */
+              <img
+                src="/theme/blue-archive/title.png"
+                alt="欢迎回来, 我的朋友!"
+                width={906}
+                height={250}
+                draggable={false}
+                className="mx-auto mt-2 block h-auto w-180 max-w-[80vw] select-none pointer-events-none"
+              />
+            ) : (
+              <h1 className="ui-heading mt-2 text-center text-4xl tracking-tight">
+                欢迎回来, 我的朋友!
+              </h1>
+            )}
+            <p className="mt-2.5 text-center text-sm text-faint">
               点击搜索框左侧图标或是下方按钮，可在检索与会话模式间切换
             </p>
           </div>
 
           <div className="mx-auto mt-7 w-full max-w-2xl">
             <form onSubmit={submit}>
-              <div className="ui-surface flex items-center gap-2 rounded-full border border-line py-1.5 pl-5 pr-1.5 shadow-md transition hover:border-line-strong focus-within:border-accent">
+              <div className="ba-home-inputbar ui-surface flex items-center gap-2 rounded-full border border-line py-1.5 pl-5 pr-1.5 shadow-md transition hover:border-line-strong focus-within:border-accent">
                 <button
                   type="button"
                   onClick={() => switchMode(!chatMode)}
                   title={chatMode ? '切换为检索模式' : '切换为会话模式'}
                   aria-label={chatMode ? '切换为检索模式' : '切换为会话模式'}
-                  className="shrink-0 cursor-pointer rounded-full p-1 text-faint transition hover:text-muted"
+                  className="ba-home-modebtn shrink-0 cursor-pointer rounded-full p-1 text-faint transition hover:text-muted"
                 >
                   {chatMode ? (
                     <svg
@@ -1379,7 +1609,7 @@ export default function Home({ connErr }: Props) {
                 <DecoupledInput
                   ref={searchInputRef}
                   placeholder={chatMode ? '输入问题，开始对话…' : '输入关键词或问题…'}
-                  className="min-w-0 flex-1 bg-transparent py-2.5 text-[15px] text-fg outline-none placeholder:text-hint"
+                  className="min-w-0 flex-1 bg-transparent py-2.5 text-md text-fg outline-none placeholder:text-hint"
                   autoFocus
                 />
                 {busy ? (
@@ -1387,7 +1617,7 @@ export default function Home({ connErr }: Props) {
                   <button
                     type="button"
                     onClick={stop}
-                    className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-6 py-2.5 text-sm font-medium text-accent-fg transition hover:bg-accent-hover"
+                    className="ba-home-inputbar-btn flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-6 py-2.5 text-sm font-medium text-accent-fg transition hover:bg-accent-hover"
                   >
                     <svg
                       className="h-3 w-3"
@@ -1402,7 +1632,7 @@ export default function Home({ connErr }: Props) {
                 ) : (
                   <button
                     type="submit"
-                    className="flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-6 py-2.5 text-sm font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
+                    className="ba-home-inputbar-btn flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-6 py-2.5 text-sm font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
                   >
                     {chatMode ? (
                       <>
@@ -1455,7 +1685,7 @@ export default function Home({ connErr }: Props) {
             {/* 模式滑块：与搜索框左侧图标按钮同步切换检索/会话模式；
                 「搜索」按钮双击为测试暗门：进入 RAG 模式搜索页（只返回 chunk 命中） */}
             <div className="mt-4 flex justify-center">
-              <div className="ui-surface flex items-center rounded-full border border-line p-1 shadow-md">
+              <div className="ba-home-slider ui-surface flex items-center rounded-full border border-line p-1 shadow-md">
                 <button
                   type="button"
                   onClick={() => switchMode(false)}
@@ -1466,7 +1696,7 @@ export default function Home({ connErr }: Props) {
                     )
                   }}
                   aria-pressed={!chatMode}
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
+                  className={`ba-home-slider-btn flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-base font-medium transition ${
                     !chatMode
                       ? 'bg-accent text-accent-fg'
                       : 'text-muted hover:text-fg'
@@ -1498,7 +1728,7 @@ export default function Home({ connErr }: Props) {
                   type="button"
                   onClick={() => switchMode(true)}
                   aria-pressed={chatMode}
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium transition ${
+                  className={`ba-home-slider-btn flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-base font-medium transition ${
                     chatMode
                       ? 'bg-accent text-accent-fg'
                       : 'text-muted hover:text-fg'
@@ -1525,7 +1755,7 @@ export default function Home({ connErr }: Props) {
                   type="button"
                   onClick={() => window.location.assign('#/roundtable')}
                   title="打开最近一次群聊"
-                  className="flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-[13px] font-medium text-muted transition hover:text-fg"
+                  className="ba-home-slider-btn flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-base font-medium text-muted transition hover:text-fg"
                 >
                   <svg
                     className="h-3.5 w-3.5"
@@ -1570,6 +1800,15 @@ export default function Home({ connErr }: Props) {
           className="flex h-[calc(100dvh-8.5rem)] flex-col"
           style={pageH ? { height: pageH } : undefined}
         >
+          {/* 待办清单悬浮卡片（plan-of-record）：固定在视口右侧、垂直居中，不随消息列表滚动。
+              外层 pointer-events-none 让卡片四周的空白不挡交互，只有卡片本身可点/可滚 */}
+          {todos.length > 0 && (
+            <div className="pointer-events-none fixed right-4 top-1/2 z-40 -translate-y-1/2">
+              <div className="pointer-events-auto">
+                <TodoCard todos={todos} />
+              </div>
+            </div>
+          )}
           <div
             ref={chatScrollRef}
             className="scrollbar-hide flex-1 overflow-y-auto overscroll-contain"
@@ -1593,7 +1832,7 @@ export default function Home({ connErr }: Props) {
                 ),
               )}
               {busy && !view[view.length - 1]?.content && (
-                <p className="pt-1 text-[13px] text-hint">正在思考 …</p>
+                <p className="pt-1 text-base text-hint">正在思考 …</p>
               )}
             </div>
           </div>
@@ -1630,7 +1869,7 @@ export default function Home({ connErr }: Props) {
                   <DecoupledInput
                     ref={chatInputRef}
                     placeholder="继续输入…"
-                    className="min-w-0 flex-1 bg-transparent py-2 text-[14px] text-fg outline-none placeholder:text-hint"
+                    className="min-w-0 flex-1 bg-transparent py-2 text-md text-fg outline-none placeholder:text-hint"
                     onHasTextChange={setHasText}
                   />
                   {/* 上下文占比圆环：实心弧长=当前上下文占模型窗口的百分比，hover 显示数值 */}
@@ -1658,7 +1897,7 @@ export default function Home({ connErr }: Props) {
                         className="text-accent transition-[stroke-dasharray] duration-300"
                       />
                     </svg>
-                    <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-line bg-bg px-2 py-1 text-[11px] text-fg shadow-lg group-hover:block">
+                    <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-line bg-bg px-2 py-1 text-xs text-fg shadow-lg group-hover:block">
                       上下文 {contextPct.toFixed(1)}%
                     </span>
                   </div>
@@ -1686,7 +1925,56 @@ export default function Home({ connErr }: Props) {
                       </button>
                       {menuOpen && (
                         <div className="absolute bottom-full right-0 z-30 mb-2 w-72 rounded-xl border border-line bg-bg p-1.5 shadow-xl">
-                          <p className="px-2 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                          <p className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
+                            智能体
+                          </p>
+                          <div className="scrollbar-slim max-h-48 overflow-y-auto">
+                            {peers.length === 0 && (
+                              <p className="px-2 py-1.5 text-2xs text-faint">名册加载中…</p>
+                            )}
+                            {peers.map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => {
+                                  /* 内置 Agent 存空串 = 清除所选、回到默认（后端落 NULL） */
+                                  const next = p.builtin ? '' : p.id
+                                  setAgentId(next)
+                                  if (sessionId !== null) void saveConfig(sessionId, { agentId: next })
+                                }}
+                                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
+                                  effectiveAgentId === p.id
+                                    ? 'bg-accent/10 font-medium text-fg'
+                                    : 'text-muted hover:bg-fg/5 hover:text-fg'
+                                }`}
+                              >
+                                <span className="flex-1 truncate">{p.name}</span>
+                                {p.role && <span className="shrink-0 text-2xs text-faint">{p.role}</span>}
+                                {effectiveAgentId === p.id && (
+                                  <svg
+                                    className="h-3.5 w-3.5 shrink-0"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    aria-hidden="true"
+                                  >
+                                    <path
+                                      d="m5 12.5 4.5 4.5L19 7"
+                                      stroke="currentColor"
+                                      strokeWidth="2.2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                          {effectiveAgentId !== 'builtin' && (
+                            <p className="px-2 pb-1 text-2xs text-faint">
+                              由「{currentAgentName}」的人设决定 system；下方「身份提示词」对其不生效
+                            </p>
+                          )}
+                          <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                             模型
                           </p>
                           <div className="scrollbar-slim max-h-48 overflow-y-auto">
@@ -1698,7 +1986,7 @@ export default function Home({ connErr }: Props) {
                                   setModelId(m.id)
                                   if (sessionId !== null) void saveConfig(sessionId, { modelId: m.id })
                                 }}
-                                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition ${
+                                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
                                   modelId === m.id
                                     ? 'bg-accent/10 font-medium text-fg'
                                     : 'text-muted hover:bg-fg/5 hover:text-fg'
@@ -1726,7 +2014,7 @@ export default function Home({ connErr }: Props) {
                               </button>
                             ))}
                           </div>
-                          <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                          <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                             身份提示词
                           </p>
                           <div className="scrollbar-slim max-h-48 overflow-y-auto">
@@ -1737,7 +2025,7 @@ export default function Home({ connErr }: Props) {
                                 setPromptId('')
                                 if (sessionId !== null) void saveConfig(sessionId, { promptId: '' })
                               }}
-                              className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition ${
+                              className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
                                 !pinnedPromptId
                                   ? 'bg-accent/10 font-medium text-fg'
                                   : 'text-muted hover:bg-fg/5 hover:text-fg'
@@ -1770,7 +2058,7 @@ export default function Home({ connErr }: Props) {
                                   if (sessionId !== null)
                                     void saveConfig(sessionId, { promptId: p.id })
                                 }}
-                                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition ${
+                                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
                                   pinnedPromptId === p.id
                                     ? 'bg-accent/10 font-medium text-fg'
                                     : 'text-muted hover:bg-fg/5 hover:text-fg'
@@ -1796,7 +2084,7 @@ export default function Home({ connErr }: Props) {
                               </button>
                             ))}
                           </div>
-                          <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                          <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                             显示
                           </p>
                           <button
@@ -1808,7 +2096,7 @@ export default function Home({ connErr }: Props) {
                               setShowCot(next)
                               if (sessionId !== null) void saveConfig(sessionId, { showCot: next })
                             }}
-                            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition hover:bg-fg/5 ${
+                            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-fg/5 ${
                               showCot ? 'text-fg' : 'text-muted hover:text-fg'
                             }`}
                           >
@@ -1835,7 +2123,7 @@ export default function Home({ connErr }: Props) {
                             setShowRounds(next)
                             if (sessionId !== null) void saveConfig(sessionId, { showRounds: next })
                           }}
-                          className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition hover:bg-fg/5 ${
+                          className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-fg/5 ${
                             showRounds ? 'text-fg' : 'text-muted hover:text-fg'
                           }`}
                         >
@@ -1852,12 +2140,12 @@ export default function Home({ connErr }: Props) {
                             />
                           </span>
                         </button>
-                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                           生成
                         </p>
                         <label
                           title="单次提问最多允许多少轮工具调用；超限后撤掉工具、强制模型给出最终回答（缺省 30）"
-                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[12px] text-muted transition hover:bg-fg/5 hover:text-fg"
+                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted transition hover:bg-fg/5 hover:text-fg"
                         >
                           <span className="flex-1 truncate">最大轮数</span>
                           <input
@@ -1870,10 +2158,10 @@ export default function Home({ connErr }: Props) {
                               setMaxRounds(n)
                               if (sessionId !== null) void saveConfig(sessionId, { maxRounds: n })
                             }}
-                            className="w-14 shrink-0 rounded-md border border-line bg-bg px-2 py-1 text-right text-[12px] text-fg outline-none focus:border-accent"
+                            className="w-14 shrink-0 rounded-md border border-line bg-bg px-2 py-1 text-right text-sm text-fg outline-none focus:border-accent"
                           />
                         </label>
-                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                           检索
                         </p>
                         <button
@@ -1882,7 +2170,7 @@ export default function Home({ connErr }: Props) {
                           aria-checked={settings.rerank.mode !== 'off'}
                           title="用 cross-encoder 对检索结果重新打分排序；关闭后保持 RRF 融合原序（端点在设置页配置）"
                           onClick={() => void toggleRerank()}
-                          className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] transition hover:bg-fg/5 ${
+                          className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-fg/5 ${
                             settings.rerank.mode !== 'off' ? 'text-fg' : 'text-muted hover:text-fg'
                           }`}
                         >
@@ -1901,14 +2189,14 @@ export default function Home({ connErr }: Props) {
                             />
                           </span>
                         </button>
-                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                           调试
                         </p>
                         <button
                           type="button"
                           onClick={() => void viewRawContext()}
                           title="查看此刻发消息时系统发给大模型接口的完整请求体（model + messages + tools）"
-                          className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] text-muted transition hover:bg-fg/5 hover:text-fg"
+                          className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted transition hover:bg-fg/5 hover:text-fg"
                         >
                           <span className="flex-1 truncate">查看原始上下文</span>
                           <svg
@@ -1935,7 +2223,7 @@ export default function Home({ connErr }: Props) {
                     <button
                       type="button"
                       onClick={stop}
-                      className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-accent-fg shadow-md transition hover:bg-accent-hover"
+                      className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-base font-medium text-accent-fg shadow-md transition hover:bg-accent-hover"
                     >
                       <svg
                         className="h-3 w-3"
@@ -1951,7 +2239,7 @@ export default function Home({ connErr }: Props) {
                     <button
                       type="submit"
                       disabled={!hasText}
-                      className="flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-accent-fg shadow-md transition enabled:hover:bg-accent-hover disabled:opacity-40"
+                      className="flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-base font-medium text-accent-fg shadow-md transition enabled:hover:bg-accent-hover disabled:opacity-40"
                     >
                       <svg
                         className="h-3.5 w-3.5"
@@ -1977,9 +2265,15 @@ export default function Home({ connErr }: Props) {
         </section>
       )}
 
-      {/* 会话模式下的左侧悬浮抽屉：箭头拉手控制开合，抽屉沿屏幕左缘渐入渐出滑出（历史保存在后端） */}
+      {/* 会话模式下的左侧悬浮抽屉：箭头拉手控制开合，抽屉自主视图左缘渐入渐出滑出（历史保存在后端）。
+          左缘基准随排布走：侧边栏档/桌面壳避开左侧栏，贴主视图左缘；默认贴视口最左侧。
+          横向裁剪（overflow-x: clip）：抽屉向左收纳/渐隐时，超出主视图左缘的虚影要被裁掉，
+          不能盖到侧栏/菜单栏上；只裁横向，纵向阴影照旧浮出 */}
       {chatMode && (
-        <div className="fixed left-0 top-1/2 z-40 flex -translate-y-1/2 items-center">
+        <div
+          className="fixed top-1/2 z-40 flex -translate-y-1/2 items-center overflow-x-clip"
+          style={{ left: panelLeft }}
+        >
           <aside
             aria-label="最近会话"
             className={`w-64 shrink-0 rounded-r-xl border-y border-r border-line bg-bg p-2 shadow-xl transition-all duration-300 ease-out ${
@@ -1991,13 +2285,13 @@ export default function Home({ connErr }: Props) {
             }`}
           >
             <div className="px-1.5 pb-1.5 pt-0.5">
-              <span className="text-[13px] font-medium text-fg">最近会话</span>
+              <span className="text-base font-medium text-fg">最近会话</span>
             </div>
             <button
               type="button"
               onClick={() => void startNewSession()}
               disabled={busy}
-              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
+              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
             >
               <svg
                 className="h-3.5 w-3.5"
@@ -2016,7 +2310,7 @@ export default function Home({ connErr }: Props) {
             </button>
             <div className="scrollbar-slim max-h-72 overflow-y-auto">
               {sessions.length === 0 ? (
-                <p className="px-2 py-3 text-[12px] text-hint">暂无会话记录</p>
+                <p className="px-2 py-3 text-sm text-hint">暂无会话记录</p>
               ) : (
                 sessions.map((s) => (
                   <div
@@ -2041,14 +2335,14 @@ export default function Home({ connErr }: Props) {
                           />
                         )}
                         <span
-                          className={`block truncate text-[13px] text-fg ${
+                          className={`block truncate text-base text-fg ${
                             s.unread ? 'font-semibold' : ''
                           }`}
                         >
                           {s.title || '未命名会话'}
                         </span>
                       </span>
-                      <span className="mt-0.5 block text-[11px] text-hint">
+                      <span className="mt-0.5 block text-xs text-hint">
                         {s.generating ? (
                           /* 后端为这次生成留了在途状态：哪怕你离开过，答完也会通知，这里先标个「生成中」 */
                           <span className="inline-flex items-center gap-1 text-accent">
@@ -2127,9 +2421,9 @@ export default function Home({ connErr }: Props) {
           onClose={() => setReportView(null)}
           width={720}
         >
-          <div className="text-[13px] leading-relaxed text-fg">
+          <div className="text-base leading-relaxed text-fg">
             {reportView.subagent?.summary && (
-              <p className="mb-3 border-l-2 border-accent/50 bg-fg/[0.03] px-2.5 py-1.5 text-[12.5px] text-muted">
+              <p className="mb-3 border-l-2 border-accent/50 bg-fg/[0.03] px-2.5 py-1.5 text-sm text-muted">
                 {reportView.subagent.summary}
               </p>
             )}
@@ -2139,16 +2433,15 @@ export default function Home({ connErr }: Props) {
       )}
 
       {/* 原始上下文：「…」菜单的「查看原始上下文」打开，完整请求体（model + messages + tools）
-          以 JSON 展示——此刻发消息时系统发给大模型接口的就是这份内容（可拖动，文本可选中复制） */}
+          以 Turn 感知的 JSON 预览器展示——此刻发消息时系统发给大模型接口的就是这份内容。
+          messages 按 Turn 切片、每条消息默认折叠；每个 Turn 右侧可回看它每一轮的请求体 / 响应体（可拖动） */}
       {rawView && (
         <FloatWindow
-          title={`原始上下文 · ${rawView.model}`}
+          title={`原始上下文 · ${rawView.ctx.body.model}`}
           onClose={() => setRawView(null)}
-          width={760}
+          width={880}
         >
-          <pre className="select-text whitespace-pre-wrap break-all font-mono text-[12px] leading-relaxed text-fg">
-            {rawView.json}
-          </pre>
+          <RawContextView ctx={rawView.ctx} sessionId={rawView.sessionId} />
         </FloatWindow>
       )}
     </>

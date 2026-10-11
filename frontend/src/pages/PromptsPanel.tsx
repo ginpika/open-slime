@@ -8,12 +8,12 @@
  *
  * 页面只做「编排」一件事：每个位是一条长条，自上而下的顺序就是拼装顺序；长条上从左到右依次是
  * 拖拽区、标题与信息（类型 + 生效版本）、「查看提示词」、省略号菜单。正文不铺在页面上，
- * 全部收进「查看提示词」窗口里读写；版本管理与说明收进「⋯」菜单。底色沿用 MD3 色调便签
+ * 全部收进「查看提示词」窗口里读写；版本管理与说明收进「⋯」菜单。底色沿用 Material 色调便签
  * （note-tone-*，由主题令牌现混，浅色/深色/自定义主题自适应），仅作类型区分。
  *
  * 所有写操作后端都返回最新全量视图，这里直接覆盖本地状态即可。
  *
- * <p><b>两处复用</b>：潜意识页（全局，给首页对话用）与智能体内部页（按成员，见 {@code peerId}）——
+ * <p><b>两处复用</b>：系统页（全局，开发者选项）与智能体内部页（按成员，见 {@code peerId}）——
  * 两者的数据结构完全一致，只是读写走的接口不同，于是编排 UI 只有这一份。
  */
 
@@ -158,10 +158,10 @@ function PromptViewer({
   return (
     <FloatWindow title={`${slot.name} · ${cur.from}`} onClose={onClose} width={860}>
       <div className="flex flex-col gap-3">
-        <p className="text-[11.5px] leading-relaxed text-hint">{slot.description}</p>
+        <p className="text-xs leading-relaxed text-hint">{slot.description}</p>
         <Control>
           <textarea
-            className="scrollbar-slim min-h-[420px] resize-y font-mono text-[12.5px] leading-6"
+            className="scrollbar-slim min-h-[420px] resize-y font-mono text-sm leading-6"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -175,7 +175,7 @@ function PromptViewer({
           />
         </Control>
         <div className="flex items-center justify-between gap-3 border-t border-line pt-3">
-          <span className={`text-[11px] ${dirty ? 'text-warn' : 'text-hint'}`}>
+          <span className={`text-xs ${dirty ? 'text-warn' : 'text-hint'}`}>
             {saving ? '保存中…' : dirty ? '有未保存的改动' : savedAt ? '已保存' : `生效：${cur.from}`}
           </span>
           <div className="flex gap-2">
@@ -192,7 +192,7 @@ function PromptViewer({
             </button>
           </div>
         </div>
-        <p className="text-[11px] leading-relaxed text-hint">
+        <p className="text-xs leading-relaxed text-hint">
           当前用的是内置时，保存会自动分叉出一份「自定义版本」并绑定，内置原文不受影响；
           也可以先用「⋯」新建版本，再在这里改它。
         </p>
@@ -251,7 +251,7 @@ function NameDialog({
           />
         </kit.Field>
         {!rename && (
-          <p className="text-[11.5px] leading-relaxed text-hint">
+          <p className="text-xs leading-relaxed text-hint">
             新版本将以当前生效正文起稿（不覆盖内置），保存后用「查看提示词」改它。
           </p>
         )}
@@ -288,7 +288,7 @@ function MenuItem({
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] transition ${
+      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition ${
         active ? 'bg-accent/10 font-medium text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg'
       }`}
     >
@@ -300,7 +300,7 @@ function MenuItem({
 
 function MenuLabel({ children }: { children: ReactNode }) {
   return (
-    <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+    <p className="px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
       {children}
     </p>
   )
@@ -431,9 +431,9 @@ function SlotBar({
 
       {/* 2. 标题与信息：名称 + 类型 + 生效版本 */}
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="truncate text-[12.5px] font-semibold text-fg">{slot.name}</span>
+        <span className="truncate text-sm font-semibold text-fg">{slot.name}</span>
         <kit.Badge>提示词</kit.Badge>
-        <span className="truncate text-[11.5px] text-muted">{cur.from}</span>
+        <span className="truncate text-xs text-muted">{cur.from}</span>
       </div>
 
       {/* 3. 查看提示词 */}
@@ -448,7 +448,7 @@ function SlotBar({
         onClose={() => setMenuOpen(false)}
       >
         <MenuLabel>说明</MenuLabel>
-        <p className="px-2 pb-1.5 text-[11.5px] leading-relaxed text-muted">{slot.description}</p>
+        <p className="px-2 pb-1.5 text-xs leading-relaxed text-muted">{slot.description}</p>
 
         <MenuLabel>生效版本</MenuLabel>
         <MenuItem active={slot.activeVersionId == null} onClick={() => onBind(null)}>
@@ -481,9 +481,9 @@ function RuntimeBar({ name, description }: { name: string; description: string }
       <span className="w-5 shrink-0" />
 
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="truncate text-[12.5px] font-medium text-muted">{name}</span>
+        <span className="truncate text-sm font-medium text-muted">{name}</span>
         <kit.Badge>运行时</kit.Badge>
-        <span className="truncate text-[11.5px] text-hint">代码控制，运行时填充</span>
+        <span className="truncate text-xs text-hint">代码控制，运行时填充</span>
       </div>
 
       <EllipsisMenu
@@ -492,7 +492,7 @@ function RuntimeBar({ name, description }: { name: string; description: string }
         onClose={() => setMenuOpen(false)}
       >
         <MenuLabel>说明</MenuLabel>
-        <p className="px-2 pb-1.5 text-[11.5px] leading-relaxed text-muted">{description}</p>
+        <p className="px-2 pb-1.5 text-xs leading-relaxed text-muted">{description}</p>
       </EllipsisMenu>
     </div>
   )
@@ -541,7 +541,7 @@ type PromptApi = {
 }
 
 /**
- * 全局（潜意识 · 提示词）：维护首页对话在用的那一套提示词。
+ * 全局（系统 · 开发者选项）：维护文档→图谱流水线在用的那一套提示词。
  */
 export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
   const kit = usePageKit()
@@ -650,7 +650,7 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
     )
   }
   if (!data) {
-    return <p className="text-[12.5px] text-hint">载入提示词…</p>
+    return <p className="text-sm text-hint">载入提示词…</p>
   }
 
   /* 当前大类：选中的标签 → 首个（写操作后 data 会被整体替换，标签选择按 key 保持） */
@@ -721,10 +721,10 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
     <div className="flex max-w-[900px] flex-col gap-5">
       <header className="flex flex-col gap-1.5">
         <h2 className="ui-heading text-sm">提示词 &amp; 上下文工程</h2>
-        <p className="text-[12.5px] leading-relaxed text-muted">
+        <p className="text-sm leading-relaxed text-muted">
           {peerId
             ? '「系统级提示词」是这位智能体自己的一套，改了只影响它；「圆桌」那一类是全桌共用的协作机制（协作规程 + 调度文书），改了所有成员都受影响。每个上下文下方，长条自上而下就是交给模型的拼装顺序。'
-            : '按用途分两类：「系统级提示词」面向用户直接对话，「开发者选项」是文档→图谱流水线上的自动环节。每个上下文下方，长条自上而下就是它交给模型的拼装顺序；长条上只放类型与生效版本，正文在「查看提示词」里看和改，版本管理在「⋯」里。'}
+            : '「开发者选项」是文档→图谱流水线上的自动环节（抽取 / 入库等）。每个上下文下方，长条自上而下就是它交给模型的拼装顺序；长条上只放类型与生效版本，正文在「查看提示词」里看和改，版本管理在「⋯」里。'}
         </p>
       </header>
 
@@ -740,15 +740,15 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
       )}
 
       <div className="flex flex-col gap-6">
-        <p className="text-[11.5px] leading-relaxed text-faint">{category.description}</p>
+        <p className="text-xs leading-relaxed text-faint">{category.description}</p>
 
         {category.contexts.map((ctx) => (
           <section key={ctx.key} className="flex flex-col gap-2.5">
             {/* 一个大类下多个上下文时才需要小标题；只有一个时描述已足够说明 */}
             {category.contexts.length > 1 && (
-              <h3 className="ui-heading text-[13px]">{ctx.name}</h3>
+              <h3 className="ui-heading text-base">{ctx.name}</h3>
             )}
-            <p className="text-[11.5px] leading-relaxed text-faint">{ctx.description}</p>
+            <p className="text-xs leading-relaxed text-faint">{ctx.description}</p>
 
             {ctx.parts.map((slot, i) => (
               <SlotBar

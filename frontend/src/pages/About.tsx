@@ -251,18 +251,18 @@ function Intro() {
 
       {/* 文案：压在知识球之上 */}
       <div className="relative z-10 flex max-w-[520px] flex-col gap-5 font-mono">
-        <p className="flex items-center gap-3 text-[11px] tracking-[0.24em] text-faint">
+        <p className="flex items-center gap-3 text-xs tracking-[0.24em] text-faint">
           <span aria-hidden="true" className="h-px w-8 bg-line-strong" />
           {BRAND.nameUpper}
         </p>
 
-        <h1 className="text-[30px] leading-[1.2] font-semibold tracking-tight text-fg sm:text-[40px]">
+        <h1 className="text-3xl leading-[1.2] font-semibold tracking-tight text-fg">
           把零散资料，
           <br />
           沉淀为<span className="text-accent">可检索</span>的知识。
         </h1>
 
-        <p className="mt-1 max-w-[52ch] text-[12.5px] leading-[1.9] text-muted">
+        <p className="mt-1 max-w-[52ch] text-sm leading-[1.9] text-muted">
           {BRAND.name}
           是一套「个人知识库 + 检索问答」系统：把零散资料导入并切分为知识块，用大模型抽取其中的实体与关系沉淀为知识图谱，
           再为每个块补充利于检索的语义信息并向量化。知识入库完成后，即可通过检索或对话的方式随时取用。
@@ -270,7 +270,7 @@ function Intro() {
       </div>
 
       {/* 角落标注：Mono 排版的技术感 */}
-      <p className="pointer-events-none absolute bottom-0 left-0 font-mono text-[10px] tracking-[0.2em] text-faint">
+      <p className="pointer-events-none absolute bottom-0 left-0 font-mono text-2xs tracking-[0.2em] text-faint">
         ENTITY · RELATION SPHERE
       </p>
     </div>
@@ -410,7 +410,7 @@ export default function About() {
       {tab === 'flow' && (
         /* 主线：知识入库 → 知识消费 的分步说明（左侧时间线 + 右侧说明卡片） */
         <div className="flex flex-col gap-6">
-          <h2 className="ui-heading text-[15px]">整体业务流程</h2>
+          <h2 className="ui-heading text-md">整体业务流程</h2>
           <ol className="flex flex-col">
             {STAGES.map((s, i) => (
               <li key={s.no} className="flex gap-4">
@@ -425,13 +425,13 @@ export default function About() {
                 {/* 右侧：阶段卡片 */}
                 <div className="flex-1 pb-6">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="ui-heading text-[14px]">{s.title}</h3>
+                    <h3 className="ui-heading text-base">{s.title}</h3>
                     {s.route && s.routeLabel && <RouteLink route={s.route} label={s.routeLabel} />}
                   </div>
-                  <p className="mt-2 text-[13px] leading-relaxed text-muted">{s.intro}</p>
+                  <p className="mt-2 text-base leading-relaxed text-muted">{s.intro}</p>
                   <ul className="mt-2.5 flex flex-col gap-1.5">
                     {s.points.map((p) => (
-                      <li key={p} className="flex gap-2 text-[12.5px] leading-relaxed text-faint">
+                      <li key={p} className="flex gap-2 text-sm leading-relaxed text-faint">
                         <span aria-hidden="true" className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-faint" />
                         <span>{p}</span>
                       </li>

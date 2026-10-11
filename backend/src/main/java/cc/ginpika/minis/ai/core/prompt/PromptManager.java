@@ -74,6 +74,14 @@ public class PromptManager {
     }
 
     /**
+     * 全局提示词页的「仅开发者选项」视图：对话与圆桌都已逐 Agent 化，全局页只展示流水线上的自动环节。
+     * 全局操作面（{@code PromptController}）走本方法。
+     */
+    public PromptDtos.PromptsView viewDevOnly() {
+        return composer.viewDevOnly();
+    }
+
+    /**
      * 单个上下文的视图（版本 / 生效项取全局）。给「不随成员分叉」的上下文用：圆桌是全桌共用的一套，
      * 智能体内部页把它并进面板时，读到的就是这里这一份。
      */

@@ -37,7 +37,7 @@ public class TokenUsageService {
     /** 长文切分 */
     public static final String SOURCE_CHUNKER = "chunker";
     /** 潜意识子代理 */
-    public static final String SOURCE_SUBCONSCIOUS = "subconscious";
+    public static final String SOURCE_HEARTBEAT = "heartbeat";
     /** 向量化 */
     public static final String SOURCE_EMBEDDING = "embedding";
     /** 精排 */

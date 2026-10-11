@@ -15,8 +15,8 @@
 
 export type Vars = Record<string, string>
 
-/** 5 套主题 */
-export type ThemeId = 'old' | 'clean' | 'md3' | 'endfield' | 'bluearchive'
+/** 3 套主题 */
+export type ThemeId = 'old' | 'endfield' | 'bluearchive'
 
 /** 明暗档位（每套主题都自带完整的两档） */
 export type Scheme = 'light' | 'dark'
@@ -42,8 +42,6 @@ export type OverrideState = {
   seed: Partial<Pick<ThemeSeed, 'primary' | 'accent' | 'base'>>
   /** 覆盖正文字体族 */
   fontSans?: string
-  /** 覆盖等宽字体族 */
-  fontMono?: string
   /** 覆盖标题斜体策略 */
   headingStyle?: 'normal' | 'italic'
 }
@@ -55,6 +53,17 @@ export type EndfieldPalette = 'default' | 'rhodes'
 
 /** 终末地窗口样式（主题配置窗口档位）：默认令牌驱动 / 工作台双色窗口 */
 export type EndfieldWindowStyle = 'default' | 'workbench'
+
+/** Tailwind Mono 主题配置（主题配置窗口，随设计逐步扩充） */
+export type MonoConfig = {
+  /** 侧边栏布局：启用原 Clean 主题最具特征的左侧分组侧栏 + 顶部工具条 */
+  sidebar: boolean
+  /**
+   * 桌面端沉浸排布：隐藏外壳的 header / footer，主题按钮移到窗口标题栏
+   * （用户按钮左侧）。仅桌面壳消费，浏览器端忽略。
+   */
+  hideChrome: boolean
+}
 
 /** 终末地主题配置（主题配置窗口，随设计逐步扩充） */
 export type EndfieldConfig = {
@@ -100,6 +109,8 @@ export type ThemeState = {
   override: OverrideState
   /** 终末地主题配置（仅 endfield 主题消费；旧持久化数据缺失时逐字段兜底） */
   endfield: EndfieldConfig
+  /** Tailwind Mono 主题配置（仅 old 主题消费；旧持久化数据缺失时逐字段兜底） */
+  mono: MonoConfig
   /** 最近一次解析出的完整令牌快照（供 index.html 防闪烁脚本与 canvas 读取） */
   vars: Vars
 }
@@ -121,6 +132,7 @@ export const OVERRIDE_ROUTES = [
   'multi-agent',
   'agent',
   'roundtable',
+  'workflow',
   'workspace',
   'settings',
   'stats',
@@ -142,6 +154,7 @@ export const ROUTE_LABELS: Record<OverrideRoute, string> = {
   'multi-agent': '多智能体',
   agent: '智能体内部页',
   roundtable: '圆桌',
+  workflow: '执行态',
   workspace: '工作空间',
   settings: '设置',
   stats: '统计',

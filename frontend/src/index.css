@@ -48,7 +48,7 @@
   --color-entity-3: var(--c-entity-3);
   --color-entity-4: var(--c-entity-4);
 
-  /* MD3 角色阶梯（五套主题共用同一批词汇，不再是 MD3 专属） */
+  /* Material 角色阶梯（各主题共用同一批词汇） */
   --color-surface-container-lowest: var(--c-surface-container-lowest);
   --color-surface-container-low: var(--c-surface-container-low);
   --color-surface-container: var(--c-surface-container);
@@ -60,17 +60,24 @@
   --color-outline: var(--c-outline);
   --color-outline-variant: var(--c-outline-variant);
 
-  /* ====================== 形状层：劫持 radius 刻度 ====================== */
+  /* ====================== 形状层：劫持 radius 刻度 ======================
+     Tailwind 8 档 → 主题 6 档。按「后缀越大越圆」单调映射：
+     xs…xl 依次取同名令牌；2xl / 3xl 复用令牌层更大的两档
+     （--ui-r-xl / --ui-r-2xl），不再出现大档反而更小的情况。 */
   --radius-xs: var(--ui-r-xs);
   --radius-sm: var(--ui-r-sm);
   --radius-md: var(--ui-r-md);
   --radius-lg: var(--ui-r-lg);
   --radius-xl: var(--ui-r-xl);
   --radius-2xl: var(--ui-r-xl);
-  --radius-3xl: var(--ui-r-card);
+  --radius-3xl: var(--ui-r-2xl);
   --radius-full: var(--ui-r-pill);
 
-  /* ====================== 深度层：劫持 shadow 刻度 ====================== */
+  /* ====================== 深度层：劫持 shadow 刻度 ======================
+     注：Tailwind 7 档（2xs…2xl）映射到主题 6 级（--ui-e0…e5），
+     必然有一处相邻档合并——此处 xs 与 sm 同取 e1；2xs 取 e0（= none，
+     即主题的「无高度」档）。合流处会改变已在使用中的 shadow-sm 观感，
+     属视觉决策，不在本次缺陷修复范围内，故保留现状并在此写明。 */
   --shadow-2xs: var(--ui-e0);
   --shadow-xs: var(--ui-e1);
   --shadow-sm: var(--ui-e1);
@@ -118,6 +125,21 @@ button:not(:disabled) {
   cursor: pointer;
 }
 
+/*
+ * 按钮统一关掉原生外观。
+ * WebView2 仍按系统主题给 <button> 画原生外观——那是一层「上亮下暗」的斜角填充，
+ * 会把 bg-accent 这类实底色冲淡成竖向渐变（Chrome 不会这么做）。于是同一份产物在
+ * 桌面端和 Web 端长得不一样。原生外观只作用于填充与边框，不影响 color，所以文字色一直是对的，
+ * 只有背景被改。桌面壳里的引导页（desktop/ui/index.html）有同样的规则，两处要成对保留。
+ */
+button,
+[type='button'],
+[type='submit'],
+[type='reset'] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 @layer base {
   /*
    * 文本类表单控件的「形状」随主题改变 —— Endfield 下会变成切角输入框。
@@ -149,7 +171,9 @@ button:not(:disabled) {
    * 零额外 DOM 的「描边环 + 填充」双层：
    *   ::before 贴外缘画描边色，::after 内缩 --ui-ring-w 画填充色。
    *   两者与宿主使用同一个 --ui-clip，于是 Endfield 的切角描边自动成立，
-   *   而 Old/Clean/MD3 的 --ui-clip: none 时退化为普通圆角描边。
+   *   而 --ui-clip: none 的主题（如 Tailwind Mono）退化为普通圆角描边。
+   *   主题补丁锚点：BlueArchive 在此收口 4px 圆角，
+   *   见 shell.css「BlueArchive 交互态补丁」。
    * ------------------------------------------------------------------- */
   .ui-btn {
     position: relative;
@@ -201,6 +225,12 @@ button:not(:disabled) {
     /* 伪元素不继承宿主圆角，显式 inherit 才能跟随宿主形状，
        否则描边环 / 填充层在宿主圆角时仍是直角矩形 */
     border-radius: inherit;
+    /* 斜切令牌：形状层登记 skewX() 即得平行四边形底（BA 右倾 15°）。
+       只斜切描边环 / 填充层，宿主排版盒与文字保持正体，圆角照常继承 */
+    transform: var(--ui-btn-shear, none);
+    /* 按钮影挂在描边环层（= 身体外轮廓）而非宿主：宿主是未斜切的
+       排版矩形，斜切形态下其右下角会露出脱离主体的阴影碎片 */
+    box-shadow: var(--ui-btn-shadow, none);
     transition: background var(--ui-dur-base, 150ms) var(--ui-ease, ease);
   }
   .ui-btn::after {
@@ -211,6 +241,7 @@ button:not(:disabled) {
     background: var(--ui-btn-fill);
     clip-path: var(--ui-clip, none);
     border-radius: inherit;
+    transform: var(--ui-btn-shear, none);
     transition: background var(--ui-dur-base, 150ms) var(--ui-ease, ease);
   }
   .ui-btn:hover::before {
@@ -243,7 +274,8 @@ button:not(:disabled) {
     --ui-btn-fill-hover: var(--ui-btn-primary-fill-hover, var(--c-accent-hover));
     --ui-btn-fill-active: var(--ui-btn-primary-fill-active, var(--c-accent-hover));
     color: var(--ui-btn-primary-fg, var(--c-accent-fg));
-    box-shadow: var(--ui-btn-primary-shadow, var(--ui-e1, none));
+    /* 影随描边环层（::before 消费），非斜切主题下轮廓与宿主一致 */
+    --ui-btn-shadow: var(--ui-btn-primary-shadow, var(--ui-e1, none));
   }
   .ui-btn--outline {
     --ui-btn-ring: var(--ui-btn-outline-ring, var(--c-line));
@@ -252,6 +284,9 @@ button:not(:disabled) {
     --ui-btn-fill-hover: var(--ui-btn-outline-fill-hover, var(--c-accent-soft));
     --ui-btn-fill-active: var(--ui-btn-outline-fill-active, var(--c-accent-soft));
     color: var(--ui-btn-outline-fg, var(--c-muted));
+    /* 实底变体可登记右下方向影等（BA 斜切平行四边形的配套柔影），
+       由 ::before 消费以贴合斜切轮廓 */
+    --ui-btn-shadow: var(--ui-btn-outline-shadow, none);
   }
   .ui-btn--outline:hover {
     color: var(--ui-btn-outline-fg-hover, var(--c-fg));
@@ -272,6 +307,8 @@ button:not(:disabled) {
     --ui-btn-ring-hover: transparent;
     --ui-btn-fill: transparent;
     --ui-btn-fill-hover: var(--c-accent-soft);
+    /* 图标圆钮不参与斜切：圆形无法成为平行四边形，圆形是跨主题交互惯例 */
+    --ui-btn-shear: none;
     --ui-btn-px: 0px;
     --ui-btn-py: 0px;
     width: 30px;
@@ -288,6 +325,7 @@ button:not(:disabled) {
     --ui-btn-fill-hover: var(--ui-btn-danger-fill-hover, var(--c-danger-soft));
     --ui-btn-fill-active: var(--ui-btn-danger-fill-active, var(--c-danger-soft));
     color: var(--ui-btn-danger-fg, var(--c-bg));
+    --ui-btn-shadow: var(--ui-btn-danger-shadow, none);
   }
   /* 小号：表格操作列等密集场景；圆角取控件刻度（非胶囊） */
   .ui-btn--sm {
@@ -301,6 +339,8 @@ button:not(:disabled) {
    * 主题化卡片
    * 结构与按钮同构：外层画描边环，内层画"面板底"。
    * 面板底的透明度与模糊来自材质层 —— Endfield 深档即碳黑玻璃。
+   * 主题补丁锚点：Tailwind Mono 的浮层卡（.ui-card.ui-surface）在此换
+   * 环色与影，见 shell.css「Mono 交互态补丁」。
    * ------------------------------------------------------------------- */
   .ui-card {
     position: relative;
@@ -364,7 +404,7 @@ button:not(:disabled) {
 
   /* ------------------------------------------------ 排印层快捷类 */
 
-  /* 标题：字重 / 斜体 / 字距由主题排印层决定（BA = 900 斜体，MD3 = 500 常规） */
+  /* 标题：字重 / 斜体 / 字距由主题排印层决定（BA = 900 斜体，Tailwind Mono = 600 常规） */
   .ui-heading {
     font-family: var(--ui-font-heading, var(--ui-font-sans));
     font-weight: var(--ui-heading-weight, 600);
@@ -513,8 +553,21 @@ button:not(:disabled) {
 }
 
 /* ---------------------------------------------------------------------------
+ * 执行态「无限画布」底色：层次感靠画布与卡片的明暗差 + 卡片投影表达。
+ *   浅档：比底色略深一档；
+ *   深档：改为深灰——深色主题的底色与面板都近黑，画布得亮一档卡片才浮得出来。
+ * 分档靠 :root[data-scheme]（applyVars 写入），颜色变化无需组件重渲染。
+ * ------------------------------------------------------------------------- */
+:root {
+  --wf-canvas-bg: color-mix(in srgb, var(--c-bg, #ffffff) 92%, #000);
+}
+:root[data-scheme='dark'] {
+  --wf-canvas-bg: #23262a;
+}
+
+/* ---------------------------------------------------------------------------
  * 色调便签（surface container）：提示词页把上下文的不同部分做成便签，
- * 以低彩度色调区分角色。底色一律由主题令牌现混，五套主题自适应。
+ * 以低彩度色调区分角色。底色一律由主题令牌现混，各主题自适应。
  * ------------------------------------------------------------------------- */
 @utility note-tone-accent {
   background-color: color-mix(in srgb, var(--c-accent, #888888) 11%, var(--c-bg, #ffffff));
@@ -541,6 +594,18 @@ button:not(:disabled) {
   }
   to {
     opacity: 1;
+  }
+}
+
+/* 用户菜单入场：从触发点轻微放大浮出（社区式浮层手感）。
+   开合是条件渲染，挂载即开没有 transition 起点，故用动画补进场一帧。 */
+@utility menu-pop {
+  animation: menu-pop var(--ui-dur-base, 180ms) var(--ui-ease, ease) backwards;
+}
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
   }
 }
 

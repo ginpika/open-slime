@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * 是互斥的：要么只说、要么只做。做成工具之后这个矛盾就没了——说一句是一个工具调用，说完那一轮
  * 照常继续工具往返，模型可以边说边想、说几句、查个资料再接着说，与人说话的样子一致。
  *
- * <p>一次发言里可以调用任意多次，{@code MaChatService} 按调用顺序把每句当场推给页面并累积成正文；
+ * <p>一次发言里可以调用任意多次，{@code RoundtableChatService} 按调用顺序把每句当场推给页面并累积成正文；
  * 它不改状态机、不写库，只把话说出去（表态仍由 propose_end / go_silent / interject / ask_user 给出）。
  *
  * <p><b>刻意不声明可并行</b>（{@link AiTool#parallelizable()} 默认 false）：发言要严格按调用顺序落地，

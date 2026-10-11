@@ -3,15 +3,17 @@ package cc.ginpika.minis.ai.memory.store;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * memory_event（记忆事件流）的读写：三轴记忆里「时序轴」的正本。
  *
  * <p>写入一律走 {@link cc.ginpika.minis.ai.memory.MemoryWriter}（发生点 push、幂等、失败隔离）；
- * 本类只管落行与查询。事件只追加不改写——情节正本在 chat_message / sub_exec，
+ * 本类只管落行与查询。事件只追加不改写——情节正本在 chat_message / task，
  * 这里存投影：截断后的正文 + 指回正本的 ref（后续向量/图两轴的增强就挂在 ref 上）。
  *
  * <p>时序轴在召回侧只做「窗口过滤」不参与打分：混合检索的 RRF 是 rank-only 融合，
@@ -62,6 +64,18 @@ public class MemoryEventStore {
      * 绝不把时间序当打分源（打分在窗口内由向量轴完成，见 recall 包）。
      */
     public List<EventRow> window(Long sinceMs, Long untilMs, String kind, String actor, int limit) {
+        return window(sinceMs, untilMs, kind, actor, List.of(), limit);
+    }
+
+    /**
+     * 同 {@link #window(Long, Long, String, String, int)}，另可按来源排除——默认召回用它挡掉后台产出
+     * （心跳 / 职责 / 子代理），免得「你跟我说过什么」被后台自己跑出来的东西挤占。
+     *
+     * <p>actor 为空的行（理论上不该有）不参与排除：{@code NOT IN} 遇 NULL 返回 NULL，
+     * 不加这层兜底会把它们一并滤掉。
+     */
+    public List<EventRow> window(Long sinceMs, Long untilMs, String kind, String actor,
+                                 Collection<String> excludeActors, int limit) {
         StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM memory_event WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (sinceMs != null) {
@@ -80,6 +94,12 @@ public class MemoryEventStore {
             sql.append(" AND actor = ?");
             args.add(actor);
         }
+        if (excludeActors != null && !excludeActors.isEmpty()) {
+            sql.append(" AND (actor IS NULL OR actor NOT IN (")
+                    .append(String.join(",", excludeActors.stream().map(a -> "?").toList()))
+                    .append("))");
+            args.addAll(excludeActors);
+        }
         sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
         args.add(limit);
         return jdbc.query(sql.toString(), (rs, rowNum) -> map(rs), args.toArray());
@@ -89,5 +109,16 @@ public class MemoryEventStore {
         return new EventRow(rs.getLong("id"), rs.getString("event_key"), rs.getString("kind"),
                 rs.getString("actor"), rs.getString("title"), rs.getString("payload"),
                 rs.getString("ref_type"), rs.getLong("ref_id"), rs.getLong("created_at"));
+    }
+
+    /**
+     * 清空全部时序记忆（设置页「重置知识库」用）：先删向量投影（外键指向 memory_event），
+     * 再删事件正本；返回删除的事件条数。正本投影连带向量一并抹除，同 ChunkStore / GraphStore
+     * 的 clearAll 清自家卫星向量表的惯例。
+     */
+    @Transactional
+    public int clearAll() {
+        jdbc.update("DELETE FROM memory_event_embedding");
+        return jdbc.update("DELETE FROM memory_event");
     }
 }

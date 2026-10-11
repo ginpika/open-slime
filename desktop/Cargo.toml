@@ -9,7 +9,9 @@ tauri-build = { version = "2", features = [] }
 serde_json = "1"
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# unstable：单窗口多 webview（Window::add_child）——邮件页作为顶层子 webview 盖在主视图区，
+# 既保留引导页外壳，又不走 iframe（跨站 cookie / 第三方限制都不受影响）
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }

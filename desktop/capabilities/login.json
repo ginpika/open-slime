@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "login",
+  "description": "登录窗口（label: hostid-login）的能力白名单。它加载的是用户填写的 hostid 站点（第三方页面），窗口无边框、标题栏由 LOGIN_BAR_JS 自绘，因此只放开标题栏用到的那几条窗口命令：拖拽与最小化 / 最大化 / 关闭。壳自己的命令（desktop_*）一律不授予——hostid 页面拿不到壳的任何状态。remote 只能给通配：hostid 地址是用户自己填的。",
+  "windows": ["hostid-login"],
+  "remote": {
+    "urls": ["http://*", "https://*"]
+  },
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
+}

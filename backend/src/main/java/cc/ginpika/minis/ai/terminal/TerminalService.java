@@ -37,7 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
  * </ol>
  *
  * <p>和 {@code KnowledgeToolbox} 在知识库里扮演的角色一样：工具面唯一的默认分发点，
- * 由会话与心跳两处转交过来（见 {@code ChatService#runTool} / {@code SubconsciousService}）。
+ * 由会话与心跳两处转交过来（见 {@code ChatService#runTool} / {@code HeartbeatService}）。
  *
  * <p><b>这是全项目权限最高的一件工具</b>：它执行的不是检索而是任意命令。因此逐目标默认关、
  * 白黑名单可选而超时与输出上限恒在——把「模型能碰什么」交给配置，
@@ -492,7 +492,7 @@ public class TerminalService {
                 row.createdAt());
     }
 
-    /** JSON 数组 → 规则清单；空/坏数据按「没有规则」处理（与 subconscious 的 names() 同一个兜底） */
+    /** JSON 数组 → 规则清单；空/坏数据按「没有规则」处理（与 heartbeat 的 names() 同一个兜底） */
     private List<String> read(String json) {
         if (json == null || json.isBlank()) {
             return List.of();

@@ -1,7 +1,28 @@
 /* ============================================================================
- * 外壳 kit 专属样式
- * 只放"无法用令牌表达"的部分：背景层构图、刻度带、跑马灯、切角裁切、动效编排。
- * 颜色一律取自令牌，因此仍然随主题自适应。
+ * 外壳 kit 专属样式 —— 令牌系统的补集
+ *
+ * 这里只允许放「Vars 结构上无法表达」的东西。加规则前按顺序自问（命中即止）：
+ *
+ *   ① 能写成令牌吗？
+ *      （--c-* / --ui-*；两档不同走 layers.ts 的 overrides[scheme]）
+ *      → 能。请写进 layers.ts 登记簿，不要写在这里。
+ *   ② 需要选择器作用域吗？（同一变量在某个子集上取不同值 / 子树重映射 --c-*）
+ *      → 令牌只能写 :root 的全局值，局部覆写只能落在 CSS（如 .ui-card.ui-surface）。
+ *   ③ 是装饰性构图吗？（背景层叠图 / 刻度带 / 跑马灯 / 切角 / 动效编排）
+ *      → 是「画法」而非「参数」，且只属于某一个 shell 的 DOM。
+ *   ④ 是「要不要渲染」吗？（display:none 之类）
+ *      → 变量不能删元素，只能靠 [data-theme] / [data-scheme] 分支。
+ *   ⑤ 要压制工具类（utilities 层）吗？
+ *      （共享组件被调用处用 bg-* / shadow-* / rounded-* 书写，components 层压不过）
+ *      → 只能用无层（unlayered）规则，否则压不住。
+ *   ⑥ 是主题专属设计语言常数吗？（工业黑 #0a0b0c、BA 导航蓝 #2f445d…）
+ *      → 必须用 [data-theme='xxx'] 限定作用域，防止外溢到其他主题的观感。
+ *
+ * 反例（不允许）：本可令牌化却硬编码颜色；为绕开某个组件而新造补丁作用域。
+ * 颜色一律优先取令牌，因此下方大部分规则仍随主题自适应。
+ *
+ * 被补丁的共享组件应在组件/原语处留锚点注释指回本文件（见 Toast.tsx、
+ * index.css 的 .ui-btn / .ui-card 段）。
  * ========================================================================= */
 
 /* --------------------------------------------------------------- 背景层 */
@@ -150,15 +171,138 @@
   opacity: 0.5;
 }
 
-/* 网点装饰（BlueArchive 波普） */
+/* 极淡方格纸（BlueArchive）：只显影在视口上部，径向渐隐（demo .bgfx .grid） */
+.sh-papergrid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--c-accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--c-accent) 5%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(120% 90% at 50% 0%, #000 30%, transparent 78%);
+}
+
+/* 网点装饰（BlueArchive 波普）：径向渐隐，角落氛围（demo .bgfx .dots） */
 .sh-dots {
   position: absolute;
   background-image: radial-gradient(
     circle,
-    color-mix(in srgb, var(--c-accent) 34%, transparent) 1.6px,
+    color-mix(in srgb, var(--c-accent) 32%, transparent) 1.6px,
     transparent 1.8px
   );
   background-size: 9px 9px;
+  -webkit-mask-image: radial-gradient(circle at 30% 30%, #000, transparent 70%);
+  mask-image: radial-gradient(circle at 30% 30%, #000, transparent 70%);
+}
+.sh-dots--pink {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--c-pink, var(--c-accent)) 32%, transparent) 1.6px,
+    transparent 1.8px
+  );
+}
+
+/* ------------------------------------------- BlueArchive 首页层叠天空 */
+
+/* 官网抠像四层：bg（底）→ cloud-b → cloud-a → frame（顶）。
+   两层云沿「左下 → 右上约30°」钟摆漂移：缓慢去程 → 驻留数秒 → 原路返回 → 驻留；
+   常驻 scale(1.12) 外扩留平移余量，漂移不露边。
+   容器 z:-1 挂在 main 的层叠上下文内：盖住外壳粉彩层、让位于页面内容。 */
+.ba-homesky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ba-homesky img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ba-homesky__cloud {
+  will-change: transform;
+}
+/* 近层（cloud-a）：行程大、周期短；远层（cloud-b）：行程小、周期长——视差 */
+.ba-homesky__cloud--a {
+  animation: ba-cloud-drift-a 42s ease-in-out infinite;
+  animation-delay: -9s;
+}
+.ba-homesky__cloud--b {
+  animation: ba-cloud-drift-b 64s ease-in-out infinite;
+  animation-delay: -26s;
+}
+/* 每段首尾各驻留 ~10%（约 4-6s）；0% 与 100% 同帧保证循环无缝 */
+@keyframes ba-cloud-drift-a {
+  0%,
+  10% {
+    transform: translate3d(-55px, 32px, 0) scale(1.12);
+  }
+  44%,
+  56% {
+    transform: translate3d(55px, -32px, 0) scale(1.12);
+  }
+  90%,
+  100% {
+    transform: translate3d(-55px, 32px, 0) scale(1.12);
+  }
+}
+@keyframes ba-cloud-drift-b {
+  0%,
+  10% {
+    transform: translate3d(-35px, 20px, 0) scale(1.12);
+  }
+  44%,
+  56% {
+    transform: translate3d(35px, -20px, 0) scale(1.12);
+  }
+  90%,
+  100% {
+    transform: translate3d(-35px, 20px, 0) scale(1.12);
+  }
+}
+
+/* 会话页可读性白幕：与天空容器同为 z:-1、DOM 序在后——罩住云、让位于内容。
+   进入会话界面（chatMode）时加 --on 档 fadeIn；底色取 --c-bg，
+   浅档=半透明白幕，深档自动成为半透明暗幕。 */
+.ba-homesky-veil {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--c-bg);
+  opacity: 0;
+  transition: opacity 700ms ease;
+}
+.ba-homesky-veil--on {
+  opacity: 0.8;
+}
+
+/* BA 导航标签：默认主题字体 + 真加粗（雅黑/Segoe UI 均有 Bold，渲染清晰） */
+.ba-nav-label {
+  font-size: var(--ui-fs-sm, 13px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: #2f445d;
+}
+
+/* BA 导航激活态：label 下方的 4px 圆角指示线（常驻占位，未激活透明） */
+.ba-nav-item--on {
+  color: #2f445d;
+}
+.ba-nav-dot {
+  width: 16px;
+  height: 4px;
+  border-radius: 99px;
+  background: transparent;
+  transition: background var(--ui-dur-base, 150ms) var(--ui-ease, ease);
+}
+.ba-nav-item--on .ba-nav-dot {
+  background: #2f445d;
 }
 
 /* ------------------------------------------------------------- 跑马灯 */
@@ -304,6 +448,176 @@
   background: #1c1b1d;
   border-left-color: var(--c-accent);
   box-shadow: var(--ui-e2);
+}
+
+/* ---------------------------------------------------- Mono 交互态补丁 */
+/* 中性灰线（--c-line / --c-line-strong）在近纯白 / 近纯黑底上始终偏隐身：
+   浮层卡片（主题菜单 / 用户菜单 / Roundtable 弹层等 .ui-card.ui-surface
+   组合）悬于内容之上，描边环直接用墨色（--c-fg）收边——与面板内激活态
+   控件（border-fg）同一语言，浅档=白底墨环的印刷感，深档=近白环。
+   页面内静态卡片（无 ui-surface）仍保持克制细线，主题整体观感不变 */
+[data-theme='old'] .ui-card.ui-surface {
+  --ui-card-ring: var(--c-fg);
+  /* 平面语言的默认投影（--ui-e1，黑影 6%）在近白 / 近黑底上几乎不可见，
+     浮层与内容分不开。这里不改方向影，改成一圈四向墨色外发光：无偏移、
+     只靠模糊晕开，浅档=白底黑晕，深档=黑底白晕，菜单真正「浮」起来 */
+  --ui-e1: 0 0 22px color-mix(in srgb, var(--c-fg) 20%, transparent);
+}
+
+/* 文档页（/articles）的行悬停底色：扁平 kit 的表格行默认给 hover 一层
+   --c-fg 5% 浅灰填充（见 flat.tsx Row）；文档页的行已有「标题转墨色 +
+   下划线」的悬停语汇，再垫灰底显得脏。Mono 档下去掉这层底色，
+   其余列表页仍保留悬停反馈 */
+[data-theme='old'] .articles-row:hover {
+  background: transparent;
+}
+
+/* ------------------------------------------------ BlueArchive 交互态补丁 */
+/* 按钮统一 4px 小圆角（baShape --ui-r-btn）：调用处显式传的 rounded-md/lg/sm
+   工具类在 utilities 层会压过令牌，故用无层规则统一收口（同区惯例）；
+   图标圆钮与胶囊形（rounded-full）不参与——圆形/胶囊语义保持 */
+[data-theme='bluearchive'] .ui-btn:not(.ui-btn--icon):not(.rounded-full) {
+  border-radius: var(--ui-r-btn);
+}
+
+/* ------------------------------------- BlueArchive 首页搜索区形态补丁 */
+/* 搜索框 / 输入栏按钮 / 模式滑块（含其按钮）是 Home 自绘元素而非 .ui-btn，
+   故在此按与 .ui-btn 完全相同的模型补登记：宿主让出底色与描边，由已斜切的
+   伪元素画形（复用 --ui-btn-shear 令牌，斜切角单一来源），文字与图标保持正体。
+   描边环 ::before + 填充层 ::after 双层，与 .ui-btn 同构；右下轻影挂在
+   已斜切的 ::before 上，避免宿主矩形阴影在斜边外露出碎片（同 .ui-btn 修法） */
+[data-theme='bluearchive'] .ba-home-inputbar,
+[data-theme='bluearchive'] .ba-home-slider {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--ui-r-btn, 4px);
+}
+[data-theme='bluearchive'] .ba-home-inputbar::before,
+[data-theme='bluearchive'] .ba-home-slider::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background: var(--c-line);
+  border-radius: inherit;
+  transform: var(--ui-btn-shear, none);
+  box-shadow: 0 3px 9px color-mix(in srgb, var(--c-accent) 10%, transparent);
+  transition: background var(--ui-dur-base, 140ms) var(--ui-ease, ease);
+}
+[data-theme='bluearchive'] .ba-home-inputbar::after,
+[data-theme='bluearchive'] .ba-home-slider::after {
+  content: '';
+  position: absolute;
+  inset: var(--ui-ring-w, 1px);
+  z-index: -1;
+  background: var(--ui-card-fill, var(--c-bg));
+  border-radius: inherit;
+  transform: var(--ui-btn-shear, none);
+}
+/* 输入栏交互：hover 环加深、聚焦环转青（替代原 focus-within:border-accent） */
+[data-theme='bluearchive'] .ba-home-inputbar:hover::before {
+  background: var(--c-line-strong);
+}
+[data-theme='bluearchive'] .ba-home-inputbar:focus-within::before {
+  background: var(--c-accent);
+}
+
+/* 搜索框左端的模式切换钮：糖果黄底 + 墨灰图标（图标即"字"，走 currentColor）。
+   与输入栏同构——宿主让出底与圆角，黄色填充挂在已斜切的伪元素上，
+   于是它也是 4px 圆角的平行四边形，与输入栏、其余首页钮同一形态语言 */
+[data-theme='bluearchive'] .ba-home-modebtn {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 与右侧主行动钮等高：2×py-2.5 + text-sm 行高（正是搜索钮的原生高度），
+     宽度取等高成正方形。此前是 p-1 + 18px 图标 = 26px，比右侧矮一截 */
+  height: calc(2 * 0.625rem + var(--ui-fs-sm) * var(--text-sm--line-height, 1.4286));
+  aspect-ratio: 1;
+  background: transparent;
+  border-radius: var(--ui-r-btn, 4px);
+  color: var(--ui-btn-home-fill, var(--c-fg));
+}
+[data-theme='bluearchive'] .ba-home-modebtn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--c-yellow, #ffe100);
+  border-radius: inherit;
+  transform: var(--ui-btn-shear, none);
+  transition: background var(--ui-dur-base, 140ms) var(--ui-ease, ease);
+}
+/* 悬停：黄底压深一档（图标墨灰不变，压过调用处的 hover:text-muted） */
+[data-theme='bluearchive'] .ba-home-modebtn:hover::before {
+  background: color-mix(in srgb, var(--c-yellow, #ffe100) 88%, #000);
+}
+
+/* 首页右上角的背景显示开关：同为平行四边形。它是 fixed 浮钮（页面里没有
+   可依托的框架），故 1.5px 描边沿用原样；宿主让出底与描边，由 ::before
+   斜切画形并投影，与输入栏同一模型。无描边、无 hover 变体——它浮在实景天空
+   上，靠双层墨影立住即可（交互反馈只有 cursor:pointer，见 index.css 全局规则）。
+   注意：不写 position / z-index——无层规则会顶掉调用处的 fixed 与 z-20
+   （fixed 已是定位祖先，伪元素可直接挂靠；isolate 只建层叠上下文不改层级） */
+[data-theme='bluearchive'] .ba-sky-toggle {
+  isolation: isolate;
+  border: 0;
+  background: transparent;
+  border-radius: var(--ui-r-btn, 4px);
+}
+[data-theme='bluearchive'] .ba-sky-toggle::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--ui-card-fill, var(--c-bg));
+  border-radius: inherit;
+  transform: var(--ui-btn-shear, none);
+  /* 浮在实景天空（固定的亮色插画，与明暗档无关）之上：影必须用固定墨色——
+     走 --c-fg 会在深档翻白、在亮天空上反而看不见。双层影（贴近的实影 +
+     外扩的柔影）才"立"得起来，单层淡蓝影在蓝天里几乎不可辨 */
+  box-shadow:
+    0 3px 6px rgb(16 24 38 / 0.24),
+    0 10px 24px rgb(16 24 38 / 0.36);
+}
+
+/* 实底按钮（输入栏主行动 / 滑块选中项）：墨灰实底 + 白色粗字，填充随伪元素斜切；
+   滑块未选中项无 ::before，故不存在填充，靠 aria-pressed 区分——无需额外状态类 */
+[data-theme='bluearchive'] .ba-home-inputbar-btn,
+[data-theme='bluearchive'] .ba-home-slider-btn {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+  background: transparent;
+  box-shadow: none;
+  border-radius: var(--ui-r-btn, 4px);
+}
+[data-theme='bluearchive'] .ba-home-inputbar-btn::before,
+[data-theme='bluearchive'] .ba-home-slider-btn[aria-pressed='true']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--ui-btn-home-fill, var(--c-fg));
+  border-radius: inherit;
+  transform: var(--ui-btn-shear, none);
+  transition: background var(--ui-dur-base, 140ms) var(--ui-ease, ease);
+}
+[data-theme='bluearchive'] .ba-home-inputbar-btn:not(:disabled):hover::before,
+[data-theme='bluearchive'] .ba-home-slider-btn[aria-pressed='true']:hover::before {
+  background: var(--ui-btn-home-fill-hover, var(--c-fg));
+}
+/* 白字压过调用处的 text-accent-fg；字重取主题按钮字重（BA = 900 粗体） */
+[data-theme='bluearchive'] .ba-home-inputbar-btn,
+[data-theme='bluearchive'] .ba-home-slider-btn[aria-pressed='true'] {
+  color: var(--ui-btn-home-fg, #fff);
+  font-weight: var(--ui-btn-weight, 700);
 }
 
 /* 顶部发光的当前项指示条（BlueArchive 底部/顶部导航共用） */

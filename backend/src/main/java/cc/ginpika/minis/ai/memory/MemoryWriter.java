@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * <p>两条硬规则：
  * <ul>
  *   <li><b>失败隔离</b>——记忆是旁路，写不进绝不能拖垮聊天/执行主流程，异常吞掉只留日志；</li>
- *   <li><b>幂等</b>——event_key 用正本行 id（chat_message:{id} / sub_exec:{id}），
+ *   <li><b>幂等</b>——event_key 用正本行 id（chat_message:{id} / task:{id}），
  *       重复 push 由 UNIQUE 约束静默去重。</li>
  * </ul>
  *
@@ -38,7 +38,7 @@ public class MemoryWriter {
     /** 正本表名（ref_type 取值）：对话消息 */
     public static final String REF_CHAT_MESSAGE = "chat_message";
     /** 正本表名（ref_type 取值）：一次执行 */
-    public static final String REF_SUB_EXEC = "sub_exec";
+    public static final String REF_TASK = "task";
 
     /** 正文投影的截断长度：记忆事件是索引不是正本，长了挤占注入预算 */
     private static final int PAYLOAD_LIMIT = 500;
@@ -59,7 +59,7 @@ public class MemoryWriter {
 
     /** 执行出结论时推（AgentRunner 的 done 分支）：kind 为 heartbeat/plan/agent，output 为结论 */
     public void onExecDone(long execId, String kind, String title, String output) {
-        push(REF_SUB_EXEC + ":" + execId, KIND_EXEC, kind, title, output, REF_SUB_EXEC, execId);
+        push(REF_TASK + ":" + execId, KIND_EXEC, kind, title, output, REF_TASK, execId);
     }
 
     private void push(String eventKey, String kind, String actor, String title, String payload,

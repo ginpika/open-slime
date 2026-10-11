@@ -102,7 +102,7 @@ export function resolveTheme(
     '--c-entity-3': entityColor(accent, bg, 2),
     '--c-entity-4': entityColor(accent, bg, 3),
 
-    /* MD3 角色阶梯（与三色同源现混，五套主题共用同一批词汇） */
+    /* Material 角色阶梯（与三色同源现混，各主题共用同一批词汇） */
     '--c-surface-container-lowest': mix(bg, primary, 0.015),
     '--c-surface-container-low': mix(bg, primary, 0.04),
     '--c-surface-container': mix(bg, primary, 0.075),
@@ -146,7 +146,6 @@ export function resolveTheme(
 
   /* ---------------- 4. 用户覆盖层（最高优先级） ---------------- */
   if (override.fontSans) layerVars['--ui-font-sans'] = override.fontSans
-  if (override.fontMono) layerVars['--ui-font-mono'] = override.fontMono
   if (override.headingStyle) layerVars['--ui-heading-style'] = override.headingStyle
 
   /* 合并顺序契约（勿重排）：layerVars 在 colorVars 之后，因此层的
@@ -155,12 +154,24 @@ export function resolveTheme(
   return { ...SKELETON, ...colorVars, ...layerVars }
 }
 
+/**
+ * 上一次写入 :root 的令牌键集。
+ * 各主题登记的令牌集不同（如 BA 的 --ui-btn-shear / 终末地的 --ui-card-fill），
+ * 而内联样式不会自动回退：若不清理，上一套主题的遗留令牌会继续生效，
+ * 表现为「切主题后部分样式不刷新，刷新页面才恢复」。
+ */
+let appliedKeys: string[] = []
+
 /** 令牌写入 :root，并把主题/明暗写进 data 属性（供无法变量化的 CSS 使用） */
 export function applyVars(vars: Vars, themeId: ThemeId, scheme: Scheme): Vars {
   const root = document.documentElement
-  for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v)
+  const style = root.style
+  /* 先清残留：上一套登记、本套未登记的令牌必须移除，否则会压过 CSS 兜底值 */
+  for (const k of appliedKeys) if (!(k in vars)) style.removeProperty(k)
+  for (const [k, v] of Object.entries(vars)) style.setProperty(k, v)
+  appliedKeys = Object.keys(vars)
   root.dataset.theme = themeId
   root.dataset.scheme = scheme
-  root.style.colorScheme = scheme
+  style.colorScheme = scheme
   return vars
 }

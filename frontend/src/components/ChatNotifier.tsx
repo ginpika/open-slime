@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listSessions, type SessionItem } from '../api/client'
 import { getActiveChatSession, onChatSettled } from './chatLive'
+import { subscribeSessionEvents } from './sessionEvents'
 
 /**
- * 页级消息通知：无论用户停在哪一页，只要大模型在某个会话里答完了，就在左上角弹一只气泡提醒；
- * 点气泡直接切到会话页并打开那个会话。
+ * 页级消息通知：无论用户停在哪一页，只要大模型在某个会话里答完了、或某会话被投递了新消息，
+ * 就在左上角弹一只气泡提醒；点气泡直接切到会话页并打开那个会话。
  *
  * <p>两个来源：
  * <ol>
  *   <li><b>本标签页的生成收尾</b>（本地发起、或刷新后重挂的续传流）——由运行时仓当场推来：
  *       既及时（短回答也不会被轮询间隔漏掉），又不会误报（「刚答完」是亲眼看到的，不是猜的）；</li>
- *   <li><b>轮询会话列表的 unread</b>——潜意识子代理往会话投递的新消息（异步塞进来的，不看就不知道）。</li>
+ *   <li><b>会话事件推送</b>（STEP 4，取代原来的 5 秒轮询）——后端在「子代理结论投回 / 某会话答完」
+ *       时经 SSE 即时推来，跨标签页也收得到，且断线重连会补推断线期间漏掉的。</li>
  * </ol>
  *
- * <p>正在看的那条会话答完了不提醒（输出就在眼前）；被投递的新消息照旧提醒。同一会话只弹一条。
+ * <p>正在看的那条会话答完了不提醒（输出就在眼前）；被投递的新消息照旧提醒。同一会话挂着气泡时不重复弹。
  */
 
 /* ---------- 跨组件桥：气泡 ↔ 会话页（Home） ---------- */
@@ -55,8 +57,6 @@ type Notice = {
   kind: NoticeKind
 }
 
-/** 轮询间隔（毫秒）：与首页等待子代理回报的轮询同频 */
-const POLL_MS = 5000
 /** 同屏最多挂几条气泡，超出丢弃最旧的（避免连环投递时糊满左上角） */
 const MAX_NOTICES = 3
 /** 单条气泡停留时长（毫秒）：到点自动收起，点击 / 关闭可提前 */
@@ -120,13 +120,13 @@ function NoticeCard({
           />
         </svg>
         <span className="min-w-0 flex-1">
-          <span className="block text-[10px] font-medium uppercase tracking-[0.18em] text-faint">
+          <span className="block text-2xs font-medium uppercase tracking-[0.18em] text-faint">
             {KIND_LABEL[notice.kind]}
           </span>
-          <span className="mt-1 block truncate text-[13px] font-semibold text-fg">
+          <span className="mt-1 block truncate text-base font-semibold text-fg">
             {notice.title}
           </span>
-          <span className="mt-0.5 block text-[11px] text-accent">点击前往会话</span>
+          <span className="mt-0.5 block text-xs text-accent">点击前往会话</span>
         </span>
       </button>
       <button
@@ -153,8 +153,6 @@ function NoticeCard({
  */
 export default function ChatNotifier() {
   const [notices, setNotices] = useState<Notice[]>([])
-  /** 已提醒过（未读还没清零）的会话 id：该会话不再重复提醒 */
-  const notifiedRef = useRef<Set<string>>(new Set())
 
   /** 弹一条气泡；同一会话已有气泡挂在屏上就不重复弹 */
   const pushNotice = useCallback((id: string, kind: NoticeKind, title: string) => {
@@ -179,34 +177,18 @@ export default function ChatNotifier() {
     [pushNotice],
   )
 
-  /* 来源二：轮询会话列表里的 unread（潜意识子代理投递的新消息）；清零前不重复提醒 */
-  useEffect(() => {
-    let stopped = false
-    const poll = async () => {
-      let list: SessionItem[]
-      try {
-        list = await listSessions()
-      } catch {
-        return /* 轮询失败静默：下一拍再试 */
-      }
-      if (stopped) return
-      const unreadIds = new Set(list.filter((s) => s.unread).map((s) => s.id))
-      for (const id of notifiedRef.current) {
-        if (!unreadIds.has(id)) notifiedRef.current.delete(id)
-      }
-      for (const id of unreadIds) {
-        if (notifiedRef.current.has(id)) continue
-        notifiedRef.current.add(id)
-        pushNotice(id, 'delivered', list.find((s) => s.id === id)?.title || '未命名会话')
-      }
-    }
-    void poll()
-    const timer = setInterval(poll, POLL_MS)
-    return () => {
-      stopped = true
-      clearInterval(timer)
-    }
-  }, [pushNotice])
+  /* 来源二：会话事件推送（STEP 4，取代原来每 5 秒轮询会话列表的 unread）。
+     子代理结论投回、或某会话在别处答完，经 SSE 即时到达——正在看的那条不打扰（输出就在眼前） */
+  useEffect(
+    () =>
+      subscribeSessionEvents((e) => {
+        /* todo（个人待办清单更新）由会话页的 TODO 卡片自行消费，不弹通知气泡 */
+        if (e.kind === 'todo') return
+        if (e.sessionId === getActiveChatSession()) return
+        pushNotice(e.sessionId, e.kind, e.title || '未命名会话')
+      }),
+    [pushNotice],
+  )
 
   const dismiss = useCallback((id: string) => {
     setNotices((cur) => cur.filter((n) => n.id !== id))

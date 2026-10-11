@@ -9,7 +9,8 @@ package cc.ginpika.minis.agent.chat;
  * 交给 {@code ChatService} 补那条整体总结。事件契约由订阅方（chat 包）持有。
  *
  * @param hubId 结论投回的会话
+ * @param runId 该批的批次 id（{@code heartbeat_run.id}）：总结方据此取回这一批各次执行的成败，好如实交代谁失败
  * @param count 这一批真正跑起来的子代理数（直接写进总结指令，让模型知道要覆盖几件）
  */
-public record SubagentBatchDoneEvent(String hubId, int count) {
+public record SubagentBatchDoneEvent(String hubId, String runId, int count) {
 }

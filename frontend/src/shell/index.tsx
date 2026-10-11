@@ -1,34 +1,18 @@
 /**
- * 外壳注册表：主题 → kit。
+ * 外壳入口：按当前主题从注册表取外壳组件。
  *
- * 映射原则（与对话中声明一致）：
- *   old / clean / md3 → FlatShell 的三个 variant（同家族，只换排布）
- *   endfield          → EndfieldShell（独立 kit，理由见该文件头注释）
- *   bluearchive       → BlueArchiveShell（独立 kit，理由见该文件头注释）
- *
- * 新增主题时只需在这里加一行映射，页面与路由零改动。
+ * 「主题 → 外壳」的映射已收口到 theme/registry.tsx（THEMES），此处只做读取；
+ * 此前 kit / shell / ThemePanel 各自维护一份平行映射，是新增主题时最易漏改的地方。
+ * 同时侧效导入 shell.css：外壳 kit 的专属样式只在此处加载。
  */
 import './shell.css'
-import { BlueArchiveShell } from './BlueArchiveShell'
-import { EndfieldShell } from './EndfieldShell'
-import { FlatShell, type FlatVariant } from './FlatShell'
-import type { ShellProps } from './types'
+import { THEMES } from '../theme/registry'
 import { useThemeState } from '../theme/store'
-import type { ThemeId } from '../theme/types'
-
-/** 同家族主题 → 排布变体 */
-const FLAT_VARIANT: Record<Exclude<ThemeId, 'endfield' | 'bluearchive'>, FlatVariant> = {
-  old: 'minimal',
-  clean: 'sidebar',
-  md3: 'rail',
-}
+import type { ShellProps } from './types'
 
 export function AppShell(props: ShellProps) {
-  const { themeId } = useThemeState()
-
-  if (themeId === 'endfield') return <EndfieldShell {...props} />
-  if (themeId === 'bluearchive') return <BlueArchiveShell {...props} />
-  return <FlatShell {...props} variant={FLAT_VARIANT[themeId] ?? 'minimal'} />
+  const Shell = THEMES[useThemeState().themeId].shell
+  return <Shell {...props} />
 }
 
 export type { ShellProps }

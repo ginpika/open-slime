@@ -20,7 +20,7 @@ public class TerminalStore {
 
     /**
      * 一个终端目标的完整定义。两类目标（docker / ssh）共用一张宽表，各自只填自己那几列：
-     * 比拆成两张表更省事，读起来也只多几个 null——与 {@code sub_plan} 的多可选列同一个取舍。
+     * 比拆成两张表更省事，读起来也只多几个 null——与 {@code heartbeat_plan} 的多可选列同一个取舍。
      */
     public record TargetRow(String id, String name, String kind, boolean enabled, String workdir,
                             Long timeoutMs, Integer maxOutput, String allowPatterns,

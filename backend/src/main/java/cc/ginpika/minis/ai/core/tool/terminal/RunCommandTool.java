@@ -1,7 +1,10 @@
 package cc.ginpika.minis.ai.core.tool.terminal;
 
 import cc.ginpika.minis.ai.core.tool.AiTool;
+import cc.ginpika.minis.ai.core.tool.ToolDomain;
+import cc.ginpika.minis.ai.core.tool.ToolRisk;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Set;
@@ -47,10 +50,36 @@ public class RunCommandTool implements AiTool {
         return Set.of(ToolSurface.CHAT, ToolSurface.HEARTBEAT);
     }
 
+    @Override
+    public ToolDomain domain() {
+        return ToolDomain.TERMINAL;
+    }
+
+    /** 风险最高的一档：命令能产生任意副作用，授权与沙箱按 {@link ToolRisk#EXEC} 从严 */
+    @Override
+    public ToolRisk risk() {
+        return ToolRisk.EXEC;
+    }
+
     /** 子代理与任务计划都不给：任意命令执行权只留给「当场决定的那一层」 */
     @Override
     public boolean agentsMayCall() {
         return false;
+    }
+
+    /**
+     * 校验节点（STEP 4）：命令 / 工作空间任一为空都当场拒——执行档风险最高，宁可少放行。
+     * 这是零成本自检，真正的授权（目标是否启用、命令是否合规则）仍由 {@code TerminalService} 执行侧把关。
+     */
+    @Override
+    public String validate(JsonNode args) {
+        if (args.path("command").asText("").isBlank()) {
+            return "command 为空：请给出要执行的命令行。";
+        }
+        if (args.path("target").asText("").isBlank()) {
+            return "target 为空：请先用 " + ListTerminalsTool.NAME + " 查可用工作空间名，再指定 target。";
+        }
+        return null;
     }
 
     @Override

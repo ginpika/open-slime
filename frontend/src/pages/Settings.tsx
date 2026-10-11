@@ -240,8 +240,8 @@ function ResetKnowledgeDialog({
   return (
     <FloatWindow title="重置知识库" onClose={onClose} width={440}>
       <form onSubmit={submit} className="space-y-3">
-        <p className="text-[13px] leading-relaxed text-fg">
-          此操作将永久删除全部 chunk、知识图谱内的所有实体与关系，并移除所有相关的 embedding，
+        <p className="text-base leading-relaxed text-fg">
+          此操作将永久删除全部 chunk、知识图谱内的所有实体与关系、全部时序记忆，并移除所有相关的 embedding，
           <span className="font-semibold text-danger">且不可恢复</span>。文档条目与模型配置不受影响。
         </p>
         <kit.Field label="输入「确认」二字以继续">
@@ -492,14 +492,14 @@ export default function Settings() {
     rnk.mode !== 'off' &&
     (!rnk.model.trim() || (rnk.mode === 'custom' && (!rnk.baseUrl.trim() || !rnk.apiKey.trim())))
 
-  /** 重置知识库：清空全部 chunk、图谱实体与关系及相关 embedding（二次确认弹窗内提交） */
+  /** 重置知识库：清空全部 chunk、图谱实体与关系、时序记忆及相关 embedding（二次确认弹窗内提交） */
   const doReset = async () => {
     setBusy(true)
     try {
       const r = await resetKnowledgeBase()
       setToast({
         kind: 'success',
-        msg: `知识库已重置：删除 ${r.chunks} 个 chunk、${r.entities} 个实体、${r.relations} 条关系`,
+        msg: `知识库已重置：删除 ${r.chunks} 个 chunk、${r.entities} 个实体、${r.relations} 条关系、${r.memories} 条记忆`,
       })
       setResetOpen(false)
     } catch (e) {
@@ -551,7 +551,7 @@ export default function Settings() {
                   <kit.Row key={m.id} className="flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[13px] font-semibold text-fg">
+                        <span className="text-base font-semibold text-fg">
                           {m.name || m.model || '.env'}
                         </span>
                         {m.builtin && <kit.Badge>内置</kit.Badge>}
@@ -560,10 +560,10 @@ export default function Settings() {
                         )}
                         {data.defaultModelId === m.id && <kit.Badge tone="accent">默认</kit.Badge>}
                       </div>
-                      <p className="mt-1 break-all font-mono text-[11px] text-faint">
+                      <p className="mt-1 break-all font-mono text-xs text-faint">
                         {m.baseUrl || '（未配置 base-url）'}
                       </p>
-                      <p className="mt-0.5 font-mono text-[11px] text-hint">key {maskKey(m.apiKey)}</p>
+                      <p className="mt-0.5 font-mono text-xs text-hint">key {maskKey(m.apiKey)}</p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <button
@@ -703,8 +703,8 @@ export default function Settings() {
               </p>
               <div className="mt-4 flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[13px] font-semibold text-fg">启用精排</p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                  <p className="text-base font-semibold text-fg">启用精排</p>
+                  <p className="mt-1 text-xs leading-relaxed text-faint">
                     关闭后检索结果保持 RRF 融合原序，不再调用精排端点。
                   </p>
                 </div>
@@ -825,8 +825,8 @@ export default function Settings() {
               <div className="mt-3 rounded-md border border-danger/40 bg-danger/5 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-[13px] font-semibold text-fg">重置知识库</p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                    <p className="text-base font-semibold text-fg">重置知识库</p>
+                    <p className="mt-1 text-xs leading-relaxed text-faint">
                       删除全部 chunk、知识图谱内的实体与关系，并移除所有相关的 embedding。
                     </p>
                   </div>

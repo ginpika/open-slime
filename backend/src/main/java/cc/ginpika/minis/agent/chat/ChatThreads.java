@@ -3,6 +3,8 @@ package cc.ginpika.minis.agent.chat;
 import cc.ginpika.minis.agent.chat.store.ChatMessageStore;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore.HubRow;
+import cc.ginpika.minis.agent.chat.turn.TurnStore;
+import cc.ginpika.minis.agent.chat.turn.TurnTrigger;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 
@@ -12,7 +14,7 @@ import org.springframework.stereotype.Component;
  * <p>专供外围模块（潜意识的任务计划）的 {@code open_thread} / {@code send_message} 两个工具落地使用：
  * 这两件事只碰会话表与消息表，不含任何模型调用或对话编排，因此从 {@link ChatService} 拆出来单独成件。
  *
- * <p><b>为什么必须拆</b>：{@code ChatService} 需要 {@link SubconsciousTool}（执行计划工具）而
+ * <p><b>为什么必须拆</b>：{@code ChatService} 需要 {@link HeartbeatTool}（执行计划工具）而
  * 潜意识需要写会话，两个单例构造互指成环，此前只能靠 {@code @Lazy} 撑住。本组件只依赖两张 store 表，
  * 把「写会话」这条边从 ChatService 上摘下来，环即消失——潜意识侧因此不必再引用 ChatService。
  */
@@ -21,10 +23,13 @@ public class ChatThreads {
 
     private final HubSessionStore sessions;
     private final ChatMessageStore messages;
+    /** Turn 正本：投递也要落一条 Turn，历史里才看得到这一段 */
+    private final TurnStore turnStore;
 
-    public ChatThreads(HubSessionStore sessions, ChatMessageStore messages) {
+    public ChatThreads(HubSessionStore sessions, ChatMessageStore messages, TurnStore turnStore) {
         this.sessions = sessions;
         this.messages = messages;
+        this.turnStore = turnStore;
     }
 
     /**
@@ -43,7 +48,9 @@ public class ChatThreads {
         if (session == null) {
             return Optional.empty();
         }
-        messages.insert(threadId, "assistant", content, null, null, null, null, null);
+        long id = messages.insert(threadId, "assistant", content, null, null, null, null, null);
+        /* 投递不是人问的：没有触发端，落一条「系统投递」的 Turn，历史配对才完整 */
+        turnStore.record(threadId, TurnTrigger.Source.SYSTEM, id);
         sessions.touch(threadId, null);
         sessions.markUnread(threadId);
         return Optional.of(session.title() == null ? threadId : session.title());

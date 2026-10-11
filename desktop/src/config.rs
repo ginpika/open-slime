@@ -37,6 +37,10 @@ pub struct Config {
     /// hostid 服务端地址（登录时记下；启动时据此校验会话、失效时可一键重登）
     #[serde(default, rename = "hostidBaseUrl")]
     pub hostid_base_url: String,
+    /// 邮件服务地址（hostid 自带邮件，但特殊场景下它的前端与后端不同域，这里填真实地址；
+    /// 空 = 退回用 hostid 地址，见 desktop_hostid_base）
+    #[serde(default, rename = "mailUrl")]
+    pub mail_url: String,
     /// hostid SSO 用户（登录成功后由登录窗口回传写入；name 空 = 未登录）
     #[serde(default, rename = "ssoUserName")]
     pub sso_user_name: String,
@@ -62,6 +66,7 @@ impl Default for Config {
             local_user_avatar: String::new(),
             current_user: default_current_user(),
             hostid_base_url: String::new(),
+            mail_url: String::new(),
             sso_user_name: String::new(),
             sso_user_avatar: String::new(),
             sso_user_email: String::new(),

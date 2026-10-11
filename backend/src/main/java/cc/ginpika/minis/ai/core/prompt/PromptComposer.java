@@ -129,7 +129,7 @@ public class PromptComposer {
      * 每块用其声明的 XML 标签包裹，空片段自动跳过。
      *
      * <p>顺序与「某块当前生效的正文」由调用方给——{@link #chatSystem} 传全局绑定，
-     * 多智能体那条流传成员自己的绑定与顺序（见 {@code PeerPromptService}），组装规则只有这一处。
+     * 多智能体那条流传成员自己的绑定与顺序（见 {@code AgentPromptService}），组装规则只有这一处。
      */
     public String system(String contextKey, Map<String, Integer> sorts,
                          java.util.function.Function<String, String> contentOf) {
@@ -211,6 +211,36 @@ public class PromptComposer {
             /* 圆桌是局部大类：它只在智能体内部页出现（见 PromptLibrary.CAT_ROUNDTABLE），
                提示词页是首页对话的操作面，摆上这一节只会让人以为改了会影响首页 */
             if (PromptLibrary.CAT_ROUNDTABLE.equals(cat.key())) {
+                continue;
+            }
+            List<PromptDtos.ContextView> contexts = cat.contextKeys().stream()
+                    .map(key -> PromptLibrary.context(key).orElse(null))
+                    .filter(Objects::nonNull)
+                    .map(ctx -> toContextView(ctx, bindings, versions))
+                    .toList();
+            categories.add(new PromptDtos.CategoryView(cat.key(), cat.name(), cat.description(),
+                    contexts));
+        }
+        return new PromptDtos.PromptsView(categories);
+    }
+
+    /**
+     * 提示词页全量视图的「仅开发者选项」版：对话（{@link PromptLibrary#CAT_CHAT}）与圆桌
+     * （{@link PromptLibrary#CAT_ROUNDTABLE}）都已逐 Agent 化，全局页只展示流水线上的自动环节
+     * （{@link PromptLibrary#CAT_DEV}）。
+     *
+     * <p>{@link #view()} 仍保留（含对话），供需要完整视图的内部用途；全局操作面走本方法。
+     */
+    public PromptDtos.PromptsView viewDevOnly() {
+        Map<String, String> bindings = bindings();
+        Map<String, List<PromptDtos.VersionView>> versions = new HashMap<>();
+        for (VersionRow v : store.versions()) {
+            versions.computeIfAbsent(v.promptKey(), k -> new ArrayList<>())
+                    .add(new PromptDtos.VersionView(v.id(), v.name(), v.content(), v.updatedAt()));
+        }
+        List<PromptDtos.CategoryView> categories = new ArrayList<>();
+        for (PromptLibrary.PromptCategory cat : PromptLibrary.categories()) {
+            if (!PromptLibrary.CAT_DEV.equals(cat.key())) {
                 continue;
             }
             List<PromptDtos.ContextView> contexts = cat.contextKeys().stream()

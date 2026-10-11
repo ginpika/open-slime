@@ -9,7 +9,7 @@
  * 3. 排印层只声明「策略」（字重 / 斜体 / 字距 / 大小写），不声明具体字号——
  *    字号谱系是全局常量（见 TYPE_SCALE），任何主题都不改它。
  */
-import type { Vars } from './types'
+import type { BackdropKind, ThemeId, Vars } from './types'
 
 /* ------------------------------------------------------------ 全局常量 */
 
@@ -23,13 +23,17 @@ export const FONT_STACKS = {
  * 字号谱系：由原来散落的 20 档（10/10.5/11/11.5/…/40）收敛为 9 档。
  * 覆盖 Tailwind 的 --text-* 刻度，于是 text-xs / text-sm / text-base 等
  * 现有工具类会立刻变成主题无关的语义刻度。
+ *
+ * 刻度依据 docs/ui-design-font-size.md 校准：桌面端正文不得小于 14px，
+ * 核心阅读内容（聊天消息 / Agent 回复）默认 16px，次要信息 12–13px，
+ * 小于 12px 仅限角标等确有必要的最小场景。
  */
 export const TYPE_SCALE: Vars = {
-  '--ui-fs-micro': '10px', // 角标 / 微标签
-  '--ui-fs-xs': '11px', // 辅助说明 / hint
-  '--ui-fs-sm': '12px', // 次要正文 / 按钮
-  '--ui-fs-base': '13px', // 正文
-  '--ui-fs-md': '15px', // 强调正文 / 小节标题
+  '--ui-fs-micro': '11px', // 角标 / 极微标签（特殊场景）
+  '--ui-fs-xs': '12px', // 次要信息 / hint（可读下限）
+  '--ui-fs-sm': '13px', // 次要正文 / 按钮
+  '--ui-fs-base': '14px', // 正文（桌面端最小字号）
+  '--ui-fs-md': '16px', // 核心阅读正文（聊天 / Agent 回复）
   '--ui-fs-lg': '18px', // 卡片标题 / 文章标题
   '--ui-fs-xl': '22px', // 区块标题
   '--ui-fs-2xl': '28px', // 页面标题
@@ -47,13 +51,14 @@ export const SKELETON: Vars = {
 
 /* ------------------------------------------------------------- 各主题层 */
 
-/** Old（现有默认）——近纯黑墨、中性灰线、无彩点缀、直角偏小圆角、无装饰阴影 */
+/** Tailwind Mono（旧名 Old，现默认）——近纯黑墨、中性灰线、无彩点缀、直角偏小圆角、无装饰阴影 */
 const oldShape: Vars = {
   '--ui-r-xs': '2px',
   '--ui-r-sm': '2px',
   '--ui-r-md': '6px',
   '--ui-r-lg': '8px',
   '--ui-r-xl': '16px',
+  '--ui-r-2xl': '24px',
   '--ui-r-card': '6px',
   '--ui-r-pill': '999px',
   '--ui-clip': 'none',
@@ -92,96 +97,6 @@ const oldMotion: Vars = {
   '--ui-ease-mech': 'steps(6,end)',
 }
 
-/** Clean（Tailwind 现代 SaaS）——石板灰、单一品牌蓝、克制的多层柔影、中圆角 */
-const cleanShape: Vars = {
-  '--ui-r-xs': '4px',
-  '--ui-r-sm': '6px',
-  '--ui-r-md': '8px',
-  '--ui-r-lg': '12px',
-  '--ui-r-xl': '16px',
-  '--ui-r-card': '12px',
-  '--ui-r-pill': '999px',
-  '--ui-clip': 'none',
-  '--ui-clip-sm': 'none',
-}
-const cleanDepth: Vars = {
-  '--ui-e0': 'none',
-  '--ui-e1': '0 1px 2px rgb(15 23 42 / .06)',
-  '--ui-e2': '0 1px 3px rgb(15 23 42 / .08), 0 8px 24px rgb(15 23 42 / .06)',
-  '--ui-e3': '0 2px 6px rgb(15 23 42 / .08), 0 16px 40px rgb(15 23 42 / .10)',
-  '--ui-e4': '0 4px 10px rgb(15 23 42 / .10), 0 24px 56px rgb(15 23 42 / .14)',
-  '--ui-e5': '0 8px 20px rgb(15 23 42 / .12), 0 36px 80px rgb(15 23 42 / .18)',
-}
-const cleanSurface: Vars = { '--ui-panel-alpha': '100%', '--ui-blur': '0px', '--ui-lift': '1px' }
-const cleanTypo: Vars = {
-  '--ui-font-heading': FONT_STACKS.sans,
-  '--ui-heading-weight': '600',
-  '--ui-heading-style': 'normal',
-  '--ui-heading-tracking': '-0.02em',
-  '--ui-body-tracking': '0em',
-  '--ui-label-tracking': '0.10em',
-  '--ui-label-transform': 'none',
-  '--ui-btn-fs': 'var(--ui-fs-sm)',
-  '--ui-btn-weight': '600',
-  '--ui-btn-style': 'normal',
-  '--ui-btn-tracking': '0em',
-  '--ui-btn-transform': 'none',
-  '--ui-btn-py': '7px',
-  '--ui-btn-px': '16px',
-}
-const cleanMotion: Vars = {
-  '--ui-dur-fast': '120ms',
-  '--ui-dur-base': '150ms',
-  '--ui-dur-slow': '250ms',
-  '--ui-ease': 'cubic-bezier(.4,0,.2,1)',
-  '--ui-ease-mech': 'steps(6,end)',
-}
-
-/** MD3（Material Design 3）——大圆角、官方五级 elevation、medium 字重、标准缓动 */
-const md3Shape: Vars = {
-  '--ui-r-xs': '4px',
-  '--ui-r-sm': '8px',
-  '--ui-r-md': '12px',
-  '--ui-r-lg': '16px',
-  '--ui-r-xl': '20px',
-  '--ui-r-card': '24px',
-  '--ui-r-pill': '999px',
-  '--ui-clip': 'none',
-  '--ui-clip-sm': 'none',
-}
-const md3Depth: Vars = {
-  '--ui-e0': 'none',
-  '--ui-e1': '0 1px 2px rgb(0 0 0 / .30), 0 1px 3px 1px rgb(0 0 0 / .15)',
-  '--ui-e2': '0 1px 2px rgb(0 0 0 / .30), 0 2px 6px 2px rgb(0 0 0 / .15)',
-  '--ui-e3': '0 1px 3px rgb(0 0 0 / .30), 0 4px 8px 3px rgb(0 0 0 / .15)',
-  '--ui-e4': '0 2px 3px rgb(0 0 0 / .30), 0 6px 10px 4px rgb(0 0 0 / .15)',
-  '--ui-e5': '0 4px 4px rgb(0 0 0 / .30), 0 8px 12px 6px rgb(0 0 0 / .15)',
-}
-const md3Surface: Vars = { '--ui-panel-alpha': '100%', '--ui-blur': '0px', '--ui-lift': '0px' }
-const md3Typo: Vars = {
-  '--ui-font-heading': FONT_STACKS.sans,
-  '--ui-heading-weight': '500',
-  '--ui-heading-style': 'normal',
-  '--ui-heading-tracking': '0em',
-  '--ui-body-tracking': '0.02em',
-  '--ui-label-tracking': '0.08em',
-  '--ui-label-transform': 'none',
-  '--ui-btn-fs': 'var(--ui-fs-sm)',
-  '--ui-btn-weight': '500',
-  '--ui-btn-style': 'normal',
-  '--ui-btn-tracking': '0.01em',
-  '--ui-btn-transform': 'none',
-  '--ui-btn-py': '8px',
-  '--ui-btn-px': '20px',
-}
-const md3Motion: Vars = {
-  '--ui-dur-fast': '150ms',
-  '--ui-dur-base': '200ms',
-  '--ui-dur-slow': '400ms',
-  '--ui-ease': 'cubic-bezier(.2,0,0,1)',
-  '--ui-ease-mech': 'steps(6,end)',
-}
-
 /**
  * Endfield（终末地）—— 双登记簿，基准 = docs/endfield-style-demo.html v3
  *
@@ -200,6 +115,7 @@ const endfieldShape: Vars = {
   '--ui-r-md': '0px',
   '--ui-r-lg': '0px',
   '--ui-r-xl': '0px',
+  '--ui-r-2xl': '0px',
   '--ui-r-card': '0px',
   '--ui-r-pill': '999px',
   /* 工业风：按钮 4px 圆角、原生控件 2px 微圆角（卡片仍走大切角 --ui-clip） */
@@ -303,35 +219,56 @@ const endfieldBtn: Vars = {
   '--ui-btn-danger-fg': '#fff',
 }
 
-/** BlueArchive（蔚蓝档案）——全胶囊、蓝调柔影、粗斜体、回弹缓动 */
+/** BlueArchive（蔚蓝档案）——冷灰蓝纸底 + 纯白胶囊卡 + 档案青 + 糖果点缀 */
 const baShape: Vars = {
   '--ui-r-xs': '12px',
   '--ui-r-sm': '14px',
   '--ui-r-md': '18px',
   '--ui-r-lg': '22px',
   '--ui-r-xl': '26px',
+  '--ui-r-2xl': '32px',
   '--ui-r-card': '26px',
   '--ui-r-pill': '999px',
+  /* 按钮：4px 小圆角（平行四边形 + 小圆角的硬朗形态）；控件保持 12px 中型圆角 */
+  '--ui-r-btn': '4px',
+  '--ui-r-btn-sm': '4px',
+  '--ui-r-control': '12px',
+  /* 按钮 = 右倾 15° 平行四边形：只斜切描边环 / 填充层（index.css 伪元素消费），
+     文字与图标保持正体；图标圆钮例外不斜切 */
+  '--ui-btn-shear': 'skewX(-15deg)',
   '--ui-clip': 'none',
   '--ui-clip-sm': 'none',
 }
 const baDepth: Vars = {
   '--ui-e0': 'none',
-  '--ui-e1': '0 2px 6px color-mix(in srgb, var(--c-accent) 12%, transparent)',
-  '--ui-e2': '0 4px 14px color-mix(in srgb, var(--c-accent) 16%, transparent)',
-  '--ui-e3': '0 10px 26px color-mix(in srgb, var(--c-accent) 20%, transparent)',
-  '--ui-e4': '0 18px 44px color-mix(in srgb, var(--c-accent) 22%, transparent)',
-  '--ui-e5': '0 30px 70px color-mix(in srgb, var(--c-accent) 26%, transparent)',
+  /* 蓝调柔影小而软（demo --sh-xs/sm）：卡片层次主要靠细描边，不靠投影 */
+  '--ui-e1': '0 2px 6px color-mix(in srgb, var(--c-accent) 10%, transparent)',
+  '--ui-e2': '0 4px 14px color-mix(in srgb, var(--c-accent) 13%, transparent)',
+  '--ui-e3': '0 8px 24px color-mix(in srgb, var(--c-accent) 16%, transparent)',
+  /* 大浮层换墨色投影，避免整页蓝雾 */
+  '--ui-e4': '0 18px 44px color-mix(in srgb, var(--c-fg) 16%, transparent)',
+  '--ui-e5': '0 30px 70px color-mix(in srgb, var(--c-fg) 20%, transparent)',
 }
-const baSurface: Vars = { '--ui-panel-alpha': '100%', '--ui-blur': '0px', '--ui-lift': '3px' }
+const baSurface: Vars = {
+  '--ui-panel-alpha': '100%',
+  '--ui-blur': '0px',
+  '--ui-lift': '3px',
+  /* 糖果点缀族（背景光斑 / 渐变伙伴 / 装饰用；信息色仍走语义令牌） */
+  '--c-cyan-light': '#4fb0ff',
+  '--c-cyan-deep': '#0a6ed1',
+  '--c-yellow': '#ffe100',
+  '--c-pink': '#ff7eb6',
+  '--c-mint': '#5fdcbe',
+}
 const baTypo: Vars = {
   '--ui-font-heading': FONT_STACKS.sans,
   '--ui-heading-weight': '900',
   '--ui-heading-style': 'italic',
   '--ui-heading-tracking': '-0.02em',
   '--ui-body-tracking': '0em',
-  '--ui-label-tracking': '0.04em',
-  '--ui-label-transform': 'none',
+  /* 微标签 = demo 的 .tag：全大写 + 宽字距（中文无大小写，英文标签立刻有 BA 味） */
+  '--ui-label-tracking': '0.14em',
+  '--ui-label-transform': 'uppercase',
   '--ui-btn-fs': 'var(--ui-fs-sm)',
   '--ui-btn-weight': '900',
   '--ui-btn-style': 'italic',
@@ -348,6 +285,53 @@ const baMotion: Vars = {
   '--ui-ease-mech': 'steps(6,end)',
 }
 
+/**
+ * BlueArchive 按钮层（组件变体登记簿，仿 endfieldBtn）：
+ *   · 白系是主体——次级钮（outline）= 纯白底 + 细线 + 墨字，hover 描边转青；
+ *   · 主行动（primary）同为白系：纯白底 + 蓝灰粗斜体字，
+ *     靠字色与位置分层；hover 勾一圈青细环作反馈，底色恒白（青渐变实底已退役）；
+ *   · 形态 = 右倾 15° 平行四边形（baShape --ui-btn-shear），
+ *     配轻度的右下方向柔影——实底变体（primary / outline / danger）才有影，
+ *     quiet / icon 无身体不吃影；
+ *   · fill 走 background 声明，因此可承渐变值。
+ */
+const baBtn: Vars = {
+  /* 主行动：纯白底 + 蓝灰字；hover 只勾青环不变底，active 保持纯白；
+     右下轻影（青调，方向配平行四边形的斜向） */
+  '--ui-btn-primary-ring': 'transparent',
+  '--ui-btn-primary-ring-hover': 'var(--c-accent)',
+  '--ui-btn-primary-fill': '#ffffff',
+  '--ui-btn-primary-fill-hover': '#ffffff',
+  '--ui-btn-primary-fill-active': '#ffffff',
+  '--ui-btn-primary-fg': '#3d5a8c',
+  '--ui-btn-primary-shadow': '3px 4px 9px color-mix(in srgb, var(--c-accent) 14%, transparent)',
+  /* 次级钮：BA 白系按钮的主体——纯白底（深档=卡面色）+ 细线 + 墨字 */
+  '--ui-btn-outline-ring': 'var(--c-line)',
+  '--ui-btn-outline-ring-hover': 'var(--c-accent)',
+  '--ui-btn-outline-fill': 'var(--ui-card-fill, var(--c-bg))',
+  '--ui-btn-outline-fill-hover': 'var(--ui-card-fill, var(--c-bg))',
+  '--ui-btn-outline-fill-active': 'var(--c-accent-soft)',
+  '--ui-btn-outline-fg': 'var(--c-fg)',
+  '--ui-btn-outline-fg-hover': 'var(--c-accent)',
+  '--ui-btn-outline-shadow': '3px 4px 9px color-mix(in srgb, var(--c-accent) 12%, transparent)',
+  /* 安静钮：无边无底，hover 一层青洗（低优先动作不抢白系按钮的戏） */
+  '--ui-btn-quiet-ring': 'transparent',
+  '--ui-btn-quiet-ring-hover': 'transparent',
+  '--ui-btn-quiet-fill': 'transparent',
+  '--ui-btn-quiet-fill-hover': 'var(--c-accent-soft)',
+  '--ui-btn-quiet-fill-active': 'var(--c-accent-soft)',
+  '--ui-btn-quiet-fg': 'var(--c-muted)',
+  '--ui-btn-quiet-fg-hover': 'var(--c-accent)',
+  /* 危险钮（BA 未登记色板，回退全局红）：同样吃右下轻影（红调） */
+  '--ui-btn-danger-shadow': '3px 4px 9px color-mix(in srgb, var(--c-danger) 16%, transparent)',
+  /* 首页实底钮（搜索框主行动 / 模式滑块选中项）：墨灰底 + 白色粗字。
+     与 primary 的白底蓝灰字分轴——那是"每屏一颗的正式主行动"，这是首页
+     工具条上的高频动作钮，用墨灰实底把行动点压实、与白卡层次拉开 */
+  '--ui-btn-home-fill': '#3a3f47',
+  '--ui-btn-home-fill-hover': '#4b515b',
+  '--ui-btn-home-fg': '#ffffff',
+}
+
 /* --------------------------------------------------------------- 汇总 */
 
 export type LayerBundle = {
@@ -361,44 +345,8 @@ export type LayerBundle = {
   overrides?: Partial<Record<'light' | 'dark', Vars>>
 }
 
-export const LAYERS: Record<string, LayerBundle> = {
+export const LAYERS: Record<ThemeId, LayerBundle> = {
   old: { shape: oldShape, depth: oldDepth, surface: oldSurface, typo: oldTypo, motion: oldMotion },
-
-  clean: {
-    shape: cleanShape,
-    depth: cleanDepth,
-    surface: cleanSurface,
-    typo: cleanTypo,
-    motion: cleanMotion,
-    // 深色下黑影要更重才看得见
-    overrides: {
-      dark: {
-        '--ui-e1': '0 1px 2px rgb(0 0 0 / .30)',
-        '--ui-e2': '0 2px 6px rgb(0 0 0 / .38)',
-        '--ui-e3': '0 8px 20px rgb(0 0 0 / .46)',
-        '--ui-e4': '0 16px 36px rgb(0 0 0 / .54)',
-        '--ui-e5': '0 26px 56px rgb(0 0 0 / .62)',
-      },
-    },
-  },
-
-  md3: {
-    shape: md3Shape,
-    depth: md3Depth,
-    surface: md3Surface,
-    typo: md3Typo,
-    motion: md3Motion,
-    // MD3 暗色 elevation 按规范提高不透明度
-    overrides: {
-      dark: {
-        '--ui-e1': '0 1px 2px rgb(0 0 0 / .50), 0 1px 3px 1px rgb(0 0 0 / .30)',
-        '--ui-e2': '0 1px 2px rgb(0 0 0 / .50), 0 2px 6px 2px rgb(0 0 0 / .30)',
-        '--ui-e3': '0 1px 3px rgb(0 0 0 / .50), 0 4px 8px 3px rgb(0 0 0 / .30)',
-        '--ui-e4': '0 2px 3px rgb(0 0 0 / .50), 0 6px 10px 4px rgb(0 0 0 / .30)',
-        '--ui-e5': '0 4px 4px rgb(0 0 0 / .50), 0 8px 12px 6px rgb(0 0 0 / .30)',
-      },
-    },
-  },
 
   endfield: {
     shape: endfieldShape,
@@ -449,6 +397,28 @@ export const LAYERS: Record<string, LayerBundle> = {
     surface: baSurface,
     typo: baTypo,
     motion: baMotion,
+    btn: baBtn,
+    overrides: {
+      /* 浅档：纸底 #f2f6fb 上的纯白卡（ui-card 与 BA kit 共用同一令牌） */
+      light: { '--ui-card-fill': '#ffffff' },
+      dark: {
+        /* 深档卡比底色亮一档，替代投影分层 */
+        '--ui-card-fill': '#131d2f',
+        /* 渐变伙伴提亮一档，深底上渐变才不发闷 */
+        '--c-cyan-light': '#8fd0ff',
+        /* 深底上黑影不可见：投影换青光晕并加重 */
+        '--ui-e1': '0 2px 8px color-mix(in srgb, var(--c-accent) 20%, transparent)',
+        '--ui-e2': '0 4px 16px color-mix(in srgb, var(--c-accent) 24%, transparent)',
+        '--ui-e3': '0 10px 28px color-mix(in srgb, var(--c-accent) 28%, transparent)',
+        /* 按钮右下轻影同步加重一档（同 e1-e3 的深档补偿） */
+        '--ui-btn-primary-shadow': '3px 5px 12px color-mix(in srgb, var(--c-accent) 26%, transparent)',
+        '--ui-btn-outline-shadow': '3px 5px 12px color-mix(in srgb, var(--c-accent) 24%, transparent)',
+        '--ui-btn-danger-shadow': '3px 5px 12px color-mix(in srgb, var(--c-danger) 28%, transparent)',
+        /* 首页实底钮：近夜底上墨灰要提亮一档才与底色分得开 */
+        '--ui-btn-home-fill': '#474d59',
+        '--ui-btn-home-fill-hover': '#585f6d',
+      },
+    },
   },
 }
 
@@ -508,23 +478,11 @@ export const ENDFIELD_WINDOW_WORKBENCH: Vars = {
 
 /* --------------------------------------------------- 主题元信息（面板用） */
 
-export const THEME_META: Record<string, { label: string; labelEn: string; desc: string; backdrop: 'none' | 'grid' | 'holo' | 'pop' }> = {
+export const THEME_META: Record<ThemeId, { label: string; labelEn: string; desc: string; backdrop: BackdropKind }> = {
   old: {
-    label: 'Mono',
-    labelEn: 'OLD / DEFAULT',
-    desc: '现有默认。近纯黑墨、中性灰线、无彩点缀，极简克制的排版优先。',
-    backdrop: 'none',
-  },
-  clean: {
-    label: 'Clean',
-    labelEn: 'TAILWIND CLEAN',
-    desc: '现代 SaaS。石板灰墨 + 单一品牌蓝，多层克制柔影，信息密度友好。',
-    backdrop: 'none',
-  },
-  md3: {
-    label: 'Material 3',
-    labelEn: 'GOOGLE MD3',
-    desc: 'Material You。紫罗兰色调、大圆角、官方五级 elevation、medium 字重。',
+    label: 'Tailwind Mono',
+    labelEn: 'TAILWIND MONO',
+    desc: '默认主题。近纯黑墨、中性灰线、无彩点缀，极简克制的排版优先；可在主题配置里启用侧边栏布局。',
     backdrop: 'none',
   },
   endfield: {
@@ -536,7 +494,7 @@ export const THEME_META: Record<string, { label: string; labelEn: string; desc: 
   bluearchive: {
     label: '蔚蓝档案',
     labelEn: 'BLUE ARCHIVE',
-    desc: '数字街头 Y2K。高饱和档案青、全胶囊、粗斜体标题、蓝调柔影。',
+    desc: '冷灰蓝纸底 + 纯白胶囊卡 + 档案青，黄/粉糖果点缀，细描边 + 蓝调柔影，粗斜体标题。',
     backdrop: 'pop',
   },
 }

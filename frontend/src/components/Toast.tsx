@@ -58,7 +58,7 @@ export default function Toast({
         onClick={() => closeRef.current()}
         title="点击关闭"
         className={`toast-card pointer-events-auto flex max-w-xl cursor-pointer items-start gap-2.5 rounded-lg border border-line border-l-4 bg-bg/95 px-4 py-3 shadow-lg backdrop-blur-md transition-all duration-300 ${
-          kind === 'error' ? 'border-l-hint' : 'border-l-emerald-500'
+          kind === 'error' ? 'border-l-hint' : 'border-l-ok'
         } ${shown ? 'translate-y-0 opacity-100' : '-translate-y-3 opacity-0'}`}
       >
         {kind === 'error' ? (
@@ -77,7 +77,7 @@ export default function Toast({
             viewBox="0 0 24 24"
             fill="none"
             aria-hidden="true"
-            className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500"
+            className="mt-0.5 h-4 w-4 shrink-0 text-ok"
           >
             <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
             <path

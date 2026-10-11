@@ -79,7 +79,7 @@ export default function GraphMini({ nodes, edges, emphasized, pendingEdges, clas
               <text
                 x={mx}
                 y={my - 4}
-                fontSize="8"
+                fontSize="9"
                 textAnchor="middle"
                 style={{
                   paintOrder: 'stroke',
@@ -119,7 +119,7 @@ export default function GraphMini({ nodes, edges, emphasized, pendingEdges, clas
               <text
                 x={mx}
                 y={my - 5}
-                fontSize="8.5"
+                fontSize="9.5"
                 fontWeight="600"
                 textAnchor="middle"
                 style={{
@@ -154,7 +154,7 @@ export default function GraphMini({ nodes, edges, emphasized, pendingEdges, clas
             <text
               x={p.x}
               y={p.y + (isEm ? 20 : 16)}
-              fontSize={isEm ? 11 : 10}
+              fontSize={isEm ? 12 : 11}
               fontWeight={isEm ? 700 : 400}
               textAnchor="middle"
               style={{

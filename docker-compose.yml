@@ -10,8 +10,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    image: minis-backend:latest
-    container_name: minis-backend
+    image: slime-backend:latest
+    container_name: slime-backend
     restart: unless-stopped
     # 后端参数全部来自 backend/.env（LLM_API_KEY / SSO 等；真实环境变量优先于该文件）
     env_file:
@@ -34,8 +34,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    image: minis-frontend:latest
-    container_name: minis-frontend
+    image: slime-frontend:latest
+    container_name: slime-frontend
     restart: unless-stopped
     depends_on:
       - backend

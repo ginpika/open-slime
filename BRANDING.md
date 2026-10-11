@@ -80,8 +80,7 @@
 该脚本已挂到下列构建入口，通常**无需手动执行**：
 
 - `desktop/package.json` 的 `predev` / `prebuild`
-- `compile-desktop.cmd`（起始处）
-- `desktop/scripts/assemble-runtime.ps1` / `assemble-runtime.sh`（起始处）
+- `desktop/assemble-runtime.ps1`（起始处）
 
 手动执行：
 

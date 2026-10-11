@@ -2,8 +2,8 @@ package cc.ginpika.minis.ai.core.tool.subagent;
 
 import cc.ginpika.minis.ai.core.tool.AiTool;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
-import cc.ginpika.minis.ai.core.tool.subconscious.CreatePlanTool;
-import cc.ginpika.minis.ai.core.tool.subconscious.DelegatePlanTool;
+import cc.ginpika.minis.ai.core.tool.heartbeat.CreatePlanTool;
+import cc.ginpika.minis.ai.core.tool.heartbeat.DelegatePlanTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Set;

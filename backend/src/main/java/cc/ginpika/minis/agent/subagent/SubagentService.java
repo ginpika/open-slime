@@ -4,14 +4,20 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import cc.ginpika.minis.ai.knowledge.ingest.KnowledgeToolbox;
 import cc.ginpika.minis.agent.chat.ChatTrace;
 import cc.ginpika.minis.agent.chat.SubagentBatchDoneEvent;
 import cc.ginpika.minis.agent.chat.SubagentReportEvent;
 import cc.ginpika.minis.agent.chat.SubagentTool;
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
+import cc.ginpika.minis.agent.context.ContextBuilder;
+import cc.ginpika.minis.agent.context.ContextRequest;
 import cc.ginpika.minis.agent.runtime.AgentRunner;
+import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.agent.runtime.ExecStore;
+import cc.ginpika.minis.agent.runtime.TaskRunner;
+import cc.ginpika.minis.agent.runtime.TaskStore;
 import cc.ginpika.minis.agent.runtime.ToolBatch;
 import cc.ginpika.minis.ai.core.prompt.PromptManager;
 import cc.ginpika.minis.ai.core.prompt.block.SubagentBlock;
@@ -19,8 +25,6 @@ import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import cc.ginpika.minis.ai.core.tool.subagent.DelegateSubagentTool;
 import cc.ginpika.minis.ai.core.tool.subagent.ReadSubagentRunTool;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -34,6 +38,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 /**
@@ -45,14 +50,16 @@ import org.springframework.stereotype.Service;
  *       user 只有派它的人写的那段交代；看不到当前对话，也没有上一轮的记忆。</li>
  *   <li><b>窄工具集</b>——默认只给只读检索那几件（向量检索 / 图谱查询 / 读文档）；
  *       要它写知识库得由调用方显式点名。</li>
- *   <li><b>只回结论</b>——过程落在 {@code sub_exec}（kind=agent）里可回看，但不占派活方的上下文，
+ *   <li><b>只回结论</b>——过程落在 {@code task}（origin=agent）里可回看，但不占派活方的上下文，
  *       回流给他的只有一段结论文本。</li>
  *   <li><b>不阻塞主会话</b>——对话侧派活当场只回一张受理回执，真正的 LLM 往返在后台跑，
  *       结论作为一条新消息投回原会话（见 {@link #runChatTool}）。</li>
  *   <li><b>可并行</b>——同一条消息里派出的几个子代理互不相干，由 {@link ToolBatch} 并发跑。</li>
+ *   <li><b>共享黑板</b>（STEP 4）——跑完的结论沉淀进本会话的黑板（{@link ScratchpadStore}），
+ *       后派的子代理开工先读它：同一会话里先派后派能接力，不重复查同一件事。</li>
  * </ul>
  *
- * <p>与「任务计划」（{@code subconscious} 模块）的分工：计划是<b>常驻编制</b>——有名字、有正文、
+ * <p>与「任务计划」（{@code heartbeat} 模块）的分工：计划是<b>常驻编制</b>——有名字、有正文、
  * 有节拍，由心跳主会话按需派出，能反复用；子代理是<b>临时的兵</b>——一次性，用完即弃。
  * 两者共用同一个执行引擎（{@link AgentRunner}）与同一张执行留痕表，因为「被派出去跑一次」
  * 这件事本身是一样的：计划被派出的那一次，跑的就是一个带着常驻正文的匿名实例。
@@ -71,15 +78,18 @@ public class SubagentService implements SubagentTool {
     /** 回放过程时正文/思维链的截断上限 */
     private static final int REPLAY_LIMIT = 6000;
 
-    private static final DateTimeFormatter STAMP =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
-    private final AgentRunner runner;
+    private final TaskRunner runner;
     private final ExecStore store;
+    /** 任务：对话侧的异步派活每条落一行，进程重启后可恢复为「已中断、可重跑」 */
+    private final TaskStore tasks;
+    /** 共享黑板：子代理结论沉淀于此，供后续子代理开工时参考（见 {@link ScratchpadStore}） */
+    private final ScratchpadStore scratchpad;
     private final PromptManager prompts;
     private final ToolManager tools;
     private final KnowledgeToolbox toolbox;
     private final ObjectMapper om;
+    /** 上下文平面：子代理的 system 由它 + {@code SubagentContextProvider} 组装（见 STEP 6-③） */
+    private final ContextBuilder context;
     /** 结论投回的落点：发事件让 ChatService 把「子代理回报」渲染进派它的那个会话 */
     private final ApplicationEventPublisher publisher;
 
@@ -101,15 +111,19 @@ public class SubagentService implements SubagentTool {
     /** 各会话在跑的子代理（hubId → 执行 id）：每轮据此告诉主模型「还有什么活派出去没回来」 */
     private final ConcurrentHashMap<String, Set<Long>> running = new ConcurrentHashMap<>();
 
-    public SubagentService(AgentRunner runner, ExecStore store, PromptManager prompts,
+    public SubagentService(TaskRunner runner, ExecStore store, TaskStore tasks,
+                           ScratchpadStore scratchpad, PromptManager prompts,
                            ToolManager tools, KnowledgeToolbox toolbox, ObjectMapper om,
-                           ApplicationEventPublisher publisher) {
+                           @Lazy ContextBuilder context, ApplicationEventPublisher publisher) {
         this.runner = runner;
         this.store = store;
+        this.tasks = tasks;
+        this.scratchpad = scratchpad;
         this.prompts = prompts;
         this.tools = tools;
         this.toolbox = toolbox;
         this.om = om;
+        this.context = context;
         this.publisher = publisher;
     }
 
@@ -117,11 +131,12 @@ public class SubagentService implements SubagentTool {
 
     /** 心跳侧入口：派活当场等结论——心跳主会话要拿它继续裁量这一拍还派谁（见 {@link #delegateTool}） */
     @Override
-    public String runTool(JsonNode call, String runId, String trigger) {
+    public String runTool(String agentId, JsonNode call, String runId, String trigger,
+                          Long parentTaskId) {
         String name = call.path("function").path("name").asText("");
         JsonNode args = readTree(call.path("function").path("arguments").asText(""));
         return switch (name) {
-            case DelegateSubagentTool.NAME -> delegateTool(args, runId, trigger);
+            case DelegateSubagentTool.NAME -> delegateTool(args, agentId, runId, trigger, parentTaskId);
             case ReadSubagentRunTool.NAME -> replayTool(args);
             default -> "未知工具: " + name;
         };
@@ -129,11 +144,11 @@ public class SubagentService implements SubagentTool {
 
     /** 对话侧入口：派活非阻塞——当场回一张受理回执，结论跑完投回会话（见 {@link #delegateAsync}） */
     @Override
-    public String runChatTool(JsonNode call, String runId, String hubId) {
+    public String runChatTool(String agentId, JsonNode call, String runId, String hubId) {
         String name = call.path("function").path("name").asText("");
         JsonNode args = readTree(call.path("function").path("arguments").asText(""));
         return switch (name) {
-            case DelegateSubagentTool.NAME -> delegateAsync(args, runId, hubId);
+            case DelegateSubagentTool.NAME -> delegateAsync(args, agentId, runId, hubId);
             case ReadSubagentRunTool.NAME -> replayTool(args);
             default -> "未知工具: " + name;
         };
@@ -142,9 +157,9 @@ public class SubagentService implements SubagentTool {
     // ---------- 批次（一次派活所属的一批） ----------
 
     /** 开一批：一轮里派出的多个子代理共属一批，页面的「最近几批」不会被逐个调用刷屏 */
-    public String openRun(String trigger) {
+    public String openRun(String agentId, String trigger) {
         String runId = UUID.randomUUID().toString();
-        store.insertRun(runId, batchSeq.incrementAndGet(), trigger);
+        store.insertRun(runId, agentId, batchSeq.incrementAndGet(), trigger);
         pending.put(runId, new AtomicInteger());
         return runId;
     }
@@ -182,7 +197,7 @@ public class SubagentService implements SubagentTool {
         String hubId = batchHub.remove(runId);
         if (hubId != null && !execs.isEmpty()) {
             int count = execs.size();
-            POOL.execute(() -> publisher.publishEvent(new SubagentBatchDoneEvent(hubId, count)));
+            POOL.execute(() -> publisher.publishEvent(new SubagentBatchDoneEvent(hubId, runId, count)));
         }
     }
 
@@ -194,16 +209,18 @@ public class SubagentService implements SubagentTool {
      * <p>只在心跳侧用：心跳主会话派活就是为了拿结论继续裁量这一拍。对话侧走
      * {@link #delegateAsync}——那边不能把用户的主会话挂住。
      *
-     * @param runId 归属批次；null 表示由子代理自己开一批
+     * @param runId        归属批次；null 表示由子代理自己开一批
+     * @param parentTaskId 派它的那个任务（心跳主会话 / 计划）；顶层传 null
      */
-    private String delegateTool(JsonNode args, String runId, String trigger) {
+    private String delegateTool(JsonNode args, String agentId, String runId, String trigger,
+                                Long parentTaskId) {
         String instruction = args.path("instruction").asText("").trim();
         if (instruction.isEmpty()) {
             return "缺少 instruction：子代理看不到当前对话，请把要它查什么、产出什么写清楚。";
         }
         String batchId = runId;
         if (batchId == null) {
-            batchId = openRun(trigger == null ? "chat" : trigger);
+            batchId = openRun(agentId, trigger == null ? "chat" : trigger);
         } else if (store.execsByRun(batchId).size() >= MAX_PER_BATCH) {
             return "这一批派出的子代理已达上限（" + MAX_PER_BATCH + " 个）："
                     + "请等它们出结论，或把活合并成更少的几件。";
@@ -211,9 +228,10 @@ public class SubagentService implements SubagentTool {
         List<String> tools = names(args.path("tools"));
         String title = title(args.path("name").asText(""), instruction);
 
-        AgentRunner.Outcome outcome;
+        TaskRunner.Outcome outcome;
         try {
-            outcome = run(batchId, title, instruction, tools);
+            outcome = runSync(batchId, agentId, title, instruction, tools, parentTaskId,
+                    args.toString());
         } catch (RuntimeException e) {
             log.warn("子代理「{}」执行失败：{}", title, e.getMessage());
             return "子代理执行失败：" + e.getMessage();
@@ -226,34 +244,48 @@ public class SubagentService implements SubagentTool {
     }
 
     /**
-     * 跑一个子代理：组装那份只属于它的上下文 → 交给执行引擎 → 结论回流。
+     * 跑一个子代理（心跳侧，同步等结论）：组装它那份上下文 → 登记执行与任务 → 交给执行引擎 → 收尾。
      *
      * <p>模型跟随设置页默认（子代理不需要挑模型：它是被派出去干活的，不是配置项）。
+     * 同步派活与对话侧异步派活同属子代理流，任务树里应当都在——故这里同样落一行任务，
+     * 并挂到派它的那个任务下（心跳主会话 / 计划）。
      */
-    private AgentRunner.Outcome run(String runId, String title, String instruction,
-                                    List<String> toolNames) {
-        return runner.run(request(runId, title, instruction, toolNames));
+    private TaskRunner.Outcome runSync(String runId, String agentId, String title, String instruction,
+                                       List<String> toolNames, Long parentTaskId, String payload) {
+        TaskRunner.Request req = request(runId, agentId, title, instruction, toolNames, null,
+                parentTaskId, null, payload);
+        /* 开一次执行＝建那行任务（带上下文与来源）；收尾也由执行器一并落状态 */
+        long execId = runner.openExec(req);
+        try {
+            return AgentScope.run(agentId, () -> runner.run(req, execId));
+        } catch (RuntimeException e) {
+            tasks.finish(execId, false);
+            throw e;
+        }
     }
 
     /**
      * 组装一次子代理执行：上下文只属于它，工具面按调用方点名（不填 = 默认只读检索）。
      *
      * <p>同步与异步两条路共用它——差别只在「谁来跑、结论怎么回去」，上下文本身没有两套。
+     * {@code hubId} 用于注入本会话的共享黑板（子代理的结论沉淀）；心跳侧无会话，传 null。
+     * {@code agentId} 写进任务行，标明这次子代理是替哪个 Agent 干的。
      */
-    private AgentRunner.Request request(String runId, String title, String instruction,
-                                        List<String> toolNames) {
+    private TaskRunner.Request request(String runId, String agentId, String title, String instruction,
+                                       List<String> toolNames, String hubId, Long parentTaskId,
+                                       String sessionId, String payload) {
         ArrayNode toolSchemas = toolNames.isEmpty()
                 ? tools.readOnlyToolsOf(ToolSurface.CHAT)
                 : tools.toolsOf(toolNames, ToolSurface.CHAT);
-        return new AgentRunner.Request(runId, ExecStore.KIND_AGENT, null, title, null,
-                messages(instruction), toolSchemas,
-                (call, execId) -> toolbox.run(call, "agent"));
+        return new TaskRunner.Request(runId, ExecStore.KIND_AGENT, null, title, null,
+                messages(prompts.resolve(SubagentBlock.KEY), instruction, hubId), toolSchemas,
+                (call, execId) -> toolbox.run(call, "agent"), parentTaskId, sessionId, agentId, payload);
     }
 
     // ---------- 派一个子代理：对话侧（非阻塞） ----------
 
     /**
-     * 派一个子代理去后台干活（对话侧）：组装好它那份上下文、先落一行执行留痕拿到 id，
+     * 派一个子代理去后台干活（对话侧）：建一条任务并落一行执行留痕拿到 id，
      * 立刻回一张受理回执；真正的 LLM 往返交给后台线程，跑完把结论投回会话。
      *
      * <p>这是「主会话不被子代理占住」的落点：回执当场就回，模型这一轮该答什么答什么、
@@ -262,28 +294,65 @@ public class SubagentService implements SubagentTool {
      * @param runId 归属批次；null 表示自己开一批（此时也由自己收批，见下）
      * @param hubId 结论投回的会话
      */
-    private String delegateAsync(JsonNode args, String runId, String hubId) {
+    private String delegateAsync(JsonNode args, String agentId, String runId, String hubId) {
         String instruction = args.path("instruction").asText("").trim();
         if (instruction.isEmpty()) {
             return "缺少 instruction：子代理看不到当前对话，请把要它查什么、产出什么写清楚。";
         }
-        /* batchId 要在后台线程的 lambda 里被捕获，所以必须只赋值一次（不能先声明再改写） */
-        final String batchId;
-        if (runId == null) {
-            batchId = openRun("chat");
+        String batchId = runId;
+        if (batchId == null) {
+            batchId = openRun(agentId, "chat");
             /* 自己开的一批得自己收：调用方没机会在 finally 里收它，跑完就由这一批的件数归零来收 */
             closeRequested.add(batchId);
-        } else {
-            if (store.execsByRun(runId).size() >= MAX_PER_BATCH) {
-                return "这一批派出的子代理已达上限（" + MAX_PER_BATCH + " 个）："
-                        + "请等它们出结论，或把活合并成更少的几件。";
-            }
-            batchId = runId;
+        } else if (store.execsByRun(batchId).size() >= MAX_PER_BATCH) {
+            return "这一批派出的子代理已达上限（" + MAX_PER_BATCH + " 个）："
+                    + "请等它们出结论，或把活合并成更少的几件。";
         }
-        AgentRunner.Request req = request(batchId,
-                title(args.path("name").asText(""), instruction), instruction,
-                names(args.path("tools")));
-        /* 先登记再后台跑：回执里给出的 id 从此刻起就能用 read_subagent_run 翻 */
+        long execId = spawn(args, agentId, batchId, hubId, null);
+        return receipt(execId, title(args.path("name").asText(""), instruction));
+    }
+
+    /**
+     * 重跑一条任务（页面上的「重跑」）：按它留下的 payload（原始工具调用参数）重新派一次子代理。
+     *
+     * <p>典型场景是进程重启把在途任务打断（{@code status=interrupted}）后的手动重跑。新任务挂为
+     * 原任务的子任务（{@code parent_id}），于是「重跑过几次」在任务树里可查。
+     *
+     * @return 新一次执行的 id；任务不存在 / 不是子代理 / 没有可重跑的输入时返回 -1
+     */
+    public long rerunTask(long taskId) {
+        TaskStore.TaskRow task = tasks.task(taskId).orElse(null);
+        if (task == null || !TaskStore.KIND_SUBAGENT.equals(task.kind()) || task.payload() == null) {
+            return -1;
+        }
+        /* 幂等（STEP 4）：原任务还在跑就别重跑——重跑按钮点两下不该派两次同样的活。
+           中断（interrupted）/ 失败（failed）的任务才可重跑，这正是「可恢复」的落点 */
+        if (TaskStore.ST_RUNNING.equals(task.status()) || TaskStore.ST_PENDING.equals(task.status())) {
+            return -1;
+        }
+        JsonNode args = readTree(task.payload());
+        if (args.path("instruction").asText("").trim().isEmpty()) {
+            return -1;
+        }
+        String batchId = openRun(task.agentId(), "chat");
+        closeRequested.add(batchId);
+        return spawn(args, task.agentId(), batchId, task.sessionId(), taskId);
+    }
+
+    /**
+     * 把一件活真正派出去：建请求 → 先落执行留痕拿到 id（回执里给出的 id 即刻可用）→ 建任务行
+     * 并绑上这次执行 → 交后台线程跑。首次派活与重跑共用它，差别只在 parentTaskId。
+     *
+     * @param parentTaskId 重跑时挂到原任务下（parent_id）；首次派活为 null
+     * @return 这次执行的 id
+     */
+    private long spawn(JsonNode args, String agentId, String batchId, String hubId,
+                       Long parentTaskId) {
+        String instruction = args.path("instruction").asText("").trim();
+        TaskRunner.Request req = request(batchId, agentId,
+                title(args.path("name").asText(""), instruction),
+                instruction, names(args.path("tools")), hubId, parentTaskId, hubId, args.toString());
+        /* 开一次执行＝建那行任务：上下文、来源、归属会话、待重跑输入（工具调用参数原文）都在这一行里 */
         long execId = runner.openExec(req);
         pending.computeIfAbsent(batchId, k -> new AtomicInteger()).incrementAndGet();
         markRunning(hubId, execId);
@@ -299,24 +368,26 @@ public class SubagentService implements SubagentTool {
                 settle(batchId);
             }
         });
-        return receipt(execId, req.title());
+        return execId;
     }
 
     /** 后台跑一次子代理：无论成败都把回声投回会话——不投，派活方就永远等不到它的消息 */
-    private void runAsync(AgentRunner.Request req, long execId, String hubId) {
-        AgentRunner.Outcome outcome;
+    private void runAsync(TaskRunner.Request req, long execId, String hubId) {
+        TaskRunner.Outcome outcome;
         try {
-            outcome = runner.run(req, execId);
+            outcome = AgentScope.run(req.agentId(), () -> runner.run(req, execId));
         } catch (RuntimeException e) {
             log.warn("子代理「{}」执行失败：{}", req.title(), e.getMessage());
-            /* 引擎中途抛错时留痕还停在 running：这里补一笔，免得页面上永远显示「进行中」 */
-            store.finishExec(execId, "failed", null, null, null, null, e.getMessage());
-            outcome = new AgentRunner.Outcome(execId, "failed", null, e.getMessage());
+            /* 引擎中途抛错时那行任务还停在 running：这里补一笔，免得页面上永远显示「进行中」 */
+            store.finishExec(execId, "failed", null, null, null, e.getMessage());
+            outcome = new TaskRunner.Outcome(execId, "failed", null, e.getMessage());
         } finally {
             /* 执行既然结束了就先注销「在跑」：投回结论时还要跑摘要与秘书总结两次模型调用，
                不该让主模型在这段时间里仍被告知这件活没回来 */
             unmarkRunning(hubId, execId);
         }
+        /* 结论沉淀进本会话的共享黑板：同一会话里后面再派的子代理开工时会读到它（接力，不重复查） */
+        scratchpad.append(hubId, req.title(), execId, outcome.output());
         try {
             deliver(hubId, req.title(), execId, outcome);
         } catch (RuntimeException e) {
@@ -332,7 +403,7 @@ public class SubagentService implements SubagentTool {
      * <p>这一条与主对话自己的答复地位相同：后续轮次照常把它带进上下文，
      * 于是「子代理查到的」也能被主模型接着用。
      */
-    private void deliver(String hubId, String title, long execId, AgentRunner.Outcome outcome) {
+    private void deliver(String hubId, String title, long execId, TaskRunner.Outcome outcome) {
         if (hubId == null || hubId.isBlank()) {
             return;
         }
@@ -442,12 +513,17 @@ public class SubagentService implements SubagentTool {
         }
     }
 
-    /** 子代理的上下文：system = 子代理人格 + 当前时间；user = 派它的人写的那段交代。没有任何历史 */
-    private ArrayNode messages(String instruction) {
-        ArrayNode messages = om.createArrayNode();
-        messages.addObject().put("role", "system")
-                .put("content", prompts.resolve(SubagentBlock.KEY) + "\n\n当前时间："
-                        + STAMP.format(LocalDateTime.now()));
+    /**
+     * 子代理的上下文：system = 子代理人格（{@code systemBase}）+ 本会话共享黑板 + 当前时间；
+     * user = 派它的人写的那段交代。没有任何历史——它看不到当前对话、也没有上一轮记忆。
+     *
+     * <p>system 的拼装交给上下文平面：人格是基底，黑板与当前时间由 {@code SubagentContextProvider}
+     * 按 {@link ContextRequest.Surface#SUBAGENT} 面追加（见 STEP 6-③）。这里只把 user 那条交代补上。
+     */
+    private ArrayNode messages(String systemBase, String instruction, String hubId) {
+        ObjectNode body = context.build(new ContextRequest(null, systemBase, hubId,
+                false, null, 0, null, ContextRequest.Surface.SUBAGENT));
+        ArrayNode messages = (ArrayNode) body.get("messages");
         messages.addObject().put("role", "user").put("content", instruction);
         return messages;
     }

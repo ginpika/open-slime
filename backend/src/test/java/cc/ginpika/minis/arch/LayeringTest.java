@@ -3,6 +3,7 @@ package cc.ginpika.minis.arch;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -60,7 +61,8 @@ class LayeringTest {
         ArchRule rule = noClasses()
                 .that().resideInAPackage(KNOWLEDGE)
                 .should().dependOnClassesThat().resideInAPackage(AGENT)
-                .because("知识库侧只提供检索与存储能力，不得反向依赖编排层");
+                .because("知识库侧只提供检索与存储能力，不得反向依赖编排层"
+                        + "（跨层的「当前 Agent」作用域放在 ai.core.AgentScope）");
         rule.check(CLASSES);
     }
 

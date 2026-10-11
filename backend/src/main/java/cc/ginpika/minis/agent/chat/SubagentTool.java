@@ -11,7 +11,7 @@ import com.fasterxml.jackson.databind.JsonNode;
  * 抽成接口是为了让依赖方向单向：子代理模块依赖 chat 包（会话编排与工具执行口），
  * 而 chat 包不反过来依赖子代理模块。
  *
- * <p>与 {@link SubconsciousTool}（任务计划与心跳那套）分开：子代理是匿名的临时 worker，
+ * <p>与 {@link HeartbeatTool}（任务计划与心跳那套）分开：子代理是匿名的临时 worker，
  * 计划是常驻编制，两者的工具语义不该混在一个宿主里。
  */
 public interface SubagentTool {
@@ -22,12 +22,14 @@ public interface SubagentTool {
      * <p>这里派活是<b>阻塞</b>的：心跳主会话是后台的总线，它派活是为了拿结论继续裁量这一拍还派谁，
      * 交不出结论它就白跑一拍。对话侧不走这里（见 {@link #runChatTool}）。
      *
-     * @param call    模型发起的那次调用
-     * @param runId   这次执行归属的批次（{@code sub_run.id}）；调用方已有批次就复用，
-     *                传 null 表示由子代理自己开一批
-     * @param trigger 批次的来源标签（beat / manual / chat），仅在 runId 为 null 时用于开新批
+     * @param call         模型发起的那次调用
+     * @param agentId      归属 Agent（{@code agent.id}）：这次派活是替哪个 Agent 干的（落进子代理任务行）
+     * @param runId        这次执行归属的批次（{@code heartbeat_run.id}）；调用方已有批次就复用，
+     *                     传 null 表示由子代理自己开一批
+     * @param trigger      批次的来源标签（beat / manual / chat），仅在 runId 为 null 时用于开新批
+     * @param parentTaskId 派它的那个任务（心跳主会话 / 计划）；用来把子代理挂到任务树上，顶层传 null
      */
-    String runTool(JsonNode call, String runId, String trigger);
+    String runTool(String agentId, JsonNode call, String runId, String trigger, Long parentTaskId);
 
     /**
      * 执行一次子代理工具调用（<b>对话侧</b>），返回给模型的 tool 消息内容。
@@ -39,10 +41,11 @@ public interface SubagentTool {
      *
      * <p>{@code read_subagent_run} 仍是当场返回（读一条已落库的记录，没有可等待的过程）。
      *
+     * @param agentId 归属 Agent（{@code agent.id}）：这次派活是替哪个 Agent 干的（落进子代理任务行）
      * @param runId 归属批次；通常由调用方先 {@link #openRun} 开好，null 表示由子代理自己开一批
      * @param hubId 结论投回的会话 id（对话侧必有）；用于把「派给了谁」与「回报给谁」对上
      */
-    String runChatTool(JsonNode call, String runId, String hubId);
+    String runChatTool(String agentId, JsonNode call, String runId, String hubId);
 
     /**
      * 本会话还在跑的子代理 → 一段注入主模型每轮上下文的提示块；没有在跑的返回空串。
@@ -56,8 +59,10 @@ public interface SubagentTool {
     /**
      * 开一批：调用方（主对话）一轮里派出的多个子代理共属一批，
      * 页面的「最近几批」不会被逐个调用刷屏。
+     *
+     * @param agentId 归属 Agent（{@code agent.id}）：这一批是替哪个 Agent 派出去的
      */
-    String openRun(String trigger);
+    String openRun(String agentId, String trigger);
 
     /**
      * 收一批：状态按批内各次执行的结果定。

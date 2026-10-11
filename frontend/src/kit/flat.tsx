@@ -1,11 +1,12 @@
 /**
- * Flat Kit —— Old / Clean / MD3 共用（与外壳 kit 的分组保持一致）
+ * Flat Kit —— Tailwind Mono（与外壳 kit 的分组保持一致）
  *
  * 章法：克制、留白规整、以描边与极浅填充建立层次；
  * 具体圆角/投影/字重/字号全部由令牌决定，所以这三个主题在这里只是"参数不同"。
  */
 import type { ReactNode } from 'react'
 import { Control } from '../components/ui'
+import { useThemeState } from '../theme/store'
 import type {
   BadgeProps,
   BarProps,
@@ -24,15 +25,20 @@ import type {
 } from './types'
 
 function Page({ title, en, meta, children }: PageProps) {
+  /* 侧边栏档：外壳顶部工具条已展示当前页标题（label + en），整块页眉一律不再出现——
+     连 meta 与页眉下方那条横格线一起去掉（此前只藏了标题文字，横线还在，看着像"没藏干净"） */
+  const sidebar = useThemeState().mono.sidebar
   return (
     <section className="flex flex-col gap-5 pt-6">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-3">
-        <div className="min-w-0">
-          <h1 className="ui-heading text-xl">{title}</h1>
-          <p className="ui-label mt-1">{en}</p>
-        </div>
-        {meta}
-      </header>
+      {!sidebar && (
+        <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-3">
+          <div className="min-w-0">
+            <h1 className="ui-heading text-xl">{title}</h1>
+            <p className="ui-label mt-1">{en}</p>
+          </div>
+          {meta}
+        </header>
+      )}
       {children}
     </section>
   )

@@ -1,23 +1,23 @@
 /**
- * 主题面板（header 右侧入口）
+ * 默认主题面板（DefaultThemePanel）+ 主题菜单的共享文案与折叠逻辑。
  *
  * 两个页签：
- *   主题 —— 5 套语言 × 浅/深/跟随系统
+ *   主题 —— 3 套语言 × 浅/深/跟随系统
  *   全局 —— 在任意主题之上覆盖主色 / 点缀色 / 底色 / 字体（delta，切主题保留）
  *
  * 面板自身也是主题驱动的：它的卡片、按钮、输入框与页面共用同一套令牌，
  * 所以在 Endfield 下这里是切角的、在 BlueArchive 下这里是胶囊的。
- * Endfield 更进一步——整个菜单用终末地设计语言独立重写
- * （见 EndfieldThemePanel「外观终端」），这里只做按主题分流。
+ * 三套菜单实现（本文件的 DefaultThemePanel / EndfieldThemePanel /
+ * MonoThemePanel）与「主题 → 菜单」的映射分居两处：映射唯一登记于
+ * theme/registry.tsx 的 THEMES.panel，本文件不再做按主题分流。
  */
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { IconPalette, btnPrimary, btnQuiet } from '../components/ui'
 import { normalizeHex } from './color'
 import { FONT_STACKS, THEME_META } from './layers'
 import { THEME_IDS } from './palette'
 import { rawSeed, themeActions, useThemeState } from './store'
 import type { SchemeMode, ThemeId } from './types'
-import { EndfieldThemePanel } from './EndfieldThemePanel'
 
 export type Tab = 'theme' | 'global'
 
@@ -62,31 +62,18 @@ export function useDismiss(
   }, [open, onOpenChange, boxRef])
 }
 
-export function ThemePanel({
+export function DefaultThemePanel({
   open,
   onOpenChange,
-}: {
-  /** 开合状态由 App 持有 —— 切主题会换 shell 组件（子树重挂），
-   *  面板内部状态放到子树里会被重置，表现为"点一下主题菜单就消失" */
-  open: boolean
-  onOpenChange: (next: boolean) => void
-}) {
-  const st = useThemeState()
-
-  /* 终末地：整个菜单走独立的设计语言（外观终端） */
-  if (st.themeId === 'endfield') {
-    return <EndfieldThemePanel open={open} onOpenChange={onOpenChange} />
-  }
-
-  return <DefaultThemePanel open={open} onOpenChange={onOpenChange} />
-}
-
-function DefaultThemePanel({
-  open,
-  onOpenChange,
+  themeTabExtra,
+  variant = 'plain',
 }: {
   open: boolean
   onOpenChange: (next: boolean) => void
+  /** 「主题」页尾部追加设定块（如 Tailwind Mono 的侧边栏布局开关） */
+  themeTabExtra?: ReactNode
+  /** 触发按钮形态：plain 跟随主题；chrome 用桌面框架标题栏的深色轨按钮样式 */
+  variant?: 'plain' | 'chrome'
 }) {
   const [tab, setTab] = useState<Tab>('theme')
   const st = useThemeState()
@@ -98,7 +85,6 @@ function DefaultThemePanel({
     !!st.override.seed.accent ||
     !!st.override.seed.base ||
     !!st.override.fontSans ||
-    !!st.override.fontMono ||
     !!st.override.headingStyle
 
   return (
@@ -109,9 +95,13 @@ function DefaultThemePanel({
         aria-expanded={open}
         title="主题与外观"
         onClick={() => onOpenChange(!open)}
-        className={`ui-btn ui-btn--icon rounded-full border border-transparent${
-          open ? ' bg-clip-padding bg-fg/10 text-fg' : ''
-        }`}
+        className={
+          variant === 'chrome'
+            ? 'df__toolbtn'
+            : `ui-btn ui-btn--icon rounded-full border border-transparent${
+                open ? ' bg-clip-padding bg-fg/10 text-fg' : ''
+              }`
+        }
       >
         <IconPalette className="h-4 w-4" />
       </button>
@@ -142,7 +132,7 @@ function DefaultThemePanel({
             </div>
 
             {tab === 'theme' ? (
-              <ThemeTab schemeMode={st.schemeMode} current={st.themeId} />
+              <ThemeTab schemeMode={st.schemeMode} current={st.themeId} extra={themeTabExtra} />
             ) : (
               <GlobalTab overridden={overridden} />
             )}
@@ -155,7 +145,16 @@ function DefaultThemePanel({
 
 /* ---------------------------------------------------------------- 主题页 */
 
-function ThemeTab({ schemeMode, current }: { schemeMode: SchemeMode; current: ThemeId }) {
+function ThemeTab({
+  schemeMode,
+  current,
+  extra,
+}: {
+  schemeMode: SchemeMode
+  current: ThemeId
+  /** 尾部追加设定块（主题特有配置） */
+  extra?: ReactNode
+}) {
   return (
     <div className="pt-3">
       {/* 外观档位 */}
@@ -225,6 +224,8 @@ function ThemeTab({ schemeMode, current }: { schemeMode: SchemeMode; current: Th
       <p className="mt-2 text-xs leading-relaxed text-faint">
         每套主题都自带浅色与深色两档；切主题不会清掉你在「全局」里的覆盖。
       </p>
+
+      {extra}
     </div>
   )
 }

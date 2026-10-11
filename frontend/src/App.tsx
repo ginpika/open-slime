@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { loginUrlOf, logout, me, type SsoUser } from './api/client'
+import { isDesktopShell, backToLauncher, openDesktopHome } from './api/desktop'
 import Home from './pages/Home'
 import Search from './pages/Search'
 import Graph from './pages/Graph'
@@ -7,17 +8,20 @@ import Articles from './pages/Articles'
 import ArticleDetailPage from './pages/ArticleDetail'
 import Import from './pages/Import'
 import Analyze from './pages/Analyze'
-import Subconscious from './pages/Subconscious'
 import MultiAgent from './pages/MultiAgent'
 import AgentDetail from './pages/AgentDetail'
 import Roundtable from './pages/Roundtable'
+import Workflow from './pages/Workflow'
 import Workspace from './pages/Workspace'
 import Settings from './pages/Settings'
 import Stats from './pages/Stats'
 import About from './pages/About'
-import { ThemePanel } from './theme/ThemePanel'
+import { ThemePanel } from './theme/registry'
+import { useThemeState } from './theme/store'
 import { PageSlot } from './theme/overrides'
 import { AppShell } from './shell'
+import { DesktopFrame } from './shell/DesktopFrame'
+import { ShellIcon } from './shell/icons'
 import { activePathOf } from './shell/nav'
 import { btnOutline } from './components/ui'
 import ChatNotifier from './components/ChatNotifier'
@@ -42,6 +46,22 @@ function useHashRoute(): string {
   return route
 }
 
+/** hostid 角色 → 展示名（未知角色原样回显） */
+const ROLE_LABELS: Record<string, string> = {
+  admin: '管理员',
+  user: '普通用户',
+}
+
+/** 用户菜单里的一行只读信息：左标签右值（值可换行，长 id / 邮箱不截断） */
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <dt className="shrink-0 text-faint">{label}</dt>
+      <dd className="min-w-0 flex-1 break-all text-right text-fg-2">{value}</dd>
+    </div>
+  )
+}
+
 /**
  * header 最右侧的圆形头像按钮：点击展开简单用户菜单（信息 + 登出）。
  * 开合状态由 App 持有：切换主题会替换 shell 组件导致子树重挂，
@@ -52,11 +72,23 @@ function UserMenu({
   onLogout,
   open,
   onOpenChange,
+  placement = 'down',
+  withName = false,
+  variant = 'plain',
 }: {
   user: SsoUser
   onLogout: () => void
   open: boolean
   onOpenChange: (next: boolean) => void
+  /** 面板弹出方向：底部栏向上，顶部栏向下 */
+  placement?: 'up' | 'down'
+  /** 按钮内是否展示昵称（底部栏的「头像 + 昵称」整体可点） */
+  withName?: boolean
+  /**
+   * chip = 桌面框架标题栏里的身份胶囊（外观与引导页 .user-chip 同源，见 desktopFrame.css）；
+   * plain = 外壳自己的用户按钮（跟随主题）
+   */
+  variant?: 'plain' | 'chip'
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
 
@@ -77,7 +109,9 @@ function UserMenu({
   }, [open, onOpenChange])
 
   const name = user.nickname || user.username
+  const roleLabel = user.role ? (ROLE_LABELS[user.role] ?? user.role) : ''
   const initial = name ? name[0].toUpperCase() : '?'
+  const chip = variant === 'chip'
   const Avatar = ({ size }: { size: string }) =>
     user.avatarUrl ? (
       <img src={user.avatarUrl} alt={name} className={`${size} shrink-0 rounded-full object-cover`} />
@@ -90,42 +124,81 @@ function UserMenu({
     )
 
   return (
-    <div ref={boxRef} className="relative">
+    <div ref={boxRef} className="relative min-w-0">
       <button
         type="button"
         aria-label="用户"
         aria-expanded={open}
         title={name}
         onClick={() => onOpenChange(!open)}
-        className={`ui-btn ui-btn--icon h-[30px] w-[30px] overflow-hidden rounded-full border border-line transition hover:border-line-strong ${
-          open ? 'border-line-strong' : ''
-        }`}
+        className={
+          chip
+            ? 'df-chip'
+            : withName
+              ? `flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition hover:bg-fg/5 ${
+                  open ? 'bg-fg/10' : ''
+                }`
+              : `ui-btn ui-btn--icon h-[30px] w-[30px] overflow-hidden rounded-full border border-line transition hover:border-line-strong ${
+                  open ? 'border-line-strong' : ''
+                }`
+        }
       >
-        <Avatar size="h-full w-full" />
+        <Avatar size={chip ? 'df-chip__avatar' : withName ? 'h-7 w-7' : 'h-full w-full'} />
+        {(withName || chip) && (
+          <span
+            className={
+              chip
+                ? 'df-chip__name min-w-0 flex-1'
+                : 'min-w-0 flex-1 truncate text-sm font-medium text-fg'
+            }
+          >
+            {name}
+          </span>
+        )}
       </button>
       {open && (
-        <div className="ui-card ui-surface absolute right-0 top-[calc(100%+10px)] z-[60] w-56">
+        <div
+          className={`ui-card ui-surface menu-pop z-[60] ${
+            placement === 'up'
+              ? 'absolute inset-x-0 bottom-[calc(100%+10px)]'
+              : 'absolute right-0 top-[calc(100%+10px)] w-64'
+          }`}
+        >
           <div className="ui-card__in p-4 text-left">
             <div className="flex items-center gap-3">
-              <Avatar size="h-10 w-10" />
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold text-fg">{name}</p>
-                <p className="truncate text-xs text-faint">{user.email || `@${user.username}`}</p>
+              <Avatar size="h-11 w-11" />
+              <div className="min-w-0 flex-1">
+                <p className="ui-heading truncate text-base">{name}</p>
+                {user.username && (
+                  <p className="truncate text-xs text-faint">@{user.username}</p>
+                )}
               </div>
-            </div>
-            {user.id !== 'local-dev' && (
-              <div className="mt-4 border-t border-line pt-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onOpenChange(false)
-                    onLogout()
-                  }}
-                  className={btnOutline('rounded-none')}
+              {roleLabel && (
+                <span
+                  className="shrink-0 rounded-full px-2.5 py-0.5 text-2xs font-bold"
+                  style={{ background: 'var(--c-accent-soft)', color: 'var(--c-accent)' }}
                 >
-                  登出
-                </button>
-              </div>
+                  {roleLabel}
+                </span>
+              )}
+            </div>
+
+            <dl className="mt-3 space-y-1 border-t border-line pt-3 text-xs">
+              {user.email && <InfoRow label="邮箱" value={user.email} />}
+              {user.id && <InfoRow label="用户 ID" value={user.id} />}
+            </dl>
+
+            {user.id !== 'local-dev' && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenChange(false)
+                  onLogout()
+                }}
+                className={btnOutline('mt-3 w-full')}
+              >
+                登出
+              </button>
             )}
           </div>
         </div>
@@ -135,7 +208,7 @@ function UserMenu({
 }
 
 /** 页面自管滚动、外壳不再套容器的路由 */
-const FULL_BLEED = ['/graph', '/roundtable']
+const FULL_BLEED = ['/graph', '/roundtable', '/workflow']
 
 function App() {
   const route = useHashRoute()
@@ -173,6 +246,11 @@ function App() {
       await logout()
     } catch {
       // 即使后端不可达也刷新本地状态
+    }
+    // 桌面端：交回壳处理——回到引导页，别让窗口被后端 302 到 hostid 登录页
+    if (isDesktopShell()) {
+      backToLauncher()
+      return
     }
     window.location.reload()
   }
@@ -221,7 +299,12 @@ function App() {
       )}
       {route === '/subconscious' && (
         <div data-page="subconscious">
-          <PageSlot route="subconscious" props={{}} fallback={<Subconscious />} />
+          {/* 潜意识已并入「智能体」页：这条路由把统一页直接打开在「系统」tab 上 */}
+          <PageSlot
+            route="subconscious"
+            props={{}}
+            fallback={<MultiAgent initialTab="system" />}
+          />
         </div>
       )}
       {route === '/multi-agent' && (
@@ -241,6 +324,11 @@ function App() {
       {route === '/roundtable' && (
         <div data-page="roundtable" className="h-full">
           <PageSlot route="roundtable" props={{}} fallback={<Roundtable />} />
+        </div>
+      )}
+      {route === '/workflow' && (
+        <div data-page="workflow" className="h-full">
+          <PageSlot route="workflow" props={{}} fallback={<Workflow />} />
         </div>
       )}
       {route === '/settings' && (
@@ -273,6 +361,7 @@ function App() {
         '/subconscious',
         '/multi-agent',
         '/roundtable',
+        '/workflow',
         '/workspace',
         '/settings',
         '/stats',
@@ -283,27 +372,77 @@ function App() {
     </>
   )
 
+  /* 桌面壳里窗口是无边框的，外壳外面还要套一层自绘框架（菜单栏 / 标题栏 / 窗口按钮）。
+     身份胶囊随之挪到框架标题栏——那儿才是窗口的右上角，和窗口按钮同一行（与引导页一致）；
+     因此桌面端要把外壳自己的那个槽位留空，否则同一个用户会渲染两次。
+     浏览器访问时没有框架，外壳照旧自己渲染用户按钮。 */
+  const desktop = isDesktopShell()
+  /* 桌面端沉浸排布（默认开启，可在主题菜单里关闭）：隐藏外壳的 header/footer，
+     主题按钮随之从 header 挪到窗口标题栏、身份胶囊左侧。关闭时一切照旧。 */
+  const mono = useThemeState().mono
+  const hideChrome = desktop && mono.hideChrome
+  const themePanel = (
+    <ThemePanel
+      open={themeOpen}
+      onOpenChange={setThemeOpen}
+      /* 挪到标题栏时改用深色轨按钮样式，与右侧窗口按钮统一 */
+      variant={hideChrome ? 'chrome' : 'plain'}
+    />
+  )
+  /* 桌面端标题栏的首页入口：回引导页的「启动」视图（视图一），落在身份胶囊左侧。
+     点击让壳把窗口带回引导页（不登出，见 api/desktop 的 openDesktopHome）；
+     样式复用标题栏工具钮（df__toolbtn） */
+  const homeButton = (
+    <button
+      type="button"
+      className="df__toolbtn"
+      title="首页"
+      aria-label="首页"
+      onClick={openDesktopHome}
+    >
+      <ShellIcon name="home" />
+    </button>
+  )
+  const renderUser = (slot: { placement: 'up' | 'down'; withName: boolean }, variant?: 'chip') =>
+    user ? (
+      <UserMenu
+        user={user}
+        onLogout={handleLogout}
+        open={userOpen}
+        onOpenChange={setUserOpen}
+        placement={slot.placement}
+        withName={slot.withName}
+        variant={variant}
+      />
+    ) : null
+
+  const shell = (
+    <AppShell
+      route={route}
+      activePath={activePathOf(route)}
+      fullBleed={FULL_BLEED.includes(route)}
+      tools={hideChrome ? null : themePanel}
+      userSlot={desktop ? () => null : (slot) => renderUser(slot)}
+      mainRef={mainRef}
+    >
+      {page}
+    </AppShell>
+  )
+
   return (
     <>
-      <AppShell
-        route={route}
-        activePath={activePathOf(route)}
-        fullBleed={FULL_BLEED.includes(route)}
-        tools={<ThemePanel open={themeOpen} onOpenChange={setThemeOpen} />}
-        userSlot={
-          user ? (
-            <UserMenu
-              user={user}
-              onLogout={handleLogout}
-              open={userOpen}
-              onOpenChange={setUserOpen}
-            />
-          ) : null
-        }
-        mainRef={mainRef}
-      >
-        {page}
-      </AppShell>
+      {desktop ? (
+        <DesktopFrame
+          activePath={activePathOf(route)}
+          toolsSlot={hideChrome ? themePanel : null}
+          homeSlot={homeButton}
+          userSlot={renderUser({ placement: 'down', withName: true }, 'chip')}
+        >
+          {shell}
+        </DesktopFrame>
+      ) : (
+        shell
+      )}
 
       {/* 页级消息通知：大模型把应答异步投回会话时，无论当前在哪一页，左上角弹气泡提醒 */}
       <ChatNotifier />
