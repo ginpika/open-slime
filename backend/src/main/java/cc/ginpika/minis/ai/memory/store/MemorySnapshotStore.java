@@ -71,6 +71,19 @@ public class MemorySnapshotStore {
         return jdbc.update("DELETE FROM memory_snapshot");
     }
 
+    public List<SnapshotRow> recent(String agentId, String projectId, String sessionId, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT turn_id, session_id, agent_id, project_id, watermark, "
+                + "item_ids, tokens, built_at, content_json FROM memory_snapshot WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (agentId != null && !agentId.isBlank()) {
+            sql.append(" AND COALESCE(NULLIF(agent_id,''),'builtin')=?"); args.add(agentId);
+        }
+        if (projectId != null && !projectId.isBlank()) { sql.append(" AND project_id=?"); args.add(projectId); }
+        if (sessionId != null && !sessionId.isBlank()) { sql.append(" AND session_id=?"); args.add(sessionId); }
+        sql.append(" ORDER BY built_at DESC, turn_id DESC LIMIT ?"); args.add(Math.max(1,Math.min(limit,100)));
+        return jdbc.query(sql.toString(), (rs,n)->map(rs), args.toArray());
+    }
+
     private static String join(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return "";

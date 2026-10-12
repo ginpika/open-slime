@@ -113,6 +113,11 @@ public class MemoryWorkStore {
         return jdbc.update("DELETE FROM memory_work");
     }
 
+    public List<WorkRow> recentObserved(int limit) {
+        return jdbc.query("SELECT " + COLS + " FROM memory_work ORDER BY updated_at DESC, id DESC LIMIT ?",
+                (rs,n)->map(rs), Math.max(1,Math.min(limit,200)));
+    }
+
     private static WorkRow map(ResultSet rs) throws SQLException {
         long taskId = rs.getLong("task_id");
         Long task = rs.wasNull() ? null : taskId;

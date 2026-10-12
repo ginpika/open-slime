@@ -19,6 +19,7 @@ export type IconName =
   | 'import'
   | 'analyze'
   | 'agent'
+  | 'memory'
   | 'subcons'
   | 'workspace'
   | 'settings'
@@ -34,6 +35,7 @@ export const NAV: NavItem[] = [
   { path: '/import', label: '文档导入', en: 'IMPORT', icon: 'import', group: '加工' },
   { path: '/analyze', label: '文档分析', en: 'ANALYZE', icon: 'analyze', group: '加工' },
   { path: '/multi-agent', label: '智能体', en: 'AGENTS', icon: 'agent', group: '智能' },
+  { path: '/memory', label: '记忆', en: 'MEMORY', icon: 'memory', group: '智能' },
   { path: '/roundtable', label: '圆桌', en: 'ROUNDTABLE', icon: 'table', group: '智能' },
   { path: '/workflow', label: '执行态', en: 'WORKFLOW', icon: 'flow', group: '智能' },
   { path: '/workspace', label: '工作空间', en: 'WORKSPACE', icon: 'workspace', group: '管理' },

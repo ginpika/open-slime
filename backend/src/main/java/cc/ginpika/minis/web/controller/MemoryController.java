@@ -485,7 +485,8 @@ public class MemoryController {
     private static boolean isActive(MemoryItemStore.ItemRow r) {
         return MemoryVocabulary.STATUS_ACTIVE.equals(r.status())
                 && r.supersededBy() == null
-                && (r.validUntil() == null || r.validUntil() > System.currentTimeMillis());
+                && (r.validUntil() == null || r.validUntil() > System.currentTimeMillis())
+                && (r.expiresSoft() == null || r.expiresSoft() > System.currentTimeMillis());
     }
 
     private static boolean eq(String filter, String value) {
@@ -545,13 +546,15 @@ public class MemoryController {
                            String source, String sourceKind, String evidenceLevel, String status,
                            String retention, String identity, Long version, boolean pinned,
                            boolean active, Long validUntil, Long supersededBy, long createdAt,
-                           long updatedAt) {
+                           long updatedAt, String producerAgent, String sourceRefs, Long expiresSoft,
+                           Long promotedFrom, Long learnedAt, Long invalidAt) {
         static ItemView of(MemoryItemStore.ItemRow r) {
             return new ItemView(r.id(), r.agentId(), r.owner(), r.domain(), r.layer(), r.projectId(),
                     r.sessionId(), r.taskId(), r.scope(), MemoryItemRecall.scopeLabel(r.scope()),
                     r.title(), r.body(), r.confidence(), r.source(), r.sourceKind(), r.evidenceLevel(),
                     r.status(), r.retention(), r.identity(), r.version(), r.pinned(), isActive(r),
-                    r.validUntil(), r.supersededBy(), r.createdAt(), r.updatedAt());
+                    r.validUntil(), r.supersededBy(), r.createdAt(), r.updatedAt(), r.producerAgent(),
+                    r.sourceRefs(), r.expiresSoft(), r.promotedFrom(), r.learnedAt(), r.invalidAt());
         }
     }
 

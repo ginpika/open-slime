@@ -62,13 +62,14 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'outline', size = 'md', radius = '', deco, className = '', children, ...rest },
+  { variant = 'outline', size = 'md', radius = '', deco, className = '', children, type = 'button', ...rest },
   ref,
 ) {
   return (
     <button
       ref={ref}
-      className={`${variantClass(variant)}${radius ? ` ${radius}` : ''}${
+      type={type}
+      className={`ui-btn ${variantClass(variant)}${radius ? ` ${radius}` : ''}${
         size === 'sm' ? ' ui-btn--sm' : ''
       }${className ? ` ${className}` : ''}`}
       {...rest}

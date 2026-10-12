@@ -9,6 +9,7 @@ import ArticleDetailPage from './pages/ArticleDetail'
 import Import from './pages/Import'
 import Analyze from './pages/Analyze'
 import MultiAgent from './pages/MultiAgent'
+import MemoryPanel from './pages/MemoryPanel'
 import AgentDetail from './pages/AgentDetail'
 import Roundtable from './pages/Roundtable'
 import Workflow from './pages/Workflow'
@@ -312,6 +313,11 @@ function App() {
           <PageSlot route="multi-agent" props={{}} fallback={<MultiAgent />} />
         </div>
       )}
+      {route === '/memory' && (
+        <div data-page="memory">
+          <PageSlot route="memory" props={{}} fallback={<MemoryPanel />} />
+        </div>
+      )}
       {agentMatch && (
         <div data-page="agent">
           <PageSlot
@@ -360,6 +366,7 @@ function App() {
         '/analyze',
         '/subconscious',
         '/multi-agent',
+        '/memory',
         '/roundtable',
         '/workflow',
         '/workspace',

@@ -2524,6 +2524,12 @@ export type MemoryItem = {
   supersededBy: number | null
   createdAt: number
   updatedAt: number
+  producerAgent?: string | null
+  sourceRefs?: string | null
+  expiresSoft?: number | null
+  promotedFrom?: number | null
+  learnedAt?: number | null
+  invalidAt?: number | null
 }
 
 export type MemoryScopeGroup = { scope: string; label: string; count: number; items: MemoryItem[] }
@@ -2533,6 +2539,8 @@ export type MemorySummary = {
   total: number
   pendingCandidates: number
   publishedShares: number
+  inboxPending?: number
+  workingOpen?: number
 }
 export type MemoryRequest = {
   scope: string
@@ -2546,6 +2554,9 @@ export type MemoryRequest = {
   agentId?: string | null
   retention?: string | null
   version?: number | null
+  sessionId?: string | null
+  taskId?: number | null
+  identity?: string | null
 }
 
 /** 一条画像候选（审批前不进正式画像） */
@@ -2603,12 +2614,20 @@ export function memoryItems(q?: {
   layer?: string
   identity?: string
   sessionId?: string
+  owner?: string
+  domain?: string
+  projectId?: string
+  agentId?: string
+  status?: string
 }): Promise<MemoryItem[]> {
   const params = new URLSearchParams()
   if (q?.scope) params.set('scope', q.scope)
   if (q?.layer) params.set('layer', q.layer)
   if (q?.identity) params.set('identity', q.identity)
   if (q?.sessionId) params.set('sessionId', q.sessionId)
+  for (const key of ['owner', 'domain', 'projectId', 'agentId', 'status'] as const) {
+    if (q?.[key]) params.set(key, q[key])
+  }
   const qs = params.toString()
   return requestJson<MemoryItem[]>(`/api/memory/items${qs ? `?${qs}` : ''}`)
 }
@@ -2718,7 +2737,7 @@ export function addMemoryEdge(req: {
 /** 一条工作项（会话/任务级临时物，与长期记忆物理分离） */
 export type WorkingItem = {
   id: number
-  sessionId: string
+  sessionId: string | null
   taskId: number | null
   agentId: string | null
   projectId: string | null
