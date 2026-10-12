@@ -1,5 +1,7 @@
 package cc.ginpika.minis.ai.memory.store;
 
+import cc.ginpika.minis.ai.core.MemoryExec;
+
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -40,11 +42,22 @@ public class MemoryEventStore {
     /** 追加一条事件（同 event_key 已存在则静默跳过）：返回是否真的写入 */
     public boolean append(String eventKey, String kind, String actor, String title,
                           String payload, String refType, long refId) {
+        return jdbc.update("INSERT OR IGNORE INTO memory_event(event_key, kind, actor, title, payload, "
+                + "ref_type, ref_id, created_at) VALUES(?,?,?,?,?,?,?,?)",
+                eventKey, kind, actor, title, payload, refType, refId, System.currentTimeMillis()) > 0;
+    }
+
+    public boolean append(MemoryExec exec, String eventKey, String kind, String actor, String title,
+                          String payload, String refType, long refId) {
         return jdbc.update(
                 "INSERT OR IGNORE INTO memory_event(event_key, kind, actor, title, payload, "
-                        + "ref_type, ref_id, created_at) VALUES(?,?,?,?,?,?,?,?)",
+                        + "ref_type, ref_id, created_at, agent_id, project_id, session_id, task_id, identity) "
+                        + "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 eventKey, kind, actor, title, payload, refType, refId,
-                System.currentTimeMillis()) > 0;
+                System.currentTimeMillis(), exec == null ? null : exec.agentOrBuiltin(),
+                exec == null ? null : exec.projectId(), exec == null ? null : exec.sessionId(),
+                exec == null ? null : exec.taskId(),
+                exec == null ? null : exec.identityOrInferred().name()) > 0;
     }
 
     /** 按 event_key 取一条（异步补向量时由幂等键反查事件行）；不存在返回 null */
@@ -76,8 +89,22 @@ public class MemoryEventStore {
      */
     public List<EventRow> window(Long sinceMs, Long untilMs, String kind, String actor,
                                  Collection<String> excludeActors, int limit) {
+        return window(MemoryExec.system(null), sinceMs, untilMs, kind, actor, excludeActors, limit);
+    }
+
+    public List<EventRow> window(MemoryExec exec, Long sinceMs, Long untilMs, String kind, String actor,
+                                Collection<String> excludeActors, int limit) {
         StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM memory_event WHERE 1=1");
         List<Object> args = new ArrayList<>();
+        if (exec == null || !exec.human()) {
+            MemoryExec e = exec == null ? MemoryExec.none() : exec;
+            // 原始材料仅属于当前任务/会话；无绑定的后台结论属于本 Agent 的同一项目域。
+            sql.append(" AND agent_id IS NOT NULL AND (session_id = ? OR task_id = ? "
+                    + "OR (session_id IS NULL AND task_id IS NULL AND agent_id = ? "
+                    + "AND project_id IS ?))");
+            args.add(e.sessionId()); args.add(e.taskId());
+            args.add(e.agentOrBuiltin()); args.add(e.projectId());
+        }
         if (sinceMs != null) {
             sql.append(" AND created_at >= ?");
             args.add(sinceMs);

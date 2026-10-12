@@ -1,5 +1,6 @@
 package cc.ginpika.minis.agent.context;
 
+import cc.ginpika.minis.ai.core.MemoryIdentity;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 
 /**
@@ -24,10 +25,13 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
  *                     会话历史 / 在跑子代理 / 知识 / 记忆 / 待办只服务前台会话，子代理面与潜意识面各有
  *                     自己的 provider。不写 surface 时按 {@link Surface#CHAT}，于是现有调用点与测试
  *                     一行不用改（见便捷构造）。
+ * @param identity     身份上下文（memory-v6 §4.1 / §11）：{@code FICTION} = 创作类项目，记忆读侧仍可注入
+ *                     真实画像但需标注、写侧一律按虚构来源处理；缺省 null → 视为 {@code REAL}
  */
 public record ContextRequest(String model, String systemBase, String sessionId,
+                             String agentId, String projectId, Long taskId,
                              boolean contextTrace, String userQuery, int historyTokenBudget,
-                             ArrayNode toolSchemas, Surface surface) {
+                             ArrayNode toolSchemas, Surface surface, MemoryIdentity identity) {
 
     /**
      * 一次组装属于哪条流。三条流（前台会话 / 子代理 / 心跳后台）各有自己的上下文源；
@@ -43,13 +47,26 @@ public record ContextRequest(String model, String systemBase, String sessionId,
     }
 
     /**
-     * 便捷构造：不写 surface 时按 {@link Surface#CHAT}——等效抽取阶段（STEP 2）与前台会话、圆桌、
-     * 历史回放测试都走这一条，语义与加 surface 之前逐字一致。
+     * 便捷构造（STEP 2 抽取阶段的历史签名，无作用域）：不写 agent/project/task 时用——
+     * 语义与加作用域之前逐字一致（记忆注入退化为「只读用户画像」）。
      */
     public ContextRequest(String model, String systemBase, String sessionId,
                           boolean contextTrace, String userQuery, int historyTokenBudget,
                           ArrayNode toolSchemas) {
-        this(model, systemBase, sessionId, contextTrace, userQuery, historyTokenBudget,
-                toolSchemas, Surface.CHAT);
+        this(model, systemBase, sessionId, null, null, null, contextTrace, userQuery,
+                historyTokenBudget, toolSchemas, Surface.CHAT, null);
+    }
+
+    /** 便捷构造：带 surface、无作用域（子代理 / 心跳面的历史调用点） */
+    public ContextRequest(String model, String systemBase, String sessionId,
+                          boolean contextTrace, String userQuery, int historyTokenBudget,
+                          ArrayNode toolSchemas, Surface surface) {
+        this(model, systemBase, sessionId, null, null, null, contextTrace, userQuery,
+                historyTokenBudget, toolSchemas, surface, null);
+    }
+
+    /** 读侧身份：缺省 null → 视为现实身份 {@link MemoryIdentity#REAL}（保守：不因缺省就把内容当虚构） */
+    public MemoryIdentity identityOrReal() {
+        return identity == null ? MemoryIdentity.REAL : identity;
     }
 }

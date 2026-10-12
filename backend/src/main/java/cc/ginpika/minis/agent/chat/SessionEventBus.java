@@ -30,6 +30,8 @@ public class SessionEventBus {
     public static final String KIND_ANSWERED = "answered";
     /** 个人待办清单（write_todos）更新：前端据此即时刷新会话页的 TODO 卡片 */
     public static final String KIND_TODO = "todo";
+    /** 会话标题被自动生成：前端据此即时更新列表 / 会话头的标题 */
+    public static final String KIND_TITLE = "title";
 
     /**
      * @param sessionId 归属会话

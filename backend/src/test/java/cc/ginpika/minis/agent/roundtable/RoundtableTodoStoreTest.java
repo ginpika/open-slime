@@ -32,6 +32,7 @@ class RoundtableTodoStoreTest {
               created_by TEXT,
               result TEXT,
               block_reason TEXT,
+              block_with TEXT,
               seq INTEGER NOT NULL,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL)""";

@@ -741,8 +741,11 @@ public class AgentController {
     }
 
     private static HeartbeatDtos.TaskView toTask(TaskStore.TaskRow r) {
+        /* 只有真正的执行（origin 非空）才留下执行留痕、可点开看全过程；
+           前台会话任务（origin 为空，正文在会话里）没有执行上下文，execId 留空 → 行不可点 */
+        Long execId = r.origin() == null ? null : r.id();
         return new HeartbeatDtos.TaskView(r.id(), r.parentId(), r.kind(), r.status(), r.title(),
-                r.sessionId(), r.agentId(), r.id(), r.createdAt(), r.updatedAt());
+                r.sessionId(), r.agentId(), execId, r.createdAt(), r.updatedAt());
     }
 
     private static HeartbeatDtos.EditView toEdit(ExecStore.EditRow r) {

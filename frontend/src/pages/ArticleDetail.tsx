@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { articleDetail, loginUrlOf, type ArticleDetail } from '../api/client'
 import Toast from '../components/Toast'
+import TocRail, { type TocItem } from '../components/TocRail'
 import { usePageKit } from '../kit'
 import { useThemeState } from '../theme/store'
 
@@ -74,117 +75,6 @@ const MD = {
   td: (p: object) => <td className="border border-line px-3 py-1.5" {...p} />,
   hr: () => <hr className="my-8 border-line" />,
   img: (p: object) => <img className="max-w-full" {...p} />,
-}
-
-/** 目录项（由渲染后的正文标题生成） */
-type TocItem = { id: string; level: 2 | 3; text: string }
-
-/**
- * 隐藏式目录（两档共用同一形状）：一列圆点——每个标题一个点、当前节加长高亮；
- * 鼠标移到圆点附近才浮出卡片目录。圆点本身不占正文宽度，落在哪一侧由挂载处的定位决定
- * （见 {@code ArticleDetailPage}：常规档贴正文左缘外侧，侧边栏档贴在左侧栏右边）。
- */
-function TocRail({ items }: { items: TocItem[] }) {
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const navRef = useRef<HTMLElement>(null)
-
-  /* 滚动侦测：最后一个越过容器顶部附近（96px）的标题为当前节；贴底时选中末项 */
-  useEffect(() => {
-    const scroller = navRef.current?.closest('main')
-    if (!scroller) return
-    const onScroll = () => {
-      if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
-        setActiveId(items[items.length - 1]?.id ?? null)
-        return
-      }
-      const top = scroller.getBoundingClientRect().top
-      let current: string | null = null
-      for (const it of items) {
-        const el = document.getElementById(it.id)
-        if (el && el.getBoundingClientRect().top - top <= 96) current = it.id
-      }
-      setActiveId(current)
-    }
-    onScroll()
-    scroller.addEventListener('scroll', onScroll, { passive: true })
-    return () => scroller.removeEventListener('scroll', onScroll)
-  }, [items])
-
-  /* 点击用 scrollIntoView：直接改 hash 会与 hash 路由冲突 */
-  const jump = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
-    e.preventDefault()
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
-  }
-
-  return (
-    <nav ref={navRef} aria-label="目录" className="group relative py-2 pl-2 pr-3">
-      {/* 圆点轨：一个标题一个点（三级标题的点小一号），当前节加长高亮 */}
-      <ul className="flex flex-col items-center gap-2">
-        {items.map((it) => {
-          const active = it.id === activeId
-          return (
-            <li key={it.id}>
-              <a
-                href={`#${it.id}`}
-                onClick={(e) => jump(e, it.id)}
-                title={it.text}
-                aria-label={it.text}
-                className={`block rounded-full transition-all ${
-                  it.level === 3 ? 'h-1 w-1' : 'h-1.5 w-1.5'
-                } ${active ? 'h-3 w-1.5 bg-accent' : 'bg-fg/25 group-hover:bg-fg/45'}`}
-              />
-            </li>
-          )
-        })}
-      </ul>
-      {/* hover 才浮出的卡片目录：向右展开（朝正文侧），默认隐身且不接收指针。
-          **紧贴圆点列、不留缝隙**——中间只要有一段鼠标到不了的空当，指针穿过去时 group 就失焦、
-          卡片当场消失，于是"看得到却点不着"（详见 nav 的右侧 padding：间距都归它） */}
-      <div className="pointer-events-none absolute left-full top-1/2 w-64 -translate-y-1/2 opacity-0 transition duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
-        <div className="ui-card ui-surface max-h-[70vh] overflow-y-auto p-3">
-          <p className="ui-label mb-2">Contents</p>
-          <TocList items={items} activeId={activeId} jump={jump} />
-        </div>
-      </div>
-    </nav>
-  )
-}
-
-/** 目录列表（左侧轨道与 hover 卡片共用同一份渲染） */
-function TocList({
-  items,
-  activeId,
-  jump,
-}: {
-  items: TocItem[]
-  activeId: string | null
-  jump: (e: MouseEvent<HTMLAnchorElement>, id: string) => void
-}) {
-  return (
-    <ul className="border-l border-line">
-      {items.map((it) => {
-        const active = it.id === activeId
-        return (
-          <li key={it.id}>
-            <a
-              href={`#${it.id}`}
-              onClick={(e) => jump(e, it.id)}
-              title={it.text}
-              className={`-ml-px block truncate border-l py-1 pr-2 text-sm leading-5 transition ${
-                it.level === 3 ? 'pl-7' : 'pl-3.5'
-              } ${
-                active
-                  ? 'border-accent font-medium text-accent'
-                  : 'border-transparent text-muted hover:text-fg'
-              }`}
-            >
-              {it.text}
-            </a>
-          </li>
-        )
-      })}
-    </ul>
-  )
 }
 
 /** 文档详情页：渲染 markdown 原文（data/article/{url}.md），左侧悬浮目录 */

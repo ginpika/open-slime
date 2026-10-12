@@ -68,6 +68,26 @@ public class TodoStore {
                 + "WHERE session_id = ? AND owner IS ? ORDER BY seq", TodoStore::map, sessionId, owner);
     }
 
+    /** 删除会话时清掉它名下所有 Agent 的清单（会话没了，清单不该留成孤儿行） */
+    @Transactional
+    public int deleteBySession(String sessionId) {
+        return jdbc.update("DELETE FROM chat_todo WHERE session_id = ?", sessionId);
+    }
+
+    /**
+     * 一次生成收尾时把遗留的「进行中」就地收敛为「未开始」（其余状态不动）。
+     *
+     * <p>生成一结束就不该再有「正在进行中」——模型若因中断 / 超限而没收尾，这一步替它收敛，
+     * 清单不会长期卡在 {@code in_progress} 而无人推进。就地 UPDATE 而非整体替换：
+     * 不打乱 seq、不带进无关写入。
+     */
+    @Transactional
+    public void convergeInProgress(String sessionId, String owner) {
+        jdbc.update("UPDATE chat_todo SET status = ?, updated_at = ? "
+                        + "WHERE session_id = ? AND owner IS ? AND status = ?",
+                ST_PENDING, System.currentTimeMillis(), sessionId, owner, ST_IN_PROGRESS);
+    }
+
     /** 状态收敛：合法值原样，越界 / 空值一律按 pending（不因模型造词而丢这一步） */
     private static String normalize(String status) {
         String s = status == null ? "" : status.trim();

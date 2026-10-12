@@ -38,14 +38,49 @@ public class SchemaColumnPatches {
      * <p>只允许「可空、无默认值」的加列：这样老行不必回填，语句也不会锁表太久。
      */
     private static final List<ColumnPatch> PATCHES = List.of(
+            new ColumnPatch("memory_event", "agent_id", "TEXT"),
+            new ColumnPatch("memory_event", "project_id", "TEXT"),
+            new ColumnPatch("memory_event", "session_id", "TEXT"),
+            new ColumnPatch("memory_event", "task_id", "INTEGER"),
+            new ColumnPatch("memory_event", "identity", "TEXT"),
+            new ColumnPatch("memory_candidate", "valid_until", "INTEGER"),
+            new ColumnPatch("memory_item_embedding", "item_version", "INTEGER"),
+            new ColumnPatch("memory_snapshot", "content_json", "TEXT"),
             new ColumnPatch("chat_message", "event_kind", "TEXT"),
             new ColumnPatch("hub_session", "agent_id", "TEXT"),
+            new ColumnPatch("hub_session", "project_id", "TEXT"),
             new ColumnPatch("roundtable_todo", "depends_on", "TEXT"),
             new ColumnPatch("roundtable_todo", "priority", "INTEGER"),
             new ColumnPatch("roundtable_todo", "block_with", "TEXT"),
             new ColumnPatch("chat_todo", "owner", "TEXT"),
             new ColumnPatch("agent", "role", "TEXT"),
-            new ColumnPatch("agent", "role_color", "TEXT"));
+            new ColumnPatch("agent", "role_color", "TEXT"),
+            new ColumnPatch("hub_session", "memory_off", "INTEGER"),
+            new ColumnPatch("memory_item", "pinned", "INTEGER"),
+            new ColumnPatch("task", "memory_checkpoint", "TEXT"),
+            /* memory-v5 §4.2：记忆归属/治理增量列（全部可空；历史回填由 SchemaMigrations 负责） */
+            new ColumnPatch("memory_item", "user_id", "TEXT"),
+            new ColumnPatch("memory_item", "owner", "TEXT"),
+            new ColumnPatch("memory_item", "domain", "TEXT"),
+            new ColumnPatch("memory_item", "layer", "TEXT"),
+            new ColumnPatch("memory_item", "project_id", "TEXT"),
+            new ColumnPatch("memory_item", "session_id", "TEXT"),
+            new ColumnPatch("memory_item", "task_id", "INTEGER"),
+            new ColumnPatch("memory_item", "producer_agent", "TEXT"),
+            new ColumnPatch("memory_item", "source_kind", "TEXT"),
+            new ColumnPatch("memory_item", "evidence_level", "TEXT"),
+            new ColumnPatch("memory_item", "status", "TEXT"),
+            new ColumnPatch("memory_item", "retention", "TEXT"),
+            new ColumnPatch("memory_item", "version", "INTEGER"),
+            new ColumnPatch("memory_item", "fingerprint", "TEXT"),
+            new ColumnPatch("memory_item", "valid_at", "INTEGER"),
+            new ColumnPatch("memory_item", "invalid_at", "INTEGER"),
+            new ColumnPatch("memory_item", "learned_at", "INTEGER"),
+            new ColumnPatch("memory_item", "expired_at", "INTEGER"),
+            /* memory-v6 §6.2：身份上下文 / 提升来源 / 软过期（全部可空） */
+            new ColumnPatch("memory_item", "identity", "TEXT"),
+            new ColumnPatch("memory_item", "promoted_from", "INTEGER"),
+            new ColumnPatch("memory_item", "expires_soft", "INTEGER"));
 
     /** 一条补列声明：{表, 列, 类型} */
     private record ColumnPatch(String table, String column, String type) {

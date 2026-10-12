@@ -13,11 +13,14 @@ import {
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  bindSessionProject,
+  branchSession,
   createSession,
   deleteSession,
   getPrompts,
   getSettings,
   listMaPeers,
+  listProjects,
   listSessions,
   loginUrlOf,
   PROMPT_BUILTIN,
@@ -29,6 +32,7 @@ import {
   sessionTodos,
   updateSessionConfig,
   type MaPeer,
+  type Project,
   type PromptsView,
   type RawContext,
   type SessionItem,
@@ -38,8 +42,12 @@ import {
   type TraceSegment,
 } from '../api/client'
 import FloatWindow from '../components/FloatWindow'
+import { Select } from '../components/formKit'
+import PeerAvatar from '../components/PeerAvatar'
 import { RawContextView } from '../components/JsonViewer'
 import Toast from '../components/Toast'
+import TocRail, { type TocItem } from '../components/TocRail'
+import { miniBtn } from '../components/ui'
 import { registerChatOpener } from '../components/ChatNotifier'
 import {
   attachLive,
@@ -59,6 +67,19 @@ type Props = { connErr: string | null }
 
 /** 记住最近打开的会话：刷新后凭它判断「刚才那条会话是不是还在生成」，是就自动回去续看（断点续传） */
 const LAST_SESSION_KEY = 'minis.chat.lastSession'
+
+/** 本次页面加载是否「一进来就落在首页」：断点续传只在这种情形触发——
+ *  否则从别的页点「首页」进来时，也会被强行拽进那条正在生成的会话 */
+const BOOTED_ON_HOME =
+  typeof window !== 'undefined' &&
+  (() => {
+    const h = window.location.hash.replace(/^#/, '')
+    const p = h.startsWith('/') ? h : `/${h}`
+    return p.split('?')[0] === '/'
+  })()
+
+/** 断点续传每次页面加载只尝试一次：离开首页再回来不该又跳一次 */
+let resumeAttempted = false
 
 /** 会话消息 → 渲染态：历史回放与「子代理结论异步投回」的自动刷新共用同一套映射 */
 function toChatMsgs(rows: SessionMessage[]): ChatMsg[] {
@@ -128,6 +149,19 @@ function fmtTime(iso: string | null): string {
   if (d.toDateString() === now.toDateString()) return hm
   const y = d.getFullYear() === now.getFullYear() ? '' : `${d.getFullYear()}/`
   return `${y}${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
+/** 会话目录 / 消息锚点共用的稳定 id：有落库 id 用它；尚在流式的那一次提问用固定锚点 */
+function userAnchorId(msg: ChatMsg): string {
+  return msg.id != null ? `chat-turn-${msg.id}` : 'chat-turn-live'
+}
+
+/** 会话目录项文案：取提问首个非空行，压掉多余空白并截断 */
+function tocText(content: string): string {
+  const line = content.split('\n').find((l) => l.trim()) ?? ''
+  const s = line.replace(/\s+/g, ' ').trim()
+  if (!s) return '（空提问）'
+  return s.length > 60 ? `${s.slice(0, 60)}…` : s
 }
 
 /** 聊天气泡内的 markdown 组件映射：比文章页更紧凑的排版以贴合气泡。
@@ -470,7 +504,8 @@ const UserRow = memo(function UserRow({
   onRewind: (index: number) => void
 }) {
   return (
-    <div className="group relative flex justify-end">
+    /* id=会话目录的锚点（点目录项 scrollIntoView 落到这条提问）；scroll-mt-6 给锚点留顶距 */
+    <div id={userAnchorId(msg)} className="group relative flex scroll-mt-6 justify-end">
       <div className="max-w-[85%] break-words rounded-2xl rounded-br-sm bg-fg px-4 py-2.5 text-md leading-relaxed text-primary-fg">
         <BubbleMd content={msg.content} onBubble />
       </div>
@@ -505,19 +540,24 @@ const UserRow = memo(function UserRow({
   )
 })
 
-/** 一条 AI 回复（memo）：仅自身消息 / CoT 开关变化时重渲染。
+/** 一条 AI 回复（memo）：仅自身消息 / CoT 开关 / 可分支态变化时重渲染。
  *  content-visibility 让浏览器跳过屏外消息的布局与绘制（含 trace 折叠块、代码块、表格） */
 const AssistantRow = memo(function AssistantRow({
   msg,
   showCot,
   showRounds,
+  canBranch,
+  onBranch,
 }: {
   msg: ChatMsg
   showCot: boolean
   showRounds: boolean
+  /** 可分支（这条回复已落库、且当前不在生成中）；不满足时整排按钮不渲染 */
+  canBranch: boolean
+  onBranch: (msg: ChatMsg) => void
 }) {
   return (
-    <div className="break-words border-l border-line pl-4 text-md leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
+    <div className="group break-words border-l border-line pl-4 text-md leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
       {/* 正在流式生成的这条默认展开跟随输出；历史回放的默认收起 */}
       {showCot && <TraceBlocks msg={msg} live={!!msg.streaming} showRounds={showRounds} />}
       {msg.streaming ? (
@@ -525,6 +565,31 @@ const AssistantRow = memo(function AssistantRow({
         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
       ) : (
         <BubbleMd content={msg.content} />
+      )}
+      {/* 回复下方的一排操作按钮（悬停浮现，与提问气泡的「回退」同一套克制手感）：
+          目前只有「分支」——以到这里为止的内容新建一个副本会话 */}
+      {canBranch && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
+          <button
+            type="button"
+            className={miniBtn}
+            onClick={() => onBranch(msg)}
+            title="以到这里为止的内容创建一个副本会话"
+          >
+            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="6" cy="5" r="2.4" stroke="currentColor" strokeWidth="2" />
+              <circle cx="6" cy="19" r="2.4" stroke="currentColor" strokeWidth="2" />
+              <circle cx="18" cy="8" r="2.4" stroke="currentColor" strokeWidth="2" />
+              <path
+                d="M6 7.4v9.2M18 10.4a6 6 0 0 1-6 6H8"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+            分支
+          </button>
+        </div>
       )}
     </div>
   )
@@ -568,16 +633,55 @@ function TodoMark({ status }: { status: string }) {
 }
 
 /** 会话 TODO 卡片：把 agent 的 plan-of-record（write_todos 覆盖式写入）显示成一张进度卡。
- *  内容为空时不渲染（由调用处判空）。 */
+ *  可折叠——窄屏默认收起、全部完成自动收起，避免悬浮卡长期压住对话区；内容为空时不渲染（由调用处判空）。 */
 const TodoCard = memo(function TodoCard({ todos }: { todos: SessionTodo[] }) {
   const done = todos.filter((t) => t.status === 'done').length
   const failed = todos.filter((t) => t.status === 'failed').length
+  const allDone = failed === 0 && done === todos.length
+  /* 窄屏默认收起：悬浮卡在窄屏会盖住消息列，先收纳成小胶囊，用户需要时再展开 */
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1024)
+  /* 全部完成自动收起一次：只在「刚变成全完成」时触发，用户随后手动展开不再强收 */
+  const prevAllDone = useRef(false)
+  useEffect(() => {
+    if (allDone && !prevAllDone.current) setCollapsed(true)
+    prevAllDone.current = allDone
+  }, [allDone])
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        title="展开待办清单"
+        className="ui-surface flex items-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs text-muted shadow-xl transition hover:border-line-strong hover:text-fg"
+      >
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full bg-accent ${allDone ? '' : 'animate-pulse'}`}
+          aria-hidden="true"
+        />
+        <span>待办</span>
+        <span className="tabular-nums">{done}/{todos.length}</span>
+        {failed > 0 && <span className="text-red-500">{failed} 失败</span>}
+      </button>
+    )
+  }
+
   return (
-    <div className="ui-surface flex max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] flex-col rounded-xl border border-line px-4 py-3 shadow-xl">
+    <div className="ui-surface flex max-h-[70vh] w-[min(20rem,calc(100vw-2rem))] flex-col rounded-xl border border-line px-4 py-3 shadow-xl">
       <div className="mb-2 flex shrink-0 items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-faint">
         <span>待办清单</span>
         <span className="tabular-nums">{done}/{todos.length}</span>
         {failed > 0 && <span className="normal-case tracking-normal text-red-500">{failed} 步失败</span>}
+        <button
+          type="button"
+          onClick={() => setCollapsed(true)}
+          title="收起待办清单"
+          className="ui-btn ui-btn--icon -mr-1 ml-auto h-6 w-6 shrink-0 rounded-full"
+        >
+          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
       <ul className="scrollbar-slim min-h-0 space-y-1.5 overflow-y-auto">
         {todos.map((t) => (
@@ -729,6 +833,9 @@ export default function Home({ connErr }: Props) {
   const [agentId, setAgentId] = useState('')
   /** 可选智能体名册（「…」菜单的「智能体」分区）：展开菜单时拉取 */
   const [peers, setPeers] = useState<MaPeer[]>([])
+  /* 项目（memory-v6）：会话所属项目决定记忆归属与跨项目隔离；空 = 无项目（个人工作域） */
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectId, setProjectId] = useState('')
   /** 输入框左侧「…」菜单：向上弹出，切换模型 / 提示词 / CoT 显示 */
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -774,6 +881,11 @@ export default function Home({ connErr }: Props) {
         if (alive) setPeers(list)
       })
       .catch(() => {})
+    listProjects()
+      .then((list) => {
+        if (alive) setProjects(list.filter((p) => p.status !== 'archived'))
+      })
+      .catch(() => {})
     return () => {
       alive = false
     }
@@ -782,6 +894,16 @@ export default function Home({ connErr }: Props) {
   const searchPageRef = useRef<HTMLElement>(null)
   const chatPageRef = useRef<HTMLElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
+  /** 会话目录：只取用户提问（点它跳到该次输入）。圆点数量=轮次数，重建很轻 */
+  const tocItems = useMemo<TocItem[]>(
+    () =>
+      view
+        .filter((m) => m.role === 'user')
+        .map((m) => ({ id: userAnchorId(m), text: tocText(m.content) })),
+    [view],
+  )
+  /** 目录要跟着内层消息列表滚（不是 main）：稳定回调，避免每帧重挂滚动侦听 */
+  const getChatScroller = useCallback(() => chatScrollRef.current, [])
   /** 检索输入框 / 会话底部输入框：文本状态各自收在 DecoupledInput 内部，
    *  这里只借 ref 读值（提交时）、回填（回退）与聚焦，避免击键重渲染消息列表 */
   const searchInputRef = useRef<DecoupledInputHandle>(null)
@@ -1223,9 +1345,10 @@ export default function Home({ connErr }: Props) {
 
   /** 切换会话：拉取历史消息回显并进入会话视图，后续发送都带该 sessionId。
    *  若该会话有生成运行时快照：仍在生成就留着（贴回列表即可续看进度、续点停止）；
-   *  已落定的先收尾再拉历史——成功/停止的答复已在历史里，失败时的半截输出只在快照里，要并回列表 */
+   *  已落定的先收尾再拉历史——成功/停止的答复已在历史里，失败时的半截输出只在快照里，要并回列表。
+   *  **生成中也能切走**：生成托管在应用级运行时（见 chatLive），离开只是不再看它，
+   *  那边照常产出并落库；切回去照样续看进度、续点停止。 */
   const openSession = async (id: string) => {
-    if (busy) return
     try {
       const snapshot = getLive(id)
       const settled = snapshot && !snapshot.running ? snapshot : null
@@ -1248,6 +1371,7 @@ export default function Home({ connErr }: Props) {
         setModelId(item.modelId ?? settings?.defaultModelId ?? '')
         setPromptId(item.promptId ?? '')
         setAgentId(item.agentId ?? '')
+        setProjectId(item.projectId ?? '')
         setShowCot(item.showCot ?? true)
         setMaxRounds(item.maxRounds ?? 30)
         setShowRounds(item.showRounds ?? false)
@@ -1263,7 +1387,6 @@ export default function Home({ connErr }: Props) {
   /** 页级通知气泡点进来时调用：切到会话模式并打开目标会话。
    *  会话列表可能还没拉过（直接落在别的页刷新进来的），先补一次以便回显该会话的「…」配置 */
   const openFromNotice = async (id: string) => {
-    if (busy) return
     setChatMode(true)
     if (sessions.length === 0) await refreshSessions()
     await openSession(id)
@@ -1281,29 +1404,41 @@ export default function Home({ connErr }: Props) {
   }, [])
 
   /* 刷新后来的第一步：若刚才正在看的那条会话后端还在生成，自动回到它会话页把进度接上（断点续传）。
-     只在确实还在生成时才自动进去——否则不该拿它改掉用户刷新后的落地页 */
+     只在确实还在生成时才自动进去——否则不该拿它改掉用户刷新后的落地页。
+     两个闸门缺一不可：① 本次页面加载是一进来就落在首页（否则从别的页点「首页」会被拽进去）；
+     ② 每次页面加载只试一次（离开首页再回来不该又跳）。 */
   const openSessionRef = useRef(openSession)
   useEffect(() => {
     openSessionRef.current = openSession
   })
   useEffect(() => {
+    if (!BOOTED_ON_HOME || resumeAttempted) return
     let last: string | null
     try {
       last = localStorage.getItem(LAST_SESSION_KEY)
     } catch {
+      resumeAttempted = true
       return
     }
     const target = last
-    if (!target) return
+    if (!target) {
+      resumeAttempted = true
+      return
+    }
     let alive = true
     sessionLive(target)
       .then((snap) => {
-        if (!alive || !snap.running) return
+        /* StrictMode 下本效应会跑两遍：第一遍被 cleanup 作废，只认还活着的那一遍 */
+        if (!alive) return
+        /* 判定过了就记下来：本次加载不再重试，离开首页再回来也不跳 */
+        resumeAttempted = true
+        if (!snap.running) return
         setChatMode(true)
         void openSessionRef.current(target)
       })
       .catch(() => {
         /* 查询失败：当作没有在途生成，照常停在落地页 */
+        if (alive) resumeAttempted = true
       })
     return () => {
       alive = false
@@ -1331,7 +1466,8 @@ export default function Home({ connErr }: Props) {
   const startNewSession = async () => {
     if (busy) return
     try {
-      const s = await createSession()
+      /* 新会话带上当前选择的项目：记忆从第一条消息起就落对归属（PROJECT×L1 / 无项目则 AGENT×L2） */
+      const s = await createSession(projectId || null)
       setSessionId(s.id)
       setSessionActive(true)
       setMsgs([])
@@ -1361,7 +1497,7 @@ export default function Home({ connErr }: Props) {
       /* 尚无会话 id（New Chat）时先显式新建，避免缺省续接到最近会话 */
       let sid = sessionId
       if (sid === null) {
-        const s = await createSession()
+        const s = await createSession(projectId || null)
         sid = s.id
         setSessionId(s.id)
         setSessionActive(true)
@@ -1404,6 +1540,30 @@ export default function Home({ connErr }: Props) {
     chatInputRef.current?.setValue(target.content)
     chatInputRef.current?.focus()
   }
+
+  /** 分支：以某条回复为界，在后端把到这条（含）为止的转录复制进一个新会话（源会话不动），
+   *  建好后直接打开这个分支会话继续对话 */
+  const branchFrom = async (msg: ChatMsg) => {
+    if (sessionId === null || msg.id == null || busy) return
+    try {
+      const created = await branchSession(sessionId, msg.id)
+      await refreshSessions()
+      await openSession(created.id)
+    } catch (e) {
+      const text = errorText(e)
+      if (text !== null) setToast(`分支失败：${text}`)
+    }
+  }
+
+  /* AssistantRow 已 memo：分支回调需保持引用稳定，否则每次 Home 重渲染（如流式逐帧）
+     都会因回调换新而让全部历史回复跟着重渲染 */
+  const branchRef = useRef(branchFrom)
+  useEffect(() => {
+    branchRef.current = branchFrom
+  })
+  const onBranch = useCallback((msg: ChatMsg) => {
+    void branchRef.current(msg)
+  }, [])
 
   /* UserRow 已 memo：回退回调需保持引用稳定，否则每次 Home 重渲染（如流式逐帧）
      都会因回调换新而让全部历史用户消息跟着重渲染 */
@@ -1797,7 +1957,7 @@ export default function Home({ connErr }: Props) {
               chatPageRef.current?.closest('main')?.style.setProperty('overflow', 'hidden')
             }
           }}
-          className="flex h-[calc(100dvh-8.5rem)] flex-col"
+          className="relative flex h-[calc(100dvh-8.5rem)] flex-col"
           style={pageH ? { height: pageH } : undefined}
         >
           {/* 待办清单悬浮卡片（plan-of-record）：固定在视口右侧、垂直居中，不随消息列表滚动。
@@ -1808,6 +1968,14 @@ export default function Home({ connErr }: Props) {
                 <TodoCard todos={todos} />
               </div>
             </div>
+          )}
+          {/* 会话目录（形态同文档渲染页）：贴在正文列右缘外侧的圆点轨，
+              hover 浮出各次提问，点它跳到那一条提问。随对话页一起进出场——滚回上方的
+              搜索页时整页下移，它也跟着走，不会浮在搜索页上 */}
+          {tocItems.length > 0 && (
+            <aside className="absolute right-[calc(50%_-_22rem)] top-1/2 z-20 hidden -translate-y-1/2 lg:block">
+              <TocRail items={tocItems} side="right" scroller={getChatScroller} compact />
+            </aside>
           )}
           <div
             ref={chatScrollRef}
@@ -1828,7 +1996,14 @@ export default function Home({ connErr }: Props) {
                   /* 子代理结论：专属气泡，只显示标题+摘要，点开弹窗看全文 */
                   <SubagentBubble key={m.id ?? `i${i}`} msg={m} onOpen={setReportView} />
                 ) : (
-                  <AssistantRow key={m.id ?? `i${i}`} msg={m} showCot={showCot} showRounds={showRounds} />
+                  <AssistantRow
+                    key={m.id ?? `i${i}`}
+                    msg={m}
+                    showCot={showCot}
+                    showRounds={showRounds}
+                    canBranch={!busy && m.id != null && !m.streaming}
+                    onBranch={onBranch}
+                  />
                 ),
               )}
               {busy && !view[view.length - 1]?.content && (
@@ -1924,11 +2099,13 @@ export default function Home({ connErr }: Props) {
                         </svg>
                       </button>
                       {menuOpen && (
-                        <div className="absolute bottom-full right-0 z-30 mb-2 w-72 rounded-xl border border-line bg-bg p-1.5 shadow-xl">
-                          <p className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
-                            智能体
-                          </p>
-                          <div className="scrollbar-slim max-h-48 overflow-y-auto">
+                        <div className="absolute bottom-full right-0 z-30 mb-2 flex overflow-hidden rounded-xl border border-line bg-bg shadow-xl">
+                          {/* 左栏：智能体名册（头像直达），点选切换本会话对话的 Agent */}
+                          <div className="flex w-56 shrink-0 flex-col border-r border-line p-2">
+                            <p className="px-2 pb-2 pt-1 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
+                              和不同的智能体对话
+                            </p>
+                            <div className="scrollbar-slim flex-1 overflow-y-auto">
                             {peers.length === 0 && (
                               <p className="px-2 py-1.5 text-2xs text-faint">名册加载中…</p>
                             )}
@@ -1948,8 +2125,13 @@ export default function Home({ connErr }: Props) {
                                     : 'text-muted hover:bg-fg/5 hover:text-fg'
                                 }`}
                               >
+                                <PeerAvatar
+                                  name={p.name}
+                                  avatar={p.avatar}
+                                  size="h-7 w-7"
+                                  textClass="text-xs"
+                                />
                                 <span className="flex-1 truncate">{p.name}</span>
-                                {p.role && <span className="shrink-0 text-2xs text-faint">{p.role}</span>}
                                 {effectiveAgentId === p.id && (
                                   <svg
                                     className="h-3.5 w-3.5 shrink-0"
@@ -1970,11 +2152,34 @@ export default function Home({ connErr }: Props) {
                             ))}
                           </div>
                           {effectiveAgentId !== 'builtin' && (
-                            <p className="px-2 pb-1 text-2xs text-faint">
-                              由「{currentAgentName}」的人设决定 system；下方「身份提示词」对其不生效
+                            <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs text-faint">
+                              由「{currentAgentName}」的人设决定 system；右栏「身份提示词」对其不生效
                             </p>
                           )}
-                          <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
+                          </div>
+                          {/* 右栏：原有会话配置（模型 / 身份提示词 / 显示 / 生成 / 检索 / 调试） */}
+                          <div className="w-72 p-1.5">
+                          <p className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
+                            项目（记忆归属）
+                          </p>
+                          <div className="px-2 pb-1.5">
+                            <Select
+                              value={projectId}
+                              onChange={(next) => {
+                                setProjectId(next)
+                                /* 已开着的会话切换项目：记忆读侧立即按新作用域生效（旧项目条目不删、只是不再注入） */
+                                if (sessionId !== null) void bindSessionProject(sessionId, next || null)
+                              }}
+                              options={[
+                                { value: '', label: '无项目（个人工作域）' },
+                                ...projects.map((p) => ({
+                                  value: p.id,
+                                  label: `${p.name}${p.narrative ? '（创作 · 不升画像）' : ''}`,
+                                })),
+                              ]}
+                            />
+                          </div>
+                          <p className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                             模型
                           </p>
                           <div className="scrollbar-slim max-h-48 overflow-y-auto">
@@ -2214,6 +2419,7 @@ export default function Home({ connErr }: Props) {
                             />
                           </svg>
                         </button>
+                          </div>
                       </div>
                       )}
                     </div>

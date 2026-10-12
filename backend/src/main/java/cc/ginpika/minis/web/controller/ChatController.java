@@ -194,9 +194,20 @@ public class ChatController {
         return service.list();
     }
 
+    /**
+     * 新建会话。可带 {@code projectId} 绑定项目（memory-v6 §15.2）——项目决定记忆归属：
+     * 有项目 → 提炼落 {@code PROJECT×L1} 且跨项目隔离；无项目 → 落 {@code AGENT×L2}。
+     */
     @PostMapping("/api/sessions")
-    public ChatDtos.NewSession createSession() {
-        return service.create();
+    public ChatDtos.NewSession createSession(@RequestBody(required = false) ChatDtos.ProjectBind req) {
+        return service.create(req == null ? null : req.projectId());
+    }
+
+    /** 绑定 / 解绑会话所属项目（记忆作用域切换：旧项目条目不删除、只是不再注入） */
+    @PutMapping("/api/sessions/{id}/project")
+    public ChatDtos.NewSession bindProject(@PathVariable String id,
+                                          @RequestBody(required = false) ChatDtos.ProjectBind req) {
+        return service.setProject(id, req == null ? null : req.projectId());
     }
 
     /** 删除会话（含其消息正本）：最近会话列表的删除按钮调用 */
@@ -248,6 +259,13 @@ public class ChatController {
         return service.rewind(id,
                 req == null ? null : req.messageId(),
                 req == null ? null : req.keep());
+    }
+
+    /** 分支：以某条消息为界，创建一个副本会话——源会话到此为止的转录整段复制进新会话 */
+    @PostMapping("/api/sessions/{id}/branch")
+    public ChatDtos.NewSession branch(@PathVariable String id,
+                                      @RequestBody ChatDtos.BranchRequest req) {
+        return service.branch(id, req == null ? null : req.messageId());
     }
 
     /**

@@ -81,6 +81,24 @@ public class ChatMessageStore {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    /**
+     * 把 fromSession 中 id ≤ upToId 的消息整行复制进 toSession（「分支」用）：
+     * 正文 / 思维链 / 分段 / 工具往返 / 形态元信息 / 执行留痕一并照搬，时间戳原样。
+     * 按 id 升序插入，新行的自增 id 随之保持同一先后（读侧按 id 排序即得原顺序）。
+     *
+     * @return 复制的行数
+     */
+    public int copyUpTo(String fromSession, String toSession, long upToId) {
+        return jdbc.update(
+                "INSERT INTO chat_message(session_id, role, content, reasoning, trace, tool_rounds, "
+                        + "kind, meta, topic_id, peer_id, peer_name, context, event_seq, event_kind, "
+                        + "created_at) "
+                        + "SELECT ?, role, content, reasoning, trace, tool_rounds, kind, meta, "
+                        + "topic_id, peer_id, peer_name, context, event_seq, event_kind, created_at "
+                        + "FROM chat_message WHERE session_id = ? AND id <= ? ORDER BY id",
+                toSession, fromSession, upToId);
+    }
+
     /** 删除 fromId（含）及其后的消息：会话回退到这条之前，返回删除行数 */
     public int deleteFrom(String sessionId, long fromId) {
         return jdbc.update(

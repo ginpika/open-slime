@@ -32,6 +32,9 @@ public class WriteTodosTool implements AiTool {
     /** 清单条数上限：拆分是为了可跟踪，不是越多越好——超过这个数该合并同类项 */
     public static final int MAX_ITEMS = 20;
 
+    /** 单条内容长度上限：一句「可判断做没做完」的祈使句用不了这么长，超了就是在写小作文 */
+    public static final int MAX_CONTENT_LEN = 200;
+
     @Override
     public String name() {
         return NAME;
@@ -46,6 +49,7 @@ public class WriteTodosTool implements AiTool {
                 + "哪一步卡住了、失败了，就在那条的 note 里写清原因。"
                 + "适合需要多步、结果要人能跟的活（调研、改造、排障）；"
                 + "一句话能答完的别写清单，也别拿它当便签记无关的事。"
+                + "每条 content 控制在 " + MAX_CONTENT_LEN + " 字内（一句祈使句），细节写 note。"
                 + "要派活给人/子代理时用 " + DelegateSubagentTool.NAME + "。";
     }
 
@@ -75,6 +79,13 @@ public class WriteTodosTool implements AiTool {
         }
         if (args.path("todos").size() > MAX_ITEMS) {
             return "todos 最多 " + MAX_ITEMS + " 条：请合并同类项，拆分是为了可跟踪而不是事无巨细。";
+        }
+        for (com.fasterxml.jackson.databind.JsonNode n : args.path("todos")) {
+            String content = n.path("content").asText("");
+            if (content.length() > MAX_CONTENT_LEN) {
+                return "单条内容最多 " + MAX_CONTENT_LEN + " 字（当前 " + content.length()
+                        + " 字）：请压缩成一句可判断做没做完的祈使句（细节写进 note，或拆成另一步）。";
+            }
         }
         return null;
     }

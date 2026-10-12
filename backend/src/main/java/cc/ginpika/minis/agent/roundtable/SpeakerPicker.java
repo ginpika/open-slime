@@ -94,10 +94,11 @@ public class SpeakerPicker {
                 i += 1;
                 continue;
             }
-            if (hits.stream().noneMatch(h -> h.id().equals(hit.id()))) {
-                hits.add(hit);
+            AgentRow target = hit;
+            if (hits.stream().noneMatch(h -> h.id().equals(target.id()))) {
+                hits.add(target);
             }
-            i += 1 + hit.name().length();
+            i += 1 + target.name().length();
         }
         return hits;
     }

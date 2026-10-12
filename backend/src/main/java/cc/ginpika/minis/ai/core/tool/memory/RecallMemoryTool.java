@@ -21,10 +21,11 @@ public class RecallMemoryTool implements AiTool {
 
     @Override
     public String description() {
-        return "查记忆事件流：本系统「说过/做过」的统一时间线（用户提问、回答、计划与子代理的执行结论）。"
-                + "当需要回忆之前聊过什么、某件事当时的结论、或按时间/主角翻旧账时调用；"
-                + "结果按与 query 的语义相关度排序（向量不可用时按时间倒序）。"
-                + "与 search_vector_chunks 的分工：那个查知识库文档，这个查发生过的事。";
+        return "查记忆：本系统关于你的长期记忆（画像 / 项目 / 情景 / 指令）。"
+                + "默认返回已提炼的记忆条目（用户是谁、在做什么、答应过什么），按与 query 的语义相关度排序；"
+                + "mode=event 时下钻原始事件流（说过/做过的原始对话与执行结论），供核对细节。"
+                + "要纠正记错的内容用 update_memory；要忘掉某条用 forget_memory（两者都要先拿到 id）。"
+                + "与 search_vector_chunks 的分工：那个查知识库文档，这个查关于用户 / 项目的事。";
     }
 
     @Override
@@ -44,19 +45,22 @@ public class RecallMemoryTool implements AiTool {
         ObjectNode props = params.putObject("properties");
         props.putObject("query")
                 .put("type", "string")
-                .put("description", "要回忆的内容，一句话即可（将与事件做语义比对）");
+                .put("description", "要回忆的内容，一句话即可（将与记忆做语义比对）");
+        ObjectNode scope = props.putObject("scope");
+        scope.put("type", "string");
+        scope.put("description", "记忆类型过滤（缺省不限）");
+        scope.putArray("enum").add("directive").add("profile").add("project").add("episode");
+        ObjectNode mode = props.putObject("mode");
+        mode.put("type", "string");
+        mode.put("description", "item=记忆条目（缺省）；event=原始事件流下钻（核对细节用）");
+        mode.putArray("enum").add("item").add("event");
         props.putObject("days")
                 .put("type", "number")
-                .put("description", "时间窗：只查最近 N 天（缺省不限，取最近一段事件）");
-        ObjectNode kind = props.putObject("kind")
-                .put("type", "string")
-                .put("description", "事件类型过滤（缺省不限）");
+                .put("description", "（仅 mode=event）时间窗：只查最近 N 天（缺省不限）");
+        ObjectNode kind = props.putObject("kind");
+        kind.put("type", "string");
+        kind.put("description", "（仅 mode=event）事件类型过滤（缺省不限）");
         kind.putArray("enum").add("chat").add("exec");
-        ObjectNode actor = props.putObject("actor")
-                .put("type", "string")
-                .put("description", "主角过滤（缺省不限）");
-        actor.putArray("enum").add("user").add("assistant")
-                .add("heartbeat").add("plan").add("agent");
         props.putObject("limit")
                 .put("type", "number")
                 .put("description", "返回条数，1–30，默认 8");

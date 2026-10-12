@@ -14,6 +14,12 @@ import cc.ginpika.minis.agent.runtime.event.RuntimeEvent;
 import cc.ginpika.minis.agent.runtime.event.RuntimeEventBus;
 import cc.ginpika.minis.agent.runtime.event.RuntimeEventType;
 import cc.ginpika.minis.ai.core.AgentScope;
+import cc.ginpika.minis.ai.core.MemoryExec;
+import cc.ginpika.minis.ai.core.MemoryIdentity;
+import cc.ginpika.minis.ai.core.MemorySurface;
+import cc.ginpika.minis.ai.memory.MemorySnapshot;
+import cc.ginpika.minis.ai.memory.MemorySnapshotBuilder;
+import cc.ginpika.minis.ai.memory.recall.MemoryItemRecall;
 import cc.ginpika.minis.agent.roundtable.RoundtableMessageStore;
 import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.RoundtableSessionStore;
@@ -40,6 +46,7 @@ import cc.ginpika.minis.ai.core.tool.terminal.ListTerminalsTool;
 import cc.ginpika.minis.ai.core.tool.terminal.RunCommandTool;
 import cc.ginpika.minis.ai.terminal.TerminalService;
 import cc.ginpika.minis.config.ContextProps;
+import cc.ginpika.minis.config.MemoryProps;
 import cc.ginpika.minis.config.RoundtableProps;
 import cc.ginpika.minis.config.ModelTarget;
 import cc.ginpika.minis.stats.TokenUsageService;
@@ -220,6 +227,10 @@ public class RoundtableChatService implements ChatExecution {
      */
     private final ThreadLocal<Boolean> solo = new ThreadLocal<>();
 
+    /** 记忆快照（memory-v6 §8.5 · ROUNDTABLE 面）：成员在发言时读得到公开面（画像 / 项目 / 已发布 / 本会话） */
+    private final MemorySnapshotBuilder memorySnapshots;
+    private final MemoryProps memoryProps;
+
     public RoundtableChatService(ChatTurnRunner runner, ObjectMapper om, ToolManager tools,
                          TerminalService terminal, RoundtableSessionStore maSessions,
                          RoundtableMessageStore maMessages, RoundtableTopicStore topics,
@@ -228,7 +239,8 @@ public class RoundtableChatService implements ChatExecution {
                          TopicStateMachine machine, RoundtableProps maProps, ContextProps contextProps,
                          RoundtableRevision revisions, RoundtableTodoStore taskBoard,
                          TodoStore todos, RuntimeEventBus runtimeEvents,
-                         RoundtableWorkRunStore workRuns) {
+                         RoundtableWorkRunStore workRuns, MemorySnapshotBuilder memorySnapshots,
+                         MemoryProps memoryProps) {
         this.runner = runner;
         this.om = om;
         this.tools = tools;
@@ -248,6 +260,8 @@ public class RoundtableChatService implements ChatExecution {
         this.todos = todos;
         this.runtimeEvents = runtimeEvents;
         this.workRuns = workRuns;
+        this.memorySnapshots = memorySnapshots;
+        this.memoryProps = memoryProps;
     }
 
     // ---------- 一次发言 ----------
@@ -757,8 +771,11 @@ public class RoundtableChatService implements ChatExecution {
             ObjectNode soloBody = om.createObjectNode();
             soloBody.put("model", target.model());
             ArrayNode soloMsgs = soloBody.putArray("messages");
+            /* 私聊也给记忆（memory-v6 §8.5）：成员按自己的身份 + 本会话作用域召回 */
+            String persona = context.persona(speakPeer.get());
+            String soloMem = memorySuffix(row, null);
             soloMsgs.addObject().put("role", "system")
-                    .put("content", context.persona(speakPeer.get()));
+                    .put("content", soloMem.isEmpty() ? persona : persona + "\n\n" + soloMem);
             for (ChatMessageStore.MessageRow m : history(row)) {
                 soloMsgs.addObject().put("role", m.role()).put("content", m.content());
             }
@@ -775,13 +792,42 @@ public class RoundtableChatService implements ChatExecution {
         /* 公开记录（那条 user）能占多少 token：窗口 − 输出预留 − 安全余量 − system 与工具面的估算。
            输入与输出共用同一个窗口，且 system / 工具面同样占输入——不把它们扣掉，
            贴着窗口发的请求会被上游拒（口径与首页那条流一致，见 ChatTurnRunner#historyBudget） */
-        msgs.addObject().put("role", "system").put("content", system);
-        msgs.addObject().put("role", "user")
-                .put("content", dispatch(row.id(), transcriptBudget(contextWindow, system, toolSchemas)));
+        String transcript = dispatch(row.id(), transcriptBudget(contextWindow, system, toolSchemas));
+        /* 本轮议题文本既是给成员看的公开记录，也是记忆召回的相关性依据（memory-v6 §8.5） */
+        String mem = memorySuffix(row, transcript);
+        msgs.addObject().put("role", "system")
+                .put("content", mem.isEmpty() ? system : system + "\n\n" + mem);
+        msgs.addObject().put("role", "user").put("content", transcript);
         body.set("tools", toolSchemas);
         /* 留一份「这次到底发了什么」：随发言落进消息行，页面上点开这条发言就能回看 */
         speakContext.set(body.toString());
         return body;
+    }
+
+    /**
+     * 圆桌的记忆注入（memory-v6 §8.5 · ROUNDTABLE 面）：成员读得到公开面——
+     * 用户画像 / 当前项目 / 本会话（L3）/ 他人已发布的共享知识（L4）；别的 Agent 的私有记忆读不到。
+     *
+     * <p>失败即静默返回空串：记忆是旁路，不因它抖动打断讨论。
+     */
+    private String memorySuffix(HubRow row, String query) {
+        if (!contextProps.isInjectMemory() || !memoryProps.isEnabled()) {
+            return "";
+        }
+        MemoryExec exec = MemoryExec.background(MemorySurface.ROUNDTABLE, speakPeer.get(),
+                row.projectId(), row.id(), null, null, MemoryIdentity.REAL);
+        try {
+            MemorySnapshot snap = memorySnapshots.build(exec, query, null);
+            if (snap.isEmpty()) {
+                return "";
+            }
+            String text = MemoryItemRecall.hitsText(snap.items().stream()
+                    .map(it -> new MemoryItemRecall.Hit(it, 0d)).toList());
+            return text.isBlank() ? ""
+                    : "【相关记忆】本次讨论可读的记忆（画像 / 项目 / 已发布共享 / 本会话）：\n" + text;
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     /**
@@ -1079,7 +1125,7 @@ public class RoundtableChatService implements ChatExecution {
 
     /** 把圆桌会话行包成执行器认识的行值——流循环因此不必知道有两套会话 */
     private HubRow asHubRow(RoundtableSessionStore.SessionRow row) {
-        return new HubRow(row.id(), row.title(), MODE, row.modelId(), null, null,
+        return new HubRow(row.id(), row.title(), MODE, row.modelId(), null, null, null,
                 true, true, Math.max(1, maProps.getMaxToolRounds()), false, false,
                 row.createdAt(), row.updatedAt());
     }

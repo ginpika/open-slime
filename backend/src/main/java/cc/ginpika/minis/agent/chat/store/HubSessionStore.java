@@ -22,13 +22,14 @@ import org.springframework.stereotype.Repository;
 public class HubSessionStore {
 
     public record HubRow(String id, String title, String mode, String modelId, String promptId,
-                         String agentId, boolean showCot, boolean contextTrace, int maxRounds,
-                         boolean showRounds, boolean unread, Long createdAt, Long updatedAt) {
+                         String agentId, String projectId, boolean showCot, boolean contextTrace,
+                         int maxRounds, boolean showRounds, boolean unread, Long createdAt,
+                         Long updatedAt) {
     }
 
     private static final String COLS =
-            "id, title, mode, model_id, prompt_id, agent_id, show_cot, context_trace, max_rounds, "
-                    + "show_rounds, unread, created_at, updated_at";
+            "id, title, mode, model_id, prompt_id, agent_id, project_id, show_cot, context_trace, "
+                    + "max_rounds, show_rounds, unread, created_at, updated_at";
 
     private final JdbcTemplate jdbc;
 
@@ -37,10 +38,22 @@ public class HubSessionStore {
     }
 
     public void insert(String hubId, String title) {
+        insert(hubId, title, null);
+    }
+
+    /** 新建会话（可绑定项目）：projectId 为空 = 无项目（记忆归属退化为 Agent 私有） */
+    public void insert(String hubId, String title, String projectId) {
         long now = System.currentTimeMillis();
         jdbc.update(
-                "INSERT INTO hub_session(id, title, mode, created_at, updated_at) VALUES(?,?, 'ai', ?, ?)",
-                hubId, title, now, now);
+                "INSERT INTO hub_session(id, title, mode, project_id, created_at, updated_at) "
+                        + "VALUES(?,?, 'ai', ?, ?, ?)",
+                hubId, title, projectId, now, now);
+    }
+
+    /** 绑定 / 解绑会话所属项目 */
+    public int setProject(String hubId, String projectId) {
+        return jdbc.update("UPDATE hub_session SET project_id = ?, updated_at = ? WHERE id = ?",
+                projectId, System.currentTimeMillis(), hubId);
     }
 
     /** 有新消息时刷新 updated_at，并按需回填标题（首条消息截断做标题） */
@@ -151,6 +164,33 @@ public class HubSessionStore {
         jdbc.update("UPDATE hub_session SET unread = 0 WHERE id = ?", hubId);
     }
 
+    /** 临时会话（不进记忆）：1=本次不写 memory_event、不提炼。老库该列为 NULL 时视作 0 */
+    public boolean memoryOff(String hubId) {
+        Integer v = jdbc.query("SELECT memory_off FROM hub_session WHERE id = ?",
+                rs -> rs.next() ? rs.getInt(1) : null, hubId);
+        return v != null && v != 0;
+    }
+
+    /** 运行时切换「本次不记入记忆」（会话「…」菜单） */
+    public void setMemoryOff(String hubId, boolean off) {
+        jdbc.update("UPDATE hub_session SET memory_off = ? WHERE id = ?", off ? 1 : 0, hubId);
+    }
+
+    /**
+     * 仅在标题仍为空时写标题：自动生成的标题不覆盖用户手动命名 / 已生成的标题。
+     *
+     * <p>与 {@link #touch} 的 {@code COALESCE} 同一语义，但显式收窄到「空串也算空」——
+     * 因为自动命名可能晚于首条消息到达，届时不能把已有的占位标题顶掉。
+     */
+    public void setTitleIfAbsent(String hubId, String title) {
+        if (title == null || title.isBlank()) {
+            return;
+        }
+        jdbc.update("UPDATE hub_session SET title = ?, updated_at = ? "
+                        + "WHERE id = ? AND (title IS NULL OR title = '')",
+                title.trim(), System.currentTimeMillis(), hubId);
+    }
+
     private static HubRow map(ResultSet rs, int rowNum) throws SQLException {
         return new HubRow(
                 rs.getString("id"),
@@ -159,6 +199,7 @@ public class HubSessionStore {
                 rs.getString("model_id"),
                 rs.getString("prompt_id"),
                 rs.getString("agent_id"),
+                rs.getString("project_id"),
                 rs.getInt("show_cot") != 0,
                 rs.getInt("context_trace") != 0,
                 rs.getInt("max_rounds"),

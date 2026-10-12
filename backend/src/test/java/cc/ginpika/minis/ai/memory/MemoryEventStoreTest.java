@@ -23,7 +23,7 @@ class MemoryEventStoreTest {
 
     /** 与 schema.sql 的 memory_event 同构（去注释） */
     private static final String DDL = """
-            CREATE TABLE memory_event(
+            CREATE TABLE memory_event(agent_id TEXT, project_id TEXT, session_id TEXT, task_id INTEGER, identity TEXT,
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               event_key TEXT NOT NULL UNIQUE,
               kind TEXT NOT NULL,

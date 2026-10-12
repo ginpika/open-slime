@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 /**
- * Tailwind 风格轻提示（message box）：顶部居中悬浮卡片，
+ * Tailwind 风格轻提示（message box）：视口顶部居中悬浮卡片，
  * 淡入上滑 / 淡出动画，超时自动关闭（点击可立即关闭）。
  * 用于替代提交成功横幅与页内错误提示，避免挤占、破坏原有布局。
- * z 序高于 FloatWindow（z-[60]），预览确认弹窗内提交后同样可见。
- * 顶部偏移走 --ui-toast-top（默认视口顶 1.25rem）：终末地外壳的 main 带
- * relative z-20，会困住本组件的 fixed z-[70] 使其压不过 z-30 顶栏，
- * 故由该外壳把基准挪到内容区上缘（顶栏下方），避让顶栏。
+ * z 序高于 FloatWindow（z-[60]）与 ChatNotifier（z-[65]），弹窗内提交后同样可见。
+ *
+ * <p>渲染上 portal 到 body（与 FloatWindow / ChatNotifier 同一套思路）：调用处所在子树里
+ * 常嵌着 backdrop-filter / clip-path 的祖先（.ui-card__in 的玻璃面、.ui-card 的切角等），
+ * 子树内的 position:fixed 会被那个祖先劫持成 containing block——通知条于是跟着 DOM 卡在
+ * 内容区里、既不在视口正中也可能被裁。portal 之后 fixed 恒以浏览器视口为参照，
+ * 且脱离 main 的 z-20 叠层，直接压在 z-30 顶栏之上，无需再按外壳挪基准。
  * 终末地换装（.toast-card 白底黑缘 / 炭底点缀色光晕）在 shell.css 补丁区。
  */
 export type ToastKind = 'success' | 'error'
@@ -48,11 +52,8 @@ export default function Toast({
 
   if (message === null) return null
 
-  return (
-    <div
-      className="pointer-events-none fixed inset-x-0 z-[70] flex justify-center px-4"
-      style={{ top: 'var(--ui-toast-top, 1.25rem)' } as CSSProperties}
-    >
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 top-5 z-[70] flex justify-center px-4">
       <div
         role="status"
         onClick={() => closeRef.current()}
@@ -91,6 +92,7 @@ export default function Toast({
         )}
         <div className="min-w-0 text-sm leading-relaxed text-fg">{message}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

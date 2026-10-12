@@ -1139,8 +1139,8 @@ function RagTab({ peerId, onToast }: { peerId: string; onToast: Notify }) {
     <div className="flex flex-col gap-4">
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <p className="max-w-[720px] text-xs leading-relaxed text-muted">
-          这位智能体三路召回（向量 / 图 / 时序事件）每一次工具调用的留痕：模型问了什么、
-          工具回给它的原始数据是什么，都原样记在这里，用来回看检索效果。
+          这位智能体三路召回（向量 / 图 / 记忆）的留痕：既含每次检索工具调用，也含每轮
+          <b>自动注入的记忆召回</b>——模型问了什么、实际拿到了什么原始数据，都原样记在这里，用来回看检索效果。
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <div className="mono flex w-fit shrink-0 border border-line-strong">
@@ -1172,7 +1172,8 @@ function RagTab({ peerId, onToast }: { peerId: string; onToast: Notify }) {
         <kit.Empty>
           还没有召回记录 —— 当这位智能体的对话或后台执行调用检索工具（
           <span className="mx-1 font-mono">search_vector_chunks</span>/
-          <span className="mx-1 font-mono">recall_memory</span>/ 图谱查询）时，
+          <span className="mx-1 font-mono">recall_memory</span>/ 图谱查询）时，或每轮
+          <span className="mx-1 font-mono">memory_inject</span>自动注入记忆时，
           这里会记下它问了什么、拿到了什么。
         </kit.Empty>
       ) : (

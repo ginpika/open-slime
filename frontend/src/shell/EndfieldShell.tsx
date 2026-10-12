@@ -9,7 +9,6 @@
  *
  * 契约完全遵守 ShellProps：路由 / 用户 / 主题面板逻辑一行都没有重写。
  */
-import type { CSSProperties } from 'react'
 import { BRAND } from '../branding'
 import { NAV, activePathOf } from './nav'
 import { useClock } from './useClock'
@@ -20,8 +19,7 @@ import type { ShellProps } from './types'
 const BARCODE = [1, 2, 1, 3, 1, 1, 2, 1, 4, 1, 2, 1, 1, 3, 2, 1, 1, 2, 3, 1, 2, 1, 1, 4, 1]
 /** 条码竖条高度（同样固定） */
 const BAR_HEIGHT = [22, 24, 20, 26, 22, 23, 21, 25, 22, 24, 20, 22, 26, 23, 21, 24, 22, 25, 20, 23, 22, 24, 21, 26, 22]
-/** 顶栏高（顶栏内容行引用）：Toast 的 fixed z-[70] 会被 main 的 relative z-20
-    叠层困住压不过 z-30 顶栏，故经 --ui-toast-top 把 Toast 基准挪到 main 上缘之下 */
+/** 顶栏高（顶栏内容行引用） */
 const HEADER_H = '3rem'
 
 export function EndfieldShell({
@@ -38,10 +36,7 @@ export function EndfieldShell({
   const active = activePath || activePathOf(route)
 
   return (
-    <div
-      className="relative flex h-screen flex-col overflow-hidden text-fg"
-      style={{ '--ui-toast-top': `calc(${HEADER_H} + 1.25rem)` } as CSSProperties}
-    >
+    <div className="relative flex h-screen flex-col overflow-hidden text-fg">
       {/* ---------------- 全息背景层（浅档由 CSS 隐藏大部分显影） ---------------- */}
       <div className="sh-bg" style={{ background: 'var(--c-bg)' }} aria-hidden="true">
         {/* 网格显影区：只占视口下方 30%，上缘渐隐；内部网格沿对角线钟摆漂移 */}

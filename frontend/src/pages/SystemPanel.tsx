@@ -23,6 +23,7 @@ import {
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
 import { fmtDay, fmtDur, ResultDetail, StatusDot, textPreview, ViewTab } from './AgentBackground'
+import MemoryPanel from './MemoryPanel'
 import PromptsPanel from './PromptsPanel'
 
 /** 心跳重连间隔（后端单条流有最长保持时长，断开属正常） */
@@ -307,11 +308,12 @@ function ToolsTab() {
 
 /* ---------------- 页面 ---------------- */
 
-type SysView = 'dashboard' | 'tools' | 'dev'
+type SysView = 'dashboard' | 'tools' | 'memory' | 'dev'
 
 const SYS_TABS: { key: SysView; label: string }[] = [
   { key: 'dashboard', label: '观测台' },
   { key: 'tools', label: '工具' },
+  { key: 'memory', label: '记忆' },
   { key: 'dev', label: '开发者选项' },
 ]
 
@@ -331,6 +333,7 @@ export default function SystemPanel() {
 
       {view === 'dashboard' && <DashboardTab />}
       {view === 'tools' && <ToolsTab />}
+      {view === 'memory' && <MemoryPanel />}
       {view === 'dev' && (
         <div className="flex flex-col gap-4">
           <div className="min-w-0">

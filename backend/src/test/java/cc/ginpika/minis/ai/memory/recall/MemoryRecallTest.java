@@ -50,7 +50,7 @@ class MemoryRecallTest {
                     new SingleConnectionDataSource("jdbc:sqlite::memory:", true);
             jdbc = new JdbcTemplate(ds);
             jdbc.execute("""
-                    CREATE TABLE memory_event(
+                    CREATE TABLE memory_event(agent_id TEXT, project_id TEXT, session_id TEXT, task_id INTEGER, identity TEXT,
                       id INTEGER PRIMARY KEY AUTOINCREMENT,
                       event_key TEXT NOT NULL UNIQUE,
                       kind TEXT NOT NULL,

@@ -241,7 +241,8 @@ function ResetKnowledgeDialog({
     <FloatWindow title="重置知识库" onClose={onClose} width={440}>
       <form onSubmit={submit} className="space-y-3">
         <p className="text-base leading-relaxed text-fg">
-          此操作将永久删除全部 chunk、知识图谱内的所有实体与关系、全部时序记忆，并移除所有相关的 embedding，
+          此操作将永久删除全部 chunk、知识图谱内的所有实体与关系，并<b>连带清除整个记忆子系统</b>
+          （时序记忆、记忆条目、画像候选、共享、知识边与提炼水位），移除所有相关的 embedding，
           <span className="font-semibold text-danger">且不可恢复</span>。文档条目与模型配置不受影响。
         </p>
         <kit.Field label="输入「确认」二字以继续">
@@ -492,14 +493,17 @@ export default function Settings() {
     rnk.mode !== 'off' &&
     (!rnk.model.trim() || (rnk.mode === 'custom' && (!rnk.baseUrl.trim() || !rnk.apiKey.trim())))
 
-  /** 重置知识库：清空全部 chunk、图谱实体与关系、时序记忆及相关 embedding（二次确认弹窗内提交） */
+  /** 重置知识库：清空全部 chunk、图谱实体与关系，并连带清除整个记忆子系统及相关 embedding（二次确认弹窗内提交） */
   const doReset = async () => {
     setBusy(true)
     try {
       const r = await resetKnowledgeBase()
       setToast({
         kind: 'success',
-        msg: `知识库已重置：删除 ${r.chunks} 个 chunk、${r.entities} 个实体、${r.relations} 条关系、${r.memories} 条记忆`,
+        msg:
+          `知识库已重置：删除 ${r.chunks} 个 chunk、${r.entities} 个实体、${r.relations} 条关系、` +
+          `${r.memories} 条记忆（时序 ${r.memoryEvents} + 条目 ${r.memoryItems}）、` +
+          `${r.candidates} 条画像候选、${r.shares} 条共享`,
       })
       setResetOpen(false)
     } catch (e) {
@@ -827,7 +831,8 @@ export default function Settings() {
                   <div className="min-w-0">
                     <p className="text-base font-semibold text-fg">重置知识库</p>
                     <p className="mt-1 text-xs leading-relaxed text-faint">
-                      删除全部 chunk、知识图谱内的实体与关系，并移除所有相关的 embedding。
+                      删除全部 chunk、知识图谱内的实体与关系，并<b>连带清除整个记忆子系统</b>
+                      （含时序记忆、记忆条目、画像候选与共享），移除所有相关的 embedding。
                     </p>
                   </div>
                   <button

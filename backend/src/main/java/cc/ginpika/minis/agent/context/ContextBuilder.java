@@ -49,6 +49,7 @@ public class ContextBuilder {
      * 所以追加的 provider 等价于该面唯一的源，拼装顺序稳定。
      */
     public ObjectNode build(ContextRequest req, List<ContextProvider> extra) {
+        cc.ginpika.minis.ai.memory.MemoryLiveContext.takeCaptured();
         ObjectNode body = om.createObjectNode();
         body.put("model", req.model());
         ArrayNode msgs = body.putArray("messages");
@@ -65,7 +66,9 @@ public class ContextBuilder {
         }
         /* system 全空时不落这一条：潜意识里 role=user 的计划没有 system 基底，也不该凭空多出一条空 system */
         if (!system.toString().isBlank()) {
-            msgs.addObject().put("role", "system").put("content", system.toString());
+            ObjectNode message = msgs.addObject().put("role", "system").put("content", system.toString());
+            var snapshot = cc.ginpika.minis.ai.memory.MemoryLiveContext.takeCaptured();
+            if (snapshot != null) { message.set("_minis_memory", om.valueToTree(snapshot)); }
         }
 
         for (ContextProvider p : all) {

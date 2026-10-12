@@ -13,6 +13,9 @@ import cc.ginpika.minis.agent.member.AgentAnchorService;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.runtime.AgentRunner;
 import cc.ginpika.minis.ai.core.AgentScope;
+import cc.ginpika.minis.ai.core.MemoryExec;
+import cc.ginpika.minis.ai.core.MemoryScopeCtx;
+import cc.ginpika.minis.ai.core.MemorySurface;
 import cc.ginpika.minis.agent.runtime.TaskRunner;
 import cc.ginpika.minis.agent.runtime.TaskStore;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
@@ -292,7 +295,7 @@ public class HeartbeatService implements HeartbeatTool {
             plans.markHeartbeatBeat(agentId, System.currentTimeMillis());
 
             PlanStore.HeartbeatRow hb = heartbeat(agentId);
-            HeartbeatContextBuilder.Built built = builder.build(hb.content());
+            HeartbeatContextBuilder.Built built = builder.build(hb.content(), agentId);
             String title = heartbeatTitle(agentId);
 
             AtomicInteger agents = new AtomicInteger();
@@ -307,7 +310,8 @@ public class HeartbeatService implements HeartbeatTool {
             try {
                 long execId = runner.openExec(req);
                 heartbeatTask.set(execId);
-                outcome = AgentScope.run(agentId, () -> runner.run(req, execId));
+                outcome = MemoryScopeCtx.run(heartbeatScope(agentId),
+                        () -> AgentScope.run(agentId, () -> runner.run(req, execId)));
             } catch (RuntimeException e) {
                 log.warn("心跳主会话执行失败：agent={} {}", agentId, e.getMessage());
                 outcome = new TaskRunner.Outcome(-1, "failed", null, e.getMessage());
@@ -449,10 +453,15 @@ public class HeartbeatService implements HeartbeatTool {
         return outcome;
     }
 
+    /** 心跳的记忆执行作用域（memory-v6 §8.5）：该 Agent 自己（L2 私有记忆）；绑定项目随 P3 的会话绑定补齐 */
+    private static MemoryExec heartbeatScope(String agentId) {
+        return MemoryExec.background(MemorySurface.HEARTBEAT, agentId, null, null, null, null, null);
+    }
+
     /** 执行一份职责：组装它那份上下文（正文 + 本轮交代）→ 开一次执行 → 交给执行引擎 */
     private TaskRunner.Outcome execute(String agentId, String runId, PlanStore.PlanRow plan,
                                        Long parentTaskId) {
-        HeartbeatContextBuilder.Built built = builder.build(plan);
+        HeartbeatContextBuilder.Built built = builder.build(plan, agentId);
         TaskRunner.Request req = new TaskRunner.Request(runId, ExecStore.KIND_PLAN, plan.id(),
                 plan.name(), plan.modelId(), built.messages(), toolSchemas(plan),
                 (call, execId) -> planTool(agentId, call), parentTaskId, null, agentId, null);
@@ -460,7 +469,8 @@ public class HeartbeatService implements HeartbeatTool {
            与原来的行为一致，而不是把异常一路抛到页面上 */
         try {
             long execId = runner.openExec(req);
-            return AgentScope.run(agentId, () -> runner.run(req, execId));
+            return MemoryScopeCtx.run(heartbeatScope(agentId),
+                    () -> AgentScope.run(agentId, () -> runner.run(req, execId)));
         } catch (RuntimeException e) {
             log.warn("职责「{}」执行失败：{}", plan.name(), e.getMessage());
             return new TaskRunner.Outcome(-1, "failed", null, e.getMessage());

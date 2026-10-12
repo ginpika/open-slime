@@ -140,6 +140,8 @@ export type SessionItem = {
   promptId: string | null
   /** 本会话跟哪位 Agent 对话（agent.id）；null = 内置 Agent（用全局提示词） */
   agentId: string | null
+  /** 本会话所属项目（memory-v6）：项目决定记忆归属与跨项目隔离；null = 无项目（个人工作域） */
+  projectId: string | null
   showCot: boolean | null
   /** 本会话单次提问的工具调用轮数上限（「…」菜单可改，缺省 30） */
   maxRounds: number | null
@@ -187,7 +189,7 @@ export type SessionMessage = {
   createdAt: string | null
 }
 
-export type NewSession = { id: string }
+export type NewSession = { id: string; projectId: string | null }
 
 /** 发一条消息；sessionId 缺省 = 后端取最近会话（无则新建）；回复含实际使用的 sessionId。
  *  modelId/promptId 缺省 = 后端设置页默认项 */
@@ -492,9 +494,23 @@ export async function sessionEventsStream(
   }
 }
 
-/** 新建空会话；后续 chat 需显式传该 id，否则会续接到最近会话 */
-export function createSession(): Promise<NewSession> {
-  return requestJson<NewSession>('/api/sessions', { method: 'POST' })
+/**
+ * 新建空会话；后续 chat 需显式传该 id，否则会续接到最近会话。
+ * 可传 projectId 绑定项目（memory-v6 §15.2）：有项目 → 提炼落 PROJECT×L1 且跨项目隔离。
+ */
+export function createSession(projectId?: string | null): Promise<NewSession> {
+  return requestJson<NewSession>('/api/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ projectId: projectId ?? null }),
+  })
+}
+
+/** 绑定 / 解绑会话所属项目（记忆作用域切换：旧项目条目不删除、只是不再注入） */
+export function bindSessionProject(id: string, projectId: string | null): Promise<NewSession> {
+  return requestJson<NewSession>(`/api/sessions/${encodeURIComponent(id)}/project`, {
+    method: 'PUT',
+    body: JSON.stringify({ projectId }),
+  })
 }
 /** 删除会话（连同其消息正本）；removed=一并删除的消息行数 */
 export function deleteSession(id: string): Promise<{ sessionId: string; removed: number }> {
@@ -600,6 +616,15 @@ export function rewindSession(
   return requestJson<Rewind>(`/api/sessions/${encodeURIComponent(id)}/rewind`, {
     method: 'POST',
     body: JSON.stringify(pos),
+  })
+}
+
+/** 分支：以某条消息为界，新建一个副本会话——源会话到这条（含）为止的转录整段复制过去，
+ *  源会话本身不动。返回新会话 id（前端据此打开分支） */
+export function branchSession(id: string, messageId: number): Promise<NewSession> {
+  return requestJson<NewSession>(`/api/sessions/${encodeURIComponent(id)}/branch`, {
+    method: 'POST',
+    body: JSON.stringify({ messageId }),
   })
 }
 
@@ -1253,10 +1278,24 @@ export function saveRerank(req: RerankRequest): Promise<SettingsView> {
   })
 }
 
-/** 重置知识库的结果：删除的 chunk / 实体 / 关系 / 时序记忆条数 */
-export type ResetResult = { chunks: number; entities: number; relations: number; memories: number }
+/**
+ * 重置知识库的结果：删除的 chunk / 实体 / 关系 / 记忆条数。
+ *   memories     = 记忆总数（时序事件 + 记忆条目）
+ *   memoryEvents = 其中时序事件；memoryItems = 其中记忆条目
+ *   candidates / shares = 一并清除的画像候选 / 共享记录
+ */
+export type ResetResult = {
+  chunks: number
+  entities: number
+  relations: number
+  memories: number
+  memoryEvents: number
+  memoryItems: number
+  candidates: number
+  shares: number
+}
 
-/** 重置知识库（危险操作）：清空全部 chunk、图谱实体与关系、时序记忆及相关 embedding，不可恢复 */
+/** 重置知识库（危险操作）：清空全部 chunk、图谱实体与关系，并连带清除整个记忆子系统及相关 embedding，不可恢复 */
 export function resetKnowledgeBase(): Promise<ResetResult> {
   return requestJson<ResetResult>('/api/settings/knowledge-base/reset', { method: 'POST' })
 }
@@ -1604,7 +1643,8 @@ export type BeatView = {
 
 /** 一条任务：kind 见后端 TaskStore（session/subagent/plan/code）；
  *  parentId=派它的那个任务（心跳主会话 → 计划 → 子代理），顶层为 null；
- *  execId=它落到的执行留痕（可点开看全过程）。 */
+ *  execId=它落到的执行留痕（可点开看全过程）；仅真正的执行有值，
+ *  前台会话任务没有执行上下文，为 null（该行不可点）。 */
 export type TaskView = {
   id: number
   parentId: number | null
@@ -1810,9 +1850,9 @@ export function systemStream(
   return consumePulseStream('/api/system/dashboard/stream', onPulse, signal)
 }
 
-/* ---- RAG 召回留痕（三路召回工具调用的一次记录） ---- */
+/* ---- RAG 召回留痕（三路召回：工具调用 + 记忆自动注入） ---- */
 
-/** 三路召回：vector=向量 / graph=图 / memory=时序事件 */
+/** 三路召回：vector=向量 / graph=图 / memory=记忆（含 recall_memory 工具与每轮自动注入） */
 export type SubRagChannel = 'vector' | 'graph' | 'memory'
 
 export const SUB_RAG_CHANNELS: SubRagChannel[] = ['vector', 'graph', 'memory']
@@ -1820,7 +1860,7 @@ export const SUB_RAG_CHANNELS: SubRagChannel[] = ['vector', 'graph', 'memory']
 export const SUB_RAG_CHANNEL_LABELS: Record<SubRagChannel, string> = {
   vector: '向量',
   graph: '图',
-  memory: '时序事件',
+  memory: '记忆',
 }
 
 /** 召回来源：这条检索发生在哪条流（对话 / 智能体群聊 / 心跳 / 职责 / 子代理） */
@@ -2449,4 +2489,511 @@ export function stopMaChat(sessionId: string): Promise<{ stopped: boolean }> {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
   })
+}
+
+/* ---------------- 记忆（记忆体系 v5：四层 × 四域） ---------------- */
+
+/**
+ * 一条记忆条目。v5 起条目带「归属三维」：owner（USER/PROJECT/AGENT/TASK）× domain
+ * （USER_PROFILE/PROJECT/AGENT/TASK_EPISODIC）× layer（L1 共享/L2 私有/L3 任务/L4 发布）。
+ */
+export type MemoryItem = {
+  id: number
+  agentId: string | null
+  owner: string | null
+  domain: string | null
+  layer: string | null
+  projectId: string | null
+  sessionId: string | null
+  taskId: number | null
+  scope: string
+  scopeLabel: string
+  title: string | null
+  body: string
+  confidence: number
+  source: string
+  sourceKind: string | null
+  evidenceLevel: string | null
+  status: string | null
+  retention: string | null
+  identity: string | null
+  version: number | null
+  pinned: boolean
+  active: boolean
+  validUntil: number | null
+  supersededBy: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type MemoryScopeGroup = { scope: string; label: string; count: number; items: MemoryItem[] }
+export type MemorySummary = {
+  scopes: MemoryScopeGroup[]
+  active: number
+  total: number
+  pendingCandidates: number
+  publishedShares: number
+}
+export type MemoryRequest = {
+  scope: string
+  title?: string | null
+  body: string
+  validUntil?: number | null
+  owner?: string | null
+  domain?: string | null
+  layer?: string | null
+  projectId?: string | null
+  agentId?: string | null
+  retention?: string | null
+  version?: number | null
+}
+
+/** 一条画像候选（审批前不进正式画像） */
+export type MemoryCandidate = {
+  id: number
+  scope: string
+  scopeLabel: string
+  title: string | null
+  body: string
+  sourceKind: string
+  evidenceLevel: string
+  evidenceCount: number
+  status: string
+  createdAt: number
+  updatedAt: number
+  evidenceRefs?: string | null
+  validUntil?: number | null
+}
+
+/** 一条共享记录（L4 发布） */
+export type MemoryShare = {
+  id: number
+  itemId: number
+  fromOwner: string
+  fromAgent: string | null
+  toKind: string
+  toRef: string | null
+  status: string
+  note: string | null
+  createdAt: number
+}
+
+/** 一条双时态知识边 */
+export type MemoryEdge = {
+  id: string
+  owner: string
+  projectId: string | null
+  agentId: string | null
+  subject: string
+  predicate: string
+  object: string
+  confidence: number
+  validAt: number | null
+  invalidAt: number | null
+  learnedAt: number
+  active: boolean
+}
+
+export function memorySummary(): Promise<MemorySummary> {
+  return requestJson<MemorySummary>('/api/memory/summary')
+}
+
+export function memoryItems(q?: {
+  scope?: string
+  layer?: string
+  identity?: string
+  sessionId?: string
+}): Promise<MemoryItem[]> {
+  const params = new URLSearchParams()
+  if (q?.scope) params.set('scope', q.scope)
+  if (q?.layer) params.set('layer', q.layer)
+  if (q?.identity) params.set('identity', q.identity)
+  if (q?.sessionId) params.set('sessionId', q.sessionId)
+  const qs = params.toString()
+  return requestJson<MemoryItem[]>(`/api/memory/items${qs ? `?${qs}` : ''}`)
+}
+
+export function createMemoryItem(req: MemoryRequest): Promise<MemoryItem> {
+  return requestJson<MemoryItem>('/api/memory/items', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export function updateMemoryItem(id: number, req: MemoryRequest): Promise<MemoryItem> {
+  return requestJson<MemoryItem>(`/api/memory/items/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  })
+}
+
+export function deleteMemoryItem(id: number): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/items/${id}`, { method: 'DELETE' })
+}
+
+export function pinMemoryItem(id: number, pinned: boolean): Promise<MemoryItem> {
+  return requestJson<MemoryItem>(`/api/memory/items/${id}/pin`, {
+    method: 'POST',
+    body: JSON.stringify({ pinned }),
+  })
+}
+
+/** 撤销条目（用户动作；画像另写墓碑，同指纹不再自动重建） */
+export function revokeMemoryItem(id: number, reason?: string): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/items/${id}/revoke`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason ?? null }),
+  })
+}
+
+export function consolidateMemory(): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>('/api/memory/consolidate', { method: 'POST' })
+}
+
+export function clearMemory(): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>('/api/memory', { method: 'DELETE' })
+}
+
+/* ---------- 画像候选（v5） ---------- */
+
+export function memoryCandidates(status = 'pending'): Promise<MemoryCandidate[]> {
+  return requestJson<MemoryCandidate[]>(`/api/memory/candidates?status=${encodeURIComponent(status)}`)
+}
+
+export function approveCandidate(id: number): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/candidates/${id}/approve`, { method: 'POST' })
+}
+
+export function rejectCandidate(id: number, reason?: string): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/candidates/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason ?? null }),
+  })
+}
+
+/* ---------- 共享（L4） ---------- */
+
+export function memoryShared(): Promise<MemoryShare[]> {
+  return requestJson<MemoryShare[]>('/api/memory/shared')
+}
+
+export function shareMemoryItem(
+  id: number,
+  req: { toKind: string; toRef?: string | null; note?: string | null },
+): Promise<MemoryShare> {
+  return requestJson<MemoryShare>(`/api/memory/items/${id}/share`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export function revokeMemoryShare(id: number): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/shared/${id}/revoke`, { method: 'POST' })
+}
+
+/* ---------- 知识边（双时态） ---------- */
+
+export function memoryEdges(): Promise<MemoryEdge[]> {
+  return requestJson<MemoryEdge[]>('/api/memory/edges')
+}
+
+export function addMemoryEdge(req: {
+  subject: string
+  predicate: string
+  object: string
+  owner?: string | null
+  projectId?: string | null
+  agentId?: string | null
+  confidence?: number | null
+  sourceItem?: number | null
+}): Promise<MemoryEdge> {
+  return requestJson<MemoryEdge>('/api/memory/edges', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+/* ---------- 工作集（L3 运行态） ---------- */
+
+/** 一条工作项（会话/任务级临时物，与长期记忆物理分离） */
+export type WorkingItem = {
+  id: number
+  sessionId: string
+  taskId: number | null
+  agentId: string | null
+  projectId: string | null
+  kind: string
+  title: string | null
+  body: string
+  status: string
+  expiresAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export function memoryWorkingSet(q?: {
+  sessionId?: string
+  taskId?: number
+  limit?: number
+}): Promise<WorkingItem[]> {
+  const params = new URLSearchParams()
+  if (q?.sessionId) params.set('sessionId', q.sessionId)
+  if (q?.taskId != null) params.set('taskId', String(q.taskId))
+  if (q?.limit != null) params.set('limit', String(q.limit))
+  const qs = params.toString()
+  return requestJson<WorkingItem[]>(`/api/memory/working-set${qs ? `?${qs}` : ''}`)
+}
+
+/** 关闭一条工作项（会话/任务结束时蒸馏的入口） */
+export function closeWorkingItem(id: number): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/working-set/${id}/close`, { method: 'POST' })
+}
+
+/** 任务检查点：某任务当前的运行状态与快照（checkpoint 为 JSON 原文） */
+export type WorkingCheckpoint = { taskId: number; status: string; checkpoint: string | null }
+
+export function memoryCheckpoint(taskId: number): Promise<WorkingCheckpoint> {
+  return requestJson<WorkingCheckpoint>(
+    `/api/memory/working-set/checkpoint?taskId=${encodeURIComponent(taskId)}`,
+  )
+}
+
+/* ---------- 记忆体检（三病报告） ---------- */
+
+/** 记忆体检报告：污染 / 挤占 / 漂移 + 总评级 */
+export type MemoryHealth = {
+  generatedAt: number
+  grade: 'ok' | 'warn' | 'risk'
+  pollution: {
+    fictionInProfile: number
+    blockedFictionCandidates: number
+    rejectedCandidates: number
+    alerts: string[]
+  }
+  crowding: {
+    domains: { key: string; count: number; chars: number; share: number }[]
+    alerts: string[]
+  }
+  drift: {
+    superseded: number
+    recent: { itemId: number; scope: string; title: string | null; body: string; supersededBy: number; invalidAt: number }[]
+    alerts: string[]
+  }
+}
+
+export function memoryHealth(): Promise<MemoryHealth> {
+  return requestJson<MemoryHealth>('/api/memory/health')
+}
+
+/** 运行指标（memory-v6 §17.2）：不变量是否被守住、预算挤出、快照覆盖率（进程内计数，重启清零） */
+export type MemoryMetrics = {
+  scopeMissing: number
+  invariantViolation: number
+  writeConflict: number
+  budgetEvicted: number
+  crossDomainBlocked: number
+  snapshotBuilt: number
+  snapshotSaved: number
+  snapshotCoverage: number
+}
+
+export function memoryMetrics(): Promise<MemoryMetrics> {
+  return requestJson<MemoryMetrics>('/api/memory/metrics')
+}
+
+/** 手动恢复某任务的工作状态（把检查点还原进工作集；幂等，已还原过返回 0） */
+export function restoreWorkingSet(taskId: number): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(
+    `/api/memory/restore?taskId=${encodeURIComponent(String(taskId))}`,
+    { method: 'POST' },
+  )
+}
+
+/* ---------------- 记忆中心 P4（双时态点查 / 提升层 / 发布收件箱 / 遗忘） ---------------- */
+
+/** 双时态点查视图：某时刻（at 为毫秒时间戳）仍有效的条目与知识边 */
+export type AsOfView = {
+  at: number
+  items: MemoryItem[]
+  edges: MemoryEdge[]
+}
+
+/** 一条写入审计（revision）：每次提交留一条，可回放、可追责、可 purge 溯源 */
+export type MemoryRevision = {
+  id: number
+  itemId: number | null
+  op: string
+  actorKind: string
+  actorId: string | null
+  turnId: string | null
+  beforeJson: string | null
+  afterJson: string | null
+  reason: string | null
+  createdAt: number
+}
+
+/** 显式遗忘（purge）请求体：按条目 / 归属 / 时间范围撤回 */
+export type PurgeRequest = {
+  itemIds?: number[]
+  owner?: string
+  agentId?: string
+  projectId?: string
+  scope?: string
+  before?: number
+  reason?: string
+}
+
+/** purge 影响面预览：先看影响多少条（items 为前 20 条样例） */
+export type PurgePreview = {
+  matched: number
+  active: number
+  userProfile: number
+  items: MemoryItem[]
+}
+
+/** 一条提升记录（L2→L4 / L4→L1：candidate → applied） */
+export type MemoryPromotion = {
+  id: number
+  itemId: number
+  fromLayer: string
+  toLayer: string
+  state: string
+  evidenceCount: number
+  note: string | null
+  createdAt: number
+}
+
+/** 收件箱一条：待接收的交接 + 条目摘要 */
+export type MemoryInboxEntry = {
+  handoffId: number
+  toKind: string
+  toRef: string | null
+  state: string
+  itemId: number
+  title: string | null
+  body: string
+  layer: string | null
+  note: string | null
+  createdAt: number
+}
+
+/** 双时态点查：返回该时刻有效的记忆视图（valid_at ≤ at < invalid_at） */
+export function memoryAsOf(at: number, limit = 100): Promise<AsOfView> {
+  const params = new URLSearchParams({ at: String(at), limit: String(limit) })
+  return requestJson<AsOfView>(`/api/memory/as-of?${params.toString()}`)
+}
+
+/** 某条目所在取代链（按「旧 → 新」排序） */
+export function memoryItemHistory(id: number): Promise<MemoryItem[]> {
+  return requestJson<MemoryItem[]>(`/api/memory/items/${id}/history`)
+}
+
+/** 写入审计（可按条目过滤；limit 缺省 100） */
+export function memoryRevisions(q?: { itemId?: number; limit?: number }): Promise<MemoryRevision[]> {
+  const params = new URLSearchParams()
+  if (q?.itemId != null) params.set('itemId', String(q.itemId))
+  params.set('limit', String(q?.limit ?? 100))
+  return requestJson<MemoryRevision[]>(`/api/memory/revisions?${params.toString()}`)
+}
+
+/** 显式遗忘预览：先给影响面，确认后再调 {@link purgeMemory} */
+export function previewPurge(req: PurgeRequest): Promise<PurgePreview> {
+  return requestJson<PurgePreview>('/api/memory/purge/preview', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+/** 显式遗忘：置 revoked + 写墓碑 + revision 记 purge */
+export function purgeMemory(req: PurgeRequest): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>('/api/memory/purge', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+/** 扫描提升候选（L2→L4 / L4→L1），返回新生成的候选数 */
+export function scanPromotions(): Promise<{ candidates: number }> {
+  return requestJson<{ candidates: number }>('/api/memory/promote/scan', { method: 'POST' })
+}
+
+/** 待决提升候选列表 */
+export function memoryPromotions(): Promise<MemoryPromotion[]> {
+  return requestJson<MemoryPromotion[]>('/api/memory/promotions')
+}
+
+/** 落地一条提升候选（改 layer + 记来源凭据） */
+export function applyPromotion(id: number): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/promotions/${id}/apply`, { method: 'POST' })
+}
+
+/** 记一条提升候选（缺省目标层 = L4） */
+export function promoteMemoryItem(
+  id: number,
+  req?: { toLayer?: string; evidenceCount?: number; note?: string },
+): Promise<MemoryPromotion> {
+  return requestJson<MemoryPromotion>(`/api/memory/items/${id}/promote`, {
+    method: 'POST',
+    body: JSON.stringify(req ?? {}),
+  })
+}
+
+/** 收件箱：待接收的交接（人工作用域 = 全量待接收） */
+export function memoryInbox(): Promise<MemoryInboxEntry[]> {
+  return requestJson<MemoryInboxEntry[]>('/api/memory/inbox')
+}
+
+/** 交接状态机：accept / reject / done */
+export function moveHandoff(id: number, state: string): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/memory/inbox/${id}/${encodeURIComponent(state)}`, {
+    method: 'POST',
+  })
+}
+
+/* ---------------- 项目（记忆作用域锚点） ---------------- */
+
+export type Project = {
+  id: string
+  userId: string | null
+  name: string
+  kind: string
+  narrative: boolean
+  status: string
+  note: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProjectRequest = {
+  name: string
+  kind?: string | null
+  narrative?: boolean | null
+  status?: string | null
+  note?: string | null
+}
+
+export function listProjects(): Promise<Project[]> {
+  return requestJson<Project[]>('/api/projects')
+}
+
+export function createProject(req: ProjectRequest): Promise<Project> {
+  return requestJson<Project>('/api/projects', { method: 'POST', body: JSON.stringify(req) })
+}
+
+export function updateProject(id: string, req: Partial<ProjectRequest>): Promise<Project> {
+  return requestJson<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(req) })
+}
+
+export function deleteProject(id: string): Promise<{ changed: number }> {
+  return requestJson<{ changed: number }>(`/api/projects/${id}`, { method: 'DELETE' })
+}
+
+/** 确认任务内的项目事实，使其成为当前项目的共享记忆。 */
+export function confirmProjectMemory(id: number, version: number): Promise<{ changed: number }> {
+  return requestJson(`/api/memory/items/${id}/confirm-project`, { method: 'POST', body: JSON.stringify({ version }) })
+}
+
+/** 用户明确结束会话工作后提交蒸馏；普通 Turn 和暂停不调用此入口。 */
+export function completeSessionMemory(sessionId: string): Promise<{ changed: number }> {
+  return requestJson(`/api/memory/sessions/${encodeURIComponent(sessionId)}/complete`, { method: 'POST' })
 }

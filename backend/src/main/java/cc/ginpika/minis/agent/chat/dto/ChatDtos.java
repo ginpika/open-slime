@@ -48,14 +48,18 @@ public final class ChatDtos {
     public record Rewind(String sessionId, int removed) {
     }
 
+    /** POST /api/sessions/{id}/branch body：messageId=分支点（复制到这条消息为止，含它本身） */
+    public record BranchRequest(Long messageId) {
+    }
+
     /** GET/POST /api/sessions 项：id=hub 侧 uuid；modelId/promptId/agentId/showCot/contextTrace/maxRounds/showRounds
      *  为「…」菜单在该会话的配置（modelId/promptId 为 null 表示未指定、回退设置页默认项；
      *  agentId 为 null 表示跟内置 Agent 对话）；
      *  unread=潜意识子代理投递过新消息且用户未查看；
      *  generating=该会话此刻有在途生成（前端据此发现「刚答完」并弹通知，见 ChatLiveStore） */
     public record SessionItem(String id, String title, String modelId, String promptId, String agentId,
-                              Boolean showCot, Boolean contextTrace, Integer maxRounds, Boolean showRounds,
-                              Boolean unread, boolean generating, String updatedAt) {
+                              String projectId, Boolean showCot, Boolean contextTrace, Integer maxRounds,
+                              Boolean showRounds, Boolean unread, boolean generating, String updatedAt) {
     }
 
     /** 会话配置（「…」菜单在该会话的选择）：modelId/promptId=null 回退设置页默认项；
@@ -94,8 +98,12 @@ public final class ChatDtos {
                              String createdAt) {
     }
 
-    /** POST /api/sessions 返回 */
-    public record NewSession(String id) {
+    /** POST /api/sessions 返回（v6：带上项目绑定，前端据此显示项目标签） */
+    public record NewSession(String id, String projectId) {
+    }
+
+    /** POST /api/sessions / PUT /api/sessions/{id}/project 请求体（projectId 为空 = 无项目） */
+    public record ProjectBind(String projectId) {
     }
 
     /** DELETE /api/sessions/{id} 返回：removed=一并删除的消息行数 */

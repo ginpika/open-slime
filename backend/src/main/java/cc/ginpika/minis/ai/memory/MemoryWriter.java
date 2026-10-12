@@ -57,6 +57,12 @@ public class MemoryWriter {
                 REF_CHAT_MESSAGE, messageId);
     }
 
+    public void onChatMessage(cc.ginpika.minis.ai.core.MemoryExec exec, long messageId, String role,
+                              String sessionTitle, String content) {
+        cc.ginpika.minis.ai.core.MemoryScopeCtx.runVoid(exec,
+                () -> onChatMessage(messageId, role, sessionTitle, content));
+    }
+
     /** 执行出结论时推（AgentRunner 的 done 分支）：kind 为 heartbeat/plan/agent，output 为结论 */
     public void onExecDone(long execId, String kind, String title, String output) {
         push(REF_TASK + ":" + execId, KIND_EXEC, kind, title, output, REF_TASK, execId);
@@ -65,7 +71,8 @@ public class MemoryWriter {
     private void push(String eventKey, String kind, String actor, String title, String payload,
                       String refType, long refId) {
         try {
-            if (events.append(eventKey, kind, actor, trim(title), truncate(payload), refType, refId)) {
+            if (events.append(cc.ginpika.minis.ai.core.MemoryScopeCtx.get(),
+                    eventKey, kind, actor, trim(title), truncate(payload), refType, refId)) {
                 /* 只有真的写入（非幂等重放）才值得花一次 embedding 调用 */
                 embeddings.complementAsync(eventKey);
             }

@@ -59,7 +59,11 @@ public final class ToolBatch {
             int to = Math.min(from + MAX_PARALLEL, calls.size());
             List<CompletableFuture<String>> futures = new ArrayList<>(to - from);
             for (JsonNode call : calls.subList(from, to)) {
-                futures.add(CompletableFuture.supplyAsync(() -> safeRun(one, call), POOL));
+                cc.ginpika.minis.ai.core.MemoryExec scope = cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
+                String agent = cc.ginpika.minis.ai.core.AgentScope.get();
+                futures.add(CompletableFuture.supplyAsync(() ->
+                        cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope,
+                                () -> cc.ginpika.minis.ai.core.AgentScope.run(agent, () -> safeRun(one, call))), POOL));
             }
             for (CompletableFuture<String> future : futures) {
                 results.add(future.join());

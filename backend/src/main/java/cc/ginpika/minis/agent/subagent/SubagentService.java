@@ -15,6 +15,9 @@ import cc.ginpika.minis.agent.context.ContextBuilder;
 import cc.ginpika.minis.agent.context.ContextRequest;
 import cc.ginpika.minis.agent.runtime.AgentRunner;
 import cc.ginpika.minis.ai.core.AgentScope;
+import cc.ginpika.minis.ai.core.MemoryExec;
+import cc.ginpika.minis.ai.core.MemoryScopeCtx;
+import cc.ginpika.minis.ai.core.MemorySurface;
 import cc.ginpika.minis.agent.runtime.ExecStore;
 import cc.ginpika.minis.agent.runtime.TaskRunner;
 import cc.ginpika.minis.agent.runtime.TaskStore;
@@ -78,6 +81,10 @@ public class SubagentService implements SubagentTool {
     /** 回放过程时正文/思维链的截断上限 */
     private static final int REPLAY_LIMIT = 6000;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private cc.ginpika.minis.agent.chat.store.HubSessionStore hubSessions;
+    @org.springframework.beans.factory.annotation.Autowired
+    private cc.ginpika.minis.project.ProjectStore projects;
     private final TaskRunner runner;
     private final ExecStore store;
     /** 任务：对话侧的异步派活每条落一行，进程重启后可恢复为「已中断、可重跑」 */
@@ -252,12 +259,14 @@ public class SubagentService implements SubagentTool {
      */
     private TaskRunner.Outcome runSync(String runId, String agentId, String title, String instruction,
                                        List<String> toolNames, Long parentTaskId, String payload) {
-        TaskRunner.Request req = request(runId, agentId, title, instruction, toolNames, null,
-                parentTaskId, null, payload);
+        MemoryExec inherited = memScope(agentId, null);
+        TaskRunner.Request req = MemoryScopeCtx.run(inherited, () -> request(runId, agentId, title,
+                instruction, toolNames, null, parentTaskId, null, payload));
         /* 开一次执行＝建那行任务（带上下文与来源）；收尾也由执行器一并落状态 */
         long execId = runner.openExec(req);
         try {
-            return AgentScope.run(agentId, () -> runner.run(req, execId));
+            return MemoryScopeCtx.run(memScope(agentId, null),
+                    () -> AgentScope.run(agentId, () -> runner.run(req, execId)));
         } catch (RuntimeException e) {
             tasks.finish(execId, false);
             throw e;
@@ -278,7 +287,7 @@ public class SubagentService implements SubagentTool {
                 ? tools.readOnlyToolsOf(ToolSurface.CHAT)
                 : tools.toolsOf(toolNames, ToolSurface.CHAT);
         return new TaskRunner.Request(runId, ExecStore.KIND_AGENT, null, title, null,
-                messages(prompts.resolve(SubagentBlock.KEY), instruction, hubId), toolSchemas,
+                messages(prompts.resolve(SubagentBlock.KEY), instruction, hubId, agentId), toolSchemas,
                 (call, execId) -> toolbox.run(call, "agent"), parentTaskId, sessionId, agentId, payload);
     }
 
@@ -349,9 +358,10 @@ public class SubagentService implements SubagentTool {
     private long spawn(JsonNode args, String agentId, String batchId, String hubId,
                        Long parentTaskId) {
         String instruction = args.path("instruction").asText("").trim();
-        TaskRunner.Request req = request(batchId, agentId,
+        MemoryExec inherited = memScope(agentId, hubId);
+        TaskRunner.Request req = MemoryScopeCtx.run(inherited, () -> request(batchId, agentId,
                 title(args.path("name").asText(""), instruction),
-                instruction, names(args.path("tools")), hubId, parentTaskId, hubId, args.toString());
+                instruction, names(args.path("tools")), hubId, parentTaskId, hubId, args.toString()));
         /* 开一次执行＝建那行任务：上下文、来源、归属会话、待重跑输入（工具调用参数原文）都在这一行里 */
         long execId = runner.openExec(req);
         pending.computeIfAbsent(batchId, k -> new AtomicInteger()).incrementAndGet();
@@ -362,7 +372,10 @@ public class SubagentService implements SubagentTool {
         }
         POOL.execute(() -> {
             try {
-                runAsync(req, execId, hubId);
+                MemoryExec child = new MemoryExec(inherited.userId(), inherited.agentId(), inherited.projectId(),
+                        inherited.sessionId(), execId, MemorySurface.SUBAGENT, false,
+                        "task:" + execId, inherited.identityOrInferred());
+                MemoryScopeCtx.runVoid(child, () -> runAsync(req, execId, hubId));
             } finally {
                 pending.computeIfAbsent(batchId, k -> new AtomicInteger()).decrementAndGet();
                 settle(batchId);
@@ -375,7 +388,8 @@ public class SubagentService implements SubagentTool {
     private void runAsync(TaskRunner.Request req, long execId, String hubId) {
         TaskRunner.Outcome outcome;
         try {
-            outcome = AgentScope.run(req.agentId(), () -> runner.run(req, execId));
+            outcome = MemoryScopeCtx.run(memScope(req.agentId(), hubId),
+                    () -> AgentScope.run(req.agentId(), () -> runner.run(req, execId)));
         } catch (RuntimeException e) {
             log.warn("子代理「{}」执行失败：{}", req.title(), e.getMessage());
             /* 引擎中途抛错时那行任务还停在 running：这里补一笔，免得页面上永远显示「进行中」 */
@@ -520,12 +534,31 @@ public class SubagentService implements SubagentTool {
      * <p>system 的拼装交给上下文平面：人格是基底，黑板与当前时间由 {@code SubagentContextProvider}
      * 按 {@link ContextRequest.Surface#SUBAGENT} 面追加（见 STEP 6-③）。这里只把 user 那条交代补上。
      */
-    private ArrayNode messages(String systemBase, String instruction, String hubId) {
+    private ArrayNode messages(String systemBase, String instruction, String hubId, String agentId) {
         ObjectNode body = context.build(new ContextRequest(null, systemBase, hubId,
-                false, null, 0, null, ContextRequest.Surface.SUBAGENT));
+                agentId, null, null, false, instruction, 0, null,
+                ContextRequest.Surface.SUBAGENT, null));
         ArrayNode messages = (ArrayNode) body.get("messages");
         messages.addObject().put("role", "user").put("content", instruction);
         return messages;
+    }
+
+    /**
+     * 子代理的记忆执行作用域（memory-v6 §8.5）：**派它的那个 Agent** + 本会话（L3 工作集可见）。
+     * 心跳侧派活无会话，sessionId 为空——此时只读得到该 Agent 的私有记忆与正式画像。
+     */
+    private MemoryExec memScope(String agentId, String sessionId) {
+        MemoryExec parent = MemoryScopeCtx.get();
+        if (parent != null) {
+            return MemoryExec.background(MemorySurface.SUBAGENT, agentId, parent.projectId(),
+                    sessionId == null ? parent.sessionId() : sessionId, parent.taskId(), parent.turnId(),
+                    parent.identityOrInferred());
+        }
+        var row = sessionId == null ? null : hubSessions.findById(sessionId).orElse(null);
+        String project = row == null ? null : row.projectId();
+        return MemoryExec.background(MemorySurface.SUBAGENT, agentId, project, sessionId, null, null,
+                project == null ? cc.ginpika.minis.ai.core.MemoryIdentity.INFERRED
+                    : cc.ginpika.minis.ai.core.MemoryIdentity.ofNarrative(projects.isNarrative(project)));
     }
 
     // ---------- 翻过程 ----------

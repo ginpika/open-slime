@@ -74,6 +74,16 @@ public class ChatService {
         return sessions.create();
     }
 
+    /** 新建会话并绑定项目（memory-v6：项目是记忆归属与跨项目隔离的依据） */
+    public ChatDtos.NewSession create(String projectId) {
+        return sessions.create(projectId);
+    }
+
+    /** 绑定 / 解绑会话所属项目（记忆作用域切换） */
+    public ChatDtos.NewSession setProject(String hubId, String projectId) {
+        return sessions.setProject(hubId, projectId);
+    }
+
     public ChatDtos.SessionDeleted delete(String hubId) {
         return sessions.delete(hubId);
     }
@@ -82,9 +92,10 @@ public class ChatService {
         return sessions.messages(hubId);
     }
 
-    /** 会话的个人待办清单（plan-of-record）：会话页 TODO 卡片读取当前进度 */
+    /** 会话的个人待办清单（plan-of-record）：按该会话绑定的 Agent 定位（与写入侧同口径），
+     *  会话页 TODO 卡片读取当前进度 */
     public List<ChatDtos.TodoItem> todos(String hubId) {
-        return todo.list(hubId);
+        return todo.list(hubId, sessions.owner(hubId));
     }
 
     public ChatDtos.SessionConfig updateConfig(String hubId, ChatDtos.ConfigRequest req) {
@@ -93,6 +104,11 @@ public class ChatService {
 
     public ChatDtos.Rewind rewind(String hubId, Long messageId, Integer keep) {
         return sessions.rewind(hubId, messageId, keep);
+    }
+
+    /** 分支：以某条消息为界，把到这条为止的转录复制进一个新会话（源会话不动） */
+    public ChatDtos.NewSession branch(String hubId, Long messageId) {
+        return sessions.branch(hubId, messageId);
     }
 
     // ---------- 在途生成仓：转给 ChatLiveStore（断点续传） ----------

@@ -36,6 +36,9 @@ public class RagRecallRecorder {
     /** 三路之一：时序事件（记忆事件流召回） */
     public static final String CH_MEMORY = "memory";
 
+    /** memory 通道下的一个「伪工具」名：每轮自动注入的记忆召回（非模型主动调工具，见 MemoryProvider） */
+    public static final String TOOL_MEMORY_INJECT = "memory_inject";
+
     /** 工具名 → 所属召回路；不在此表内的工具不留痕 */
     private static final Map<String, String> CHANNELS = Map.of(
             SearchVectorChunksTool.NAME, CH_VECTOR,
@@ -79,5 +82,28 @@ public class RagRecallRecorder {
 
     private static String clip(String s) {
         return s.length() > RESULT_LIMIT ? s.substring(0, RESULT_LIMIT) + "…" : s;
+    }
+
+    /**
+     * 留痕一次「自动记忆注入」（非工具调用，归入 memory 通道，工具名 {@link #TOOL_MEMORY_INJECT}）。
+     *
+     * <p>为什么要记它：记忆现在默认每轮按用户输入自动召回并注入（{@code MemoryProvider}），
+     * 这是记忆召回的主路径；不记的话「RAG 召回」页只看得到模型偶尔主动调的 {@code recall_memory}，
+     * 看不到每轮实际注入的内容。agentId 显式传入（注入发生在会话请求线程，AgentScope 未必圈定）。
+     *
+     * @param query   本轮检索查询（用户输入）
+     * @param result  实际注入的内容（已渲染文本）
+     * @param source  来自哪条流（chat 等）
+     * @param agentId 归属 Agent（空 → builtin）
+     */
+    public void recordMemoryInject(String query, String result, String source, String agentId) {
+        String text = result == null ? "" : result;
+        try {
+            store.append(CH_MEMORY, TOOL_MEMORY_INJECT,
+                    source == null || source.isBlank() ? "unknown" : source,
+                    agentId, query, clip(text), text.length());
+        } catch (RuntimeException e) {
+            log.warn("记忆注入留痕写入失败（不影响检索）：{}", e.getMessage());
+        }
     }
 }

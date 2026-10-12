@@ -51,7 +51,8 @@ public class TaskStore {
 
     public record TaskRow(long id, Long parentId, String kind, String status, String title,
                           String sessionId, String agentId, String modelId, String workspaceId,
-                          String budget, String payload, long createdAt, long updatedAt) {
+                          String budget, String payload, String origin, long createdAt,
+                          long updatedAt) {
     }
 
     /** 一条任务产物：kind 见 {@link #ART_TEXT} 等；content 与 ref 二选一（text 用前者、file/ref 用后者） */
@@ -61,7 +62,7 @@ public class TaskStore {
 
     /** 列清单（各查询共用）：顺序与 {@link #map} 对应 */
     private static final String COLUMNS = "id, parent_id, kind, status, title, session_id, agent_id, "
-            + "model_id, workspace_id, budget, payload, created_at, updated_at";
+            + "model_id, workspace_id, budget, payload, origin, created_at, updated_at";
 
     private final JdbcTemplate jdbc;
 
@@ -187,6 +188,28 @@ public class TaskStore {
                 status, System.currentTimeMillis(), id);
     }
 
+    /** 写任务记忆检查点（memory-v5 §9）：暂停 / 中断前把工作状态快照（JSON）落到 task.memory_checkpoint */
+    public int setCheckpoint(long id, String checkpointJson) {
+        return jdbc.update("UPDATE task SET memory_checkpoint = ?, updated_at = ? WHERE id = ?",
+                checkpointJson, System.currentTimeMillis(), id);
+    }
+
+    /** 读任务记忆检查点（无则 null） */
+    public String checkpointOf(long id) {
+        return jdbc.query("SELECT memory_checkpoint FROM task WHERE id = ?",
+                rs -> rs.next() ? rs.getString(1) : null, id);
+    }
+
+    /** 带检查点的任务 id（重启后可恢复的工作状态；供启动恢复上报） */
+    public List<Long> idsWithCheckpoint(String status) {
+        if (status == null || status.isBlank()) {
+            return jdbc.query("SELECT id FROM task WHERE memory_checkpoint IS NOT NULL "
+                    + "ORDER BY id DESC", (rs, n) -> rs.getLong(1));
+        }
+        return jdbc.query("SELECT id FROM task WHERE memory_checkpoint IS NOT NULL AND status = ? "
+                + "ORDER BY id DESC", (rs, n) -> rs.getLong(1), status);
+    }
+
     /** 落一条任务产物（任务的「产出」）：结论文本 / 生成的文件 / 外部引用 */
     public void addArtifact(long taskId, Long execId, String kind, String name, String content,
                             String ref) {
@@ -227,7 +250,7 @@ public class TaskStore {
                 rs.getString("kind"), rs.getString("status"), rs.getString("title"),
                 rs.getString("session_id"), rs.getString("agent_id"), rs.getString("model_id"),
                 rs.getString("workspace_id"), rs.getString("budget"), rs.getString("payload"),
-                rs.getLong("created_at"), rs.getLong("updated_at"));
+                rs.getString("origin"), rs.getLong("created_at"), rs.getLong("updated_at"));
     }
 
     /**

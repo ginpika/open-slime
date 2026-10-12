@@ -66,7 +66,6 @@ import {
 } from '../components/roundtableLive'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
-import { useThemeState } from '../theme/store'
 
 /** 「不显示思维链」偏好的本地存储 key：离开圆桌再回来不用重设 */
 const HIDE_COT_KEY = 'minis.roundtable.hide-cot'
@@ -214,7 +213,6 @@ function detectMention(value: string, caret: number): { start: number; query: st
 /** 圆桌页（路由 /roundtable）：左侧选会话，右侧是这张圆桌。 */
 export default function Roundtable() {
   const kit = usePageKit()
-  const sidebar = useThemeState().mono.sidebar
   const [peers, setPeers] = useState<MaPeer[]>([])
   const [modelOptions, setModelOptions] = useState<Option[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
@@ -256,13 +254,9 @@ export default function Roundtable() {
   return (
     /* kit.Page 出扇区头；圆桌本体占满剩余高度，滚动都发生在容器内部——底部的输入框因此始终可见。
        [&>*]:h-full 把高度传给 kit 渲染的 <section>，于是各主题的 Page 都能撑满整页。
-       侧边栏档：页眉已被隐藏（见 kit 的 Page），这里再去掉自己的上边距——
-       否则「外层 pt」叠上「Page 的 pt-6」，圆桌页顶部会比别的内容页高出一截。 */
-    <div
-      className={`h-full [&>*]:h-full ${
-        sidebar ? 'px-3 pb-3 lg:px-5 lg:pb-5' : 'p-3 lg:p-5'
-      }`}
-    >
+       本页是 fullBleed（main 不自带内边距），留白全由这里给；顶部一律不加 pt——
+       kit.Page 的 pt-6 已是顶部留白，再叠一层会让圆桌标题比别的内容页高出一大块。 */
+    <div className="h-full [&>*]:h-full px-3 pb-3 lg:px-5 lg:pb-5">
       <kit.Page
         title="圆桌"
         en="ROUNDTABLE"
@@ -338,6 +332,10 @@ function RoundtableBoard({
   /** 新建会话的选人弹窗开着没 */
   const [pickerOpen, setPickerOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** 会话的消息列表 ajax 回读到位时置位：等下一次提交（layout effect）把视图落到底 */
+  const pendingBottomRef = useRef(false)
+  /** 上一位「落底」对应的会话 id：区分「换了会话」与「同一会话因新内容重取」 */
+  const pinnedSessionRef = useRef<string | null>(null)
   /** 正在补全的 @提及：null 表示没在补；query 是 @ 后面已敲的片段，index 是当前高亮项 */
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -399,11 +397,13 @@ function RoundtableBoard({
   }, [notify])
 
   const reloadSession = useCallback(
-    async (id: string) => {
+    async (id: string, pinBottom = false) => {
       try {
         const [msgs, tps] = await Promise.all([maMessages(id), maTopics(id)])
         setMessages(msgs)
         setTopics(tps)
+        /* ajax 回来、消息列表即将替换：请求下一次提交后把视图落到底（进入会话的默认姿态） */
+        if (pinBottom) pendingBottomRef.current = true
       } catch (e) {
         notify(errMsg(e), 'err')
       }
@@ -420,7 +420,11 @@ function RoundtableBoard({
    * ——已落库的一律以服务端为准，正在说话的那一位则由仓里的直播气泡补在末尾。
    */
   useEffect(() => {
-    if (sessionId) void reloadSession(sessionId)
+    if (!sessionId) return
+    /* 只有「换了会话」才把视图落到底；同一会话因新内容（run.revision）重取时要保持用户当前姿态 */
+    const pinBottom = pinnedSessionRef.current !== sessionId
+    pinnedSessionRef.current = sessionId
+    void reloadSession(sessionId, pinBottom)
   }, [sessionId, reloadSession, run?.revision])
 
   /* 一轮说完（跑完 / 失败）：会话列表的标题与排序都在此时定下来，刷新一次 */
@@ -437,8 +441,11 @@ function RoundtableBoard({
   const [atBottom, setAtBottom] = useState(true)
   const atBottomRef = useRef(true)
 
-  /** 程序性平滑滚动进行中：这期间的 onScroll 不算「用户自己滚」（否则按钮会闪一下） */
+  /** 程序性滚动进行中：这期间的 onScroll 不算「用户自己滚」（否则按钮会闪一下） */
   const programmaticRef = useRef(false)
+
+  /** 「回到最新」补帧的帧号：卸载 / 再次点击时取消上一串，避免操作已废弃的滚动 */
+  const jumpFrameRef = useRef<number | null>(null)
 
   /** 消息区滚动：记下用户是否还贴着底（48px 容差） */
   const onMessagesScroll = () => {
@@ -450,18 +457,45 @@ function RoundtableBoard({
     setAtBottom((prev) => (prev === bottom ? prev : bottom))
   }
 
-  /** 回到最新：滚到底并恢复自动跟随 */
-  const scrollToBottom = () => {
+  /** 回到最新：瞬时跳到最后一条并恢复自动跟随。
+      不能走平滑滚动——虚拟列表只渲染视口内的项，滚动途中下方那些「按预估高度铺开」的项才被逐个实测、
+      位置不断修正，于是文字重叠成一堆、动画也卡。这里改为瞬时定位，再连补几帧：
+      每帧按最新 scrollHeight 重钉一次，把实测后增长的总高吃掉，直到真正落到底。
+      补帧期间用 programmaticRef 屏蔽 onScroll，免得中途被判成「用户自己滚」而误弹按钮。 */
+  const scrollToBottom = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
+    if (jumpFrameRef.current !== null) cancelAnimationFrame(jumpFrameRef.current)
     programmaticRef.current = true
     atBottomRef.current = true
     setAtBottom(true)
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    window.setTimeout(() => {
-      programmaticRef.current = false
-    }, 400)
-  }
+    /* 虚拟列表的总高由「未渲染项的预估高度」撑着，落底后这些项才被逐个实测、总高随之增长，
+       单钉一次往往差一截：连续补帧、每帧按最新 scrollHeight 重钉，直到连续两帧都真的贴底（20 帧封顶兜底） */
+    let frames = 0
+    let settled = 0
+    const settle = () => {
+      el.scrollTop = el.scrollHeight
+      settled = el.scrollHeight - el.scrollTop - el.clientHeight < 2 ? settled + 1 : 0
+      frames += 1
+      if (settled < 2 && frames < 20) {
+        jumpFrameRef.current = requestAnimationFrame(settle)
+      } else {
+        jumpFrameRef.current = null
+        window.setTimeout(() => {
+          programmaticRef.current = false
+        }, 120)
+      }
+    }
+    settle()
+  }, [])
+
+  /* 卸载时取消「回到最新」的补帧 */
+  useEffect(
+    () => () => {
+      if (jumpFrameRef.current !== null) cancelAnimationFrame(jumpFrameRef.current)
+    },
+    [],
+  )
 
   /* 上下文浮层：Esc 关闭（点背景关闭在浮层自己身上） */
   useEffect(() => {
@@ -688,6 +722,20 @@ function RoundtableBoard({
     return () => cancelAnimationFrame(id)
   }, [feedItems, live])
 
+  /* 进入会话：视图默认聚焦到最新一条。
+     触发时机落在「消息列表 ajax 回读到位」之后（见 reloadSession 置的 pendingBottomRef），
+     这里在浏览器绘制前消费它——用 layout effect 而非 effect，落底先于首帧，免得先闪一下顶部再跳 */
+  useLayoutEffect(() => {
+    if (!pendingBottomRef.current) return
+    pendingBottomRef.current = false
+    /* 会话一换就把「贴底」姿态复位，顺着落底一起摆正 */
+    atBottomRef.current = true
+    setAtBottom(true)
+    /* 空会话没有可聚焦的最新消息；等第一条发言（live/optimisticUser）出现时再落底 */
+    if (messages.length === 0 && !live && !optimisticUser) return
+    scrollToBottom()
+  }, [messages, live, optimisticUser, scrollToBottom])
+
   return (
     /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌。
        容器交给 Card：描边环 / 面板底随主题（内部还是左目录 + 右圆桌的横排章法）。
@@ -885,9 +933,19 @@ function RoundtableBoard({
               <button
                 type="button"
                 onClick={scrollToBottom}
-                className="ui-btn ui-btn--outline px-3 py-1 text-xs shadow-lg"
+                title="回到最新"
+                aria-label="回到最新"
+                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-black text-white shadow-lg transition hover:bg-black/80"
               >
-                ↓ 回到最新
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 5v14m0 0-6-6m6 6 6-6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </button>
             </div>
           )}

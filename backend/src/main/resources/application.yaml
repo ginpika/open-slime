@@ -60,10 +60,52 @@ minis:
     rerank-candidate: 20                              # RAG 精排候选池：RRF 后送 rerank 的前 N 条
   context:                                            # 上下文平面（STEP 2）：主动注入 + 贴临界裁历史
     inject-knowledge: ${CONTEXT_INJECT_KNOWLEDGE:false}  # 每轮按用户输入先召回知识库注入 system（默认关）
-    inject-memory: ${CONTEXT_INJECT_MEMORY:false}        # 每轮按用户输入先召回相关记忆注入 system（默认关）
+    inject-memory: ${CONTEXT_INJECT_MEMORY:true}         # 每轮按用户输入先召回相关记忆条目注入 system（默认开）
     compress-history: ${CONTEXT_COMPRESS_HISTORY:true}   # 逼近窗口时才降级：先丢最早的轮次，仍超再截断
     reserve-output-tokens: ${CONTEXT_RESERVE_OUTPUT_TOKENS:8192} # 给模型输出留的 token（输入输出共用窗口）
     compress-keep-turns: ${CONTEXT_COMPRESS_KEEP_TURNS:2} # 降级时至少保留最近几轮原文
+  memory:                                             # 记忆体系 v2（STEP M1-M5）：条目提炼 / 巩固 / 注入
+    enabled: ${MEMORY_ENABLED:true}                   # 总开关：关时提炼 / 巩固 / 条目召回一律短路（默认开）
+    extract-model: ${MEMORY_EXTRACT_MODEL:}           # 提炼与巩固用模型（llm_model.id）；空 = 沿用聊天默认
+    top-k: ${MEMORY_TOP_K:6}                          # 默认注入的条目上限
+    min-score: ${MEMORY_MIN_SCORE:0.35}               # 相关性门控阈值：低于它不注入
+    noise-min-chars: ${MEMORY_NOISE_MIN_CHARS:6}      # 信息量门槛：短于此且不含「记住」的输入不作素材
+    batch-turns: ${MEMORY_BATCH_TURNS:4}              # 攒批：同一会话攒够这么多轮就合并提炼一次（降调用次数）
+    idle-ms: ${MEMORY_IDLE_MS:300000}                 # 空闲阈值（毫秒）：会话静默这么久后合并提炼一次
+    episode-max: ${MEMORY_EPISODE_MAX:50}             # 情景层（episode）保留条数上限
+    body-max-chars: ${MEMORY_BODY_MAX_CHARS:1200}     # 单条记忆正文长度上限（超出截断，正本可回读）
+    semantic-consolidate: ${MEMORY_SEMANTIC_CONSOLIDATE:false} # 语义级巩固（P4）：同域新值取代旧值，需一次 LLM，默认关
+    semantic-max-items: ${MEMORY_SEMANTIC_MAX_ITEMS:40}        # 语义巩固单轮扫描条目上限（控成本）
+    consolidate-interval-ms: ${MEMORY_CONSOLIDATE_INTERVAL_MS:3600000} # 巩固扫描周期（毫秒）
+    budget:                                            # 注入 token 预算（memory-v6 §8.3）：按层分桶
+      total: ${MEMORY_BUDGET_TOTAL:1600}
+      shared: ${MEMORY_BUDGET_SHARED:400}              # L1 共享权威（画像 / 项目事实 / 全局规则）
+      agent: ${MEMORY_BUDGET_AGENT:300}                # L2 Agent 私有
+      task: ${MEMORY_BUDGET_TASK:300}                  # L3 任务 / 工作集
+      publish: ${MEMORY_BUDGET_PUBLISH:200}            # L4 发布（交接 / 知识）
+      episode: ${MEMORY_BUDGET_EPISODE:200}
+    work:                                              # 工作集（memory-v6 §13）：工作状态与长期记忆分离
+      ttl-ms: ${MEMORY_WORK_TTL_MS:604800000}          # 工作项 TTL（到期不再注入）
+      distill-on-close: ${MEMORY_WORK_DISTILL:true}    # 会话收尾自动蒸馏进长期记忆
+    weights:                                           # 召回权重（memory-v6 §8.2）：余弦 × 层 × 域 × 证据
+      layer:
+        L1: 1.20
+        L2: 1.00
+        L3: 0.85
+        L4: 1.05
+      domain:
+        USER_PROFILE: 1.15
+        PROJECT: 1.05
+        AGENT: 1.00
+        TASK_EPISODIC: 0.80
+      evidence:
+        explicit: 1.10
+        repeated: 1.00
+        inferred: 0.90
+    promote:                                           # 提升层（memory-v6 §9.3）：L2 → L4 发布候选
+      auto: ${MEMORY_PROMOTE_AUTO:false}               # 默认只产候选（发布是显式动作，见 I7）
+      min-confidence: ${MEMORY_PROMOTE_MIN_CONFIDENCE:0.8}
+      max-per-scan: ${MEMORY_PROMOTE_MAX_PER_SCAN:50}
   heartbeat:                                          # 心跳后台（逐 Agent 各有一套：开关与节拍存在各自那行 heartbeat）
     enabled: ${SUBCONSCIOUS_ENABLED:false}            # 保留字段（心跳改为逐 Agent 后不再用它作全局开关）
     tick-ms: ${SUBCONSCIOUS_TICK_MS:60000}            # 播种某 Agent 心跳行时的默认节拍（毫秒）

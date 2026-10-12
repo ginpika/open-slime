@@ -3,6 +3,7 @@ package cc.ginpika.minis.agent.chat;
 import cc.ginpika.minis.ai.knowledge.ingest.KnowledgeToolbox;
 import cc.ginpika.minis.ai.terminal.TerminalService;
 import cc.ginpika.minis.ai.llm.OpenAiChatClient;
+import cc.ginpika.minis.ai.memory.MemoryIngest;
 import cc.ginpika.minis.ai.memory.MemoryWriter;
 import cc.ginpika.minis.agent.chat.ChatService.ChatCancelledException;
 import cc.ginpika.minis.agent.chat.ChatService.StreamSink;
@@ -12,10 +13,17 @@ import cc.ginpika.minis.agent.context.ContextRequest;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.member.AgentPromptService;
 import cc.ginpika.minis.agent.runtime.AgentRuntime;
+import cc.ginpika.minis.agent.runtime.TaskCheckpointService;
 import cc.ginpika.minis.agent.runtime.ToolExecutionRecorder;
 import cc.ginpika.minis.ai.core.AgentScope;
+import cc.ginpika.minis.ai.core.MemoryIdentity;
+import cc.ginpika.minis.ai.core.MemoryScopeCtx;
+import cc.ginpika.minis.ai.memory.MemoryStage;
+import cc.ginpika.minis.ai.memory.WorkingSetService;
+import cc.ginpika.minis.config.MemoryProps;
 import cc.ginpika.minis.ai.core.prompt.PromptManager;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
+import cc.ginpika.minis.ai.core.MemoryExec;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
 import cc.ginpika.minis.ai.core.tool.heartbeat.CreatePlanTool;
@@ -31,6 +39,7 @@ import cc.ginpika.minis.agent.chat.turn.TurnTrigger;
 import cc.ginpika.minis.config.ContextProps;
 import cc.ginpika.minis.config.ModelTarget;
 import cc.ginpika.minis.config.SettingsService;
+import cc.ginpika.minis.project.ProjectStore;
 import cc.ginpika.minis.stats.TokenUsageService;
 import cc.ginpika.minis.agent.chat.store.ChatMessageStore;
 import cc.ginpika.minis.agent.chat.store.ChatMessageStore.MessageRow;
@@ -125,6 +134,12 @@ public class ChatTurnRunner implements ChatExecution {
     /** 命令行终端：多智能体那条流要按成员绑定的工作空间收窄授权，故与 tools 一样对子类放开 */
     protected final TerminalService terminal;
     private final MemoryWriter memory;
+    /** 记忆攒批缓冲（STEP M2）：轮次收尾时把本轮对话 push 进缓冲，攒够 / 空闲后合并提炼（异步、失败隔离） */
+    private final MemoryIngest memoryIngest;
+    /** 项目（memory-v5）：会话所属项目决定记忆归属与 role-play 隔离（narrative → 不升画像） */
+    private final ProjectStore projects;
+    /** 会话自动命名（§13）：首条输入后异步生成标题（异步、失败降级） */
+    private final SessionTitleService sessionTitles;
     /** 上下文平面配置：逼近窗口时裁历史的开关，以及给模型输出预留的 token（输入输出共用窗口） */
     private final ContextProps contextProps;
     /** Turn 正本：提问与回答的显式配对，并挂上会话任务（见 {@link TurnStore}） */
@@ -143,6 +158,11 @@ public class ChatTurnRunner implements ChatExecution {
     private final SessionEventBus events;
     /** 在途生成锁（STEP 4）：key=会话 id；同一会话同一时刻只允许一次生成（见 {@link #runChat}） */
     private final Set<String> inflight = ConcurrentHashMap.newKeySet();
+    /** 工作集（memory-v6 §13）：工作状态的读写点——轮末落检查点、收尾蒸馏 */
+    private final WorkingSetService workingSet;
+    /** 任务检查点（工作状态的一部分）：把「做到哪一步」落到 task.memory_checkpoint（修 D11） */
+    private final TaskCheckpointService taskCheckpoints;
+    private final MemoryProps memoryProps;
 
     /* 下面这些 public 方法与几个常量同为一组「可替换点」（见 {@link ChatExecution}）：首页对话用
        本类自己的实现；多智能体那条流实现同一个接口、换成自己的落点与组装方式，但整条生成过程
@@ -162,10 +182,14 @@ public class ChatTurnRunner implements ChatExecution {
                           ObjectMapper om, PromptManager prompts, ToolManager tools,
                           KnowledgeToolbox toolbox, HeartbeatTool heartbeat,
                           SubagentTool subagent, TerminalService terminal, MemoryWriter memory,
+                          MemoryIngest memoryIngest, ProjectStore projects,
+                          SessionTitleService sessionTitles,
                           ChatTaskRunner chatTasks, ContextBuilder context, ContextProps contextProps,
                           TurnStore turnStore, History history,
                           ToolValidator validator, TodoService todo, SessionEventBus events,
-                          ToolExecutionRecorder toolExecs, AgentPromptService peerPrompts) {
+                          ToolExecutionRecorder toolExecs, AgentPromptService peerPrompts,
+                          WorkingSetService workingSet, TaskCheckpointService taskCheckpoints,
+                          MemoryProps memoryProps) {
         this.runtime = runtime;
         this.toolExecs = toolExecs;
         this.settings = settings;
@@ -180,6 +204,9 @@ public class ChatTurnRunner implements ChatExecution {
         this.subagent = subagent;
         this.terminal = terminal;
         this.memory = memory;
+        this.memoryIngest = memoryIngest;
+        this.projects = projects;
+        this.sessionTitles = sessionTitles;
         this.chatTasks = chatTasks;
         this.context = context;
         this.contextProps = contextProps;
@@ -188,6 +215,9 @@ public class ChatTurnRunner implements ChatExecution {
         this.validator = validator;
         this.todo = todo;
         this.events = events;
+        this.workingSet = workingSet;
+        this.taskCheckpoints = taskCheckpoints;
+        this.memoryProps = memoryProps;
     }
 
     /** 发问：sessionId 缺省 → 最近会话（无则先建）；modelId/promptId 缺省 → 设置页默认项；
@@ -274,6 +304,10 @@ public class ChatTurnRunner implements ChatExecution {
             if (exec.singleFlight()) {
                 inflight.remove(row.id());
             }
+            /* 生成收尾（成功 / 取消 / 异常都走这里）：把该会话遗留的「进行中」收敛为「未开始」，
+               于是清单不会因中断 / 超限长期卡在 in_progress（见 TodoService#settle）。
+               归属口径与写入侧一致：圆桌在外层设了成员作用域就用它，否则按会话绑定的 Agent */
+            todo.settle(row.id(), AgentScope.get() != null ? AgentScope.get() : agentOf(row));
         }
     }
 
@@ -314,13 +348,22 @@ public class ChatTurnRunner implements ChatExecution {
                         taskId > 0 ? taskId : null)
                 : 0L;
 
+        /* memory-v6 §4.2：本轮的记忆执行作用域——谁 × 哪个项目 / 会话 / 任务 × 身份上下文。
+           在组装上下文（requestBody）之前就圈定：记忆注入与工具面读的是同一份作用域，
+           并带上 turnId 供快照回放（§4.3） */
+        boolean narrative = row.projectId() != null && !row.projectId().isBlank()
+                && projects.isNarrative(row.projectId());
+        MemoryExec memScope = MemoryExec.chat(taskAgentId, row.projectId(), row.id(),
+                taskId > 0 ? taskId : null, turnId > 0 ? Long.toString(turnId) : null,
+                MemoryIdentity.ofNarrative(narrative));
+
         /* 工具面已全量常驻（不再按能力域裁剪）：这里不再需要「本次授权」这份判断 */
 
         /* 请求体：system + 全量历史（含刚落库的本次 user）+ 知识库工具（向量检索 + 图谱查询）；
            组装规则与「查看原始上下文」共用同一份（见 requestBody）。循环由 Agent 内核跑（见下），
            本类只负责备齐素材、把过程接到流式与留痕上、把结果落库 */
-        ObjectNode body = exec.requestBody(row, target, promptId,
-                settings.chatContextWindow(modelId));
+        ObjectNode body = MemoryScopeCtx.run(memScope, () ->
+                exec.requestBody(row, target, promptId, settings.chatContextWindow(modelId)));
         ArrayNode msgs = (ArrayNode) body.get("messages");
 
         /* 累计态交给内核就地写入（思考链跨轮拼接、分段、工具往返、原始返回）：本类持有，
@@ -427,8 +470,13 @@ public class ChatTurnRunner implements ChatExecution {
                     }
                 },
                 maxRounds, listener, state);
+        /* memory-v6 §4.4：开启轮内写缓冲——本轮工具内的记忆写入（如 publish_knowledge）推到轮末提交，
+           本轮注入仍用轮首快照；轮末在 finally 统一提交（被取消也提交：已经发生的发布不该丢） */
+        long turnStart = System.currentTimeMillis();
+        MemoryStage.begin();
         try {
-            result = AgentScope.run(scopeAgent, () -> runtime.run(spec));
+            result = MemoryScopeCtx.run(memScope,
+                    () -> AgentScope.run(scopeAgent, () -> runtime.run(spec)));
         } catch (ChatCancelledException cancelled) {
             /* 用户停止：已有部分正文则以部分回答落库（思维链与工具轮留痕一并带上），
                刷新后对话完整保留；尚无任何正文则原样上抛，由 Controller 静默收尾 */
@@ -452,7 +500,7 @@ public class ChatTurnRunner implements ChatExecution {
                     ChatTraceCodec.writeRounds(om, state.toolRounds()));
             persistCalls(exec, partialReplyId, state);
             turnStore.complete(turnId, partialReplyId);
-            exec.touchSession(row, abbreviate(input));
+            exec.touchSession(row, null);
             return new ChatDtos.ChatReply(row.id(), userMsgId, partial, state.lastRawResponse(),
                     true, null);
         } catch (RuntimeException e) {
@@ -460,6 +508,8 @@ public class ChatTurnRunner implements ChatExecution {
             chatTasks.failed(taskId);
             throw e;
         } finally {
+            /* 轮末提交轮内写缓冲（memory-v6 §4.4）：这一轮发布的记忆到此才落库，下一轮才可见 */
+            MemoryScopeCtx.runVoid(memScope, MemoryStage::commit);
             /* 注销自己那面停止标志：同会话别的在跑流不受影响；集合空了连 key 一起摘掉，
                免得会话表随使用无界增长 */
             if (stopFlag != null) {
@@ -494,8 +544,36 @@ public class ChatTurnRunner implements ChatExecution {
                 ChatTraceCodec.writeRounds(om, state.toolRounds()));
         persistCalls(exec, replyId, state);
         turnStore.complete(turnId, replyId);
-        exec.touchSession(row, abbreviate(input));
+        exec.touchSession(row, null);
         chatTasks.done(taskId, result.content());
+        /* 记忆 v2（STEP M2）：首页对话轮次收尾，把本轮对话 push 进攒批缓冲
+           （攒够 / 空闲后合并提炼；异步、失败隔离；临时会话不进记忆） */
+        if (exec.turnTracked() && !sessions.memoryOff(row.id())) {
+            /* memory-v6 §7.3：写侧作用域与本轮圈定的读侧是同一份（谁 × 项目 × 会话 × 身份），
+               不再各构造一份；创作类项目身份为 FICTION → 写侧 source_kind=fiction 且永不升画像 */
+            memoryIngest.tap(row.id(), memScope, input, result.content(),
+                    cc.ginpika.minis.ai.memory.MemoryEvidence.ref("chat_message", userMsgId, input));
+            /* memory-v6 §4.4 / D11：把「工作到哪一步」落成任务检查点（工作状态，不是长期记忆）；
+               同时收尾蒸馏更早的工作集——本轮刚记的临时结论留到下一次收尾再整理（§13、T12） */
+            if (taskId > 0) {
+                try {
+                    taskCheckpoints.save(taskId, workingSet.checkpointDigest(memScope));
+                    // 普通 Turn 完成仅保存检查点；蒸馏由明确的会话收尾操作触发。
+                } catch (RuntimeException e) {
+                    log.debug("工作集收尾失败（不影响主流程）：{}", e.getMessage());
+                }
+            }
+        }
+        /* 会话自动命名（§13）：标题仍空时，用首条输入异步生成概括标题
+           （失败降级为「首条输入截断」兜底，且不覆盖手动命名）。
+           只传用户首条提问：命名用固定提示词，不吃会话 / 成员的「系统提示词」，
+           也不喂助手回复——避免用户提示词越界把标题带偏 */
+        if (exec.turnTracked()) {
+            String currentTitle = sessions.findById(row.id()).map(HubRow::title).orElse(null);
+            if (currentTitle == null || currentTitle.isBlank()) {
+                sessionTitles.generateAsync(row.id(), input, abbreviate(input));
+            }
+        }
         /* 答完了：推一条 answered 事件——别的标签页也能即时收到「这个会话答完了」（取代原来的轮询）。
            只对「提问 → 回答」成对的流推（圆桌的成员发言不推，见 turnTracked）：它的节拍是逐位发言，
            推「答完了」既不对味、也会让圆桌页收到多余的会话通知。
@@ -617,15 +695,20 @@ public class ChatTurnRunner implements ChatExecution {
            就没了），也会让提示前缀缓存永远命不中。执行权仍由各工具自己的授权把关
            （如终端的目标启用 / 绑定名单）。 */
         ArrayNode toolSchemas = tools.toolsOf(ToolSurface.CHAT);
+        /* 身份上下文（memory-v6 §11）：创作类项目 → FICTION（写侧永不入画像；读侧仍注入真实画像但标注） */
+        boolean narrative = row.projectId() != null && !row.projectId().isBlank()
+                && projects.isNarrative(row.projectId());
         return new ContextRequest(target.model(), systemBase, row.id(),
+                row.agentId(), row.projectId(), null,
                 row.contextTrace(), userQuery,
-                historyBudget(contextWindow, systemBase, toolSchemas), toolSchemas);
+                historyBudget(contextWindow, systemBase, toolSchemas), toolSchemas,
+                ContextRequest.Surface.CHAT, MemoryIdentity.ofNarrative(narrative));
     }
 
-    /** 本会话跟哪位 Agent 对话：{@code agent_id} 为空 / 'builtin' = 内置 Agent（用全局提示词） */
+    /** 本会话跟哪位 Agent 对话：{@code agent_id} 为空 / 'builtin' = 内置 Agent（用全局提示词）。
+     *  口径统一在 {@link ChatSessionService#ownerOf}——清单等「按会话归属」的读取侧同此，不得各写一份 */
     private static String agentOf(HubRow row) {
-        String id = row.agentId();
-        return (id == null || id.isBlank()) ? AgentDirectory.BUILTIN_ID : id;
+        return ChatSessionService.ownerOf(row.agentId());
     }
 
     /**
@@ -821,7 +904,9 @@ public class ChatTurnRunner implements ChatExecution {
     @Override
     public long recordUserInput(HubRow row, String input) {
         long id = messages.insert(row.id(), "user", input, null, null, null, null, null);
-        memory.onChatMessage(id, "user", row.title(), input);
+        if (!sessions.memoryOff(row.id())) {
+            memory.onChatMessage(eventScope(row), id, "user", row.title(), input);
+        }
         return id;
     }
 
@@ -831,8 +916,15 @@ public class ChatTurnRunner implements ChatExecution {
                             String rounds) {
         long id = messages.insert(row.id(), "assistant", content, reasoning, trace, rounds,
                 null, null);
-        memory.onChatMessage(id, "assistant", row.title(), content);
+        if (!sessions.memoryOff(row.id())) {
+            memory.onChatMessage(eventScope(row), id, "assistant", row.title(), content);
+        }
         return id;
+    }
+
+    private MemoryExec eventScope(HubRow row) {
+        return MemoryExec.chat(agentOf(row), row.projectId(), row.id(), null,
+                row.projectId() != null && projects.isNarrative(row.projectId()));
     }
 
     /** 会话有动静（新消息落库后）：刷新时间戳并按需回填标题 */

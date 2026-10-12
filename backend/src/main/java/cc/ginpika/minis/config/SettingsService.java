@@ -6,7 +6,7 @@ import cc.ginpika.minis.ai.llm.OpenAiChatClient;
 import cc.ginpika.minis.ai.knowledge.anchor.AnchorSeeder;
 import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
 import cc.ginpika.minis.ai.knowledge.store.GraphStore;
-import cc.ginpika.minis.ai.memory.store.MemoryEventStore;
+import cc.ginpika.minis.ai.memory.MemoryMaintenanceService;
 import cc.ginpika.minis.config.dto.SettingsDtos;
 import cc.ginpika.minis.stats.TokenUsageService;
 import cc.ginpika.minis.stats.client.ModelMetaClient;
@@ -79,8 +79,8 @@ public class SettingsService {
     /* 知识库存储：设置页「重置知识库」直接清空 chunk 与图谱（含相关向量） */
     private final ChunkStore chunkStore;
     private final GraphStore graphStore;
-    /* 时序记忆（memory_event + 向量投影）：一并清除，免残留「说过/做过」 */
-    private final MemoryEventStore memoryStore;
+    /* 记忆子系统维护：重置知识库时连带清除<b>全部</b>记忆落点（事件 / 条目 / 候选 / 共享 / 墓碑 / 知识边 / 水位） */
+    private final MemoryMaintenanceService memoryMaintenance;
     /* 重置会连带删掉图谱锚点，清空后须补种（见 resetKnowledgeBase）。
        @Lazy 断环：AnchorSeeder 的依赖链会绕回本服务，硬注入即构造成环（本类已有同款 @Lazy 惯例）。 */
     private final AnchorSeeder anchorSeeder;
@@ -88,7 +88,7 @@ public class SettingsService {
     public SettingsService(LlmProps props, SettingsStore store, ModelMetaClient meta,
                            @Lazy OpenAiChatClient chat, @Lazy EmbeddingClient embedding,
                            @Lazy RerankClient rerank, ChunkStore chunkStore, GraphStore graphStore,
-                           MemoryEventStore memoryStore, @Lazy AnchorSeeder anchorSeeder) {
+                           MemoryMaintenanceService memoryMaintenance, @Lazy AnchorSeeder anchorSeeder) {
         this.props = props;
         this.store = store;
         this.meta = meta;
@@ -97,7 +97,7 @@ public class SettingsService {
         this.rerank = rerank;
         this.chunkStore = chunkStore;
         this.graphStore = graphStore;
-        this.memoryStore = memoryStore;
+        this.memoryMaintenance = memoryMaintenance;
         this.anchorSeeder = anchorSeeder;
     }
 
@@ -370,7 +370,8 @@ public class SettingsService {
     /**
      * 重置知识库（设置页「危险操作」）：清空全部 chunk（含双 FTS 索引、chunk_extraction 与
      * chunk_embedding）、知识图谱的全部实体/关系（含 chunk_entity 关联与 entity_embedding），
-     * 以及全部时序记忆（memory_event 及其向量投影 memory_event_embedding），不可恢复。
+     * 以及<b>整个记忆子系统</b>——时序事件（memory_event）、记忆条目（memory_item）、
+     * 画像候选、共享、撤销墓碑、知识边与提炼水位（见 {@link MemoryMaintenanceService}），不可恢复。
      * documents 元数据不在删除范围。整个清空在同一事务内完成。
      *
      * <p>清空会连带删掉图谱锚点（预置「用户」等），故随后立即补种一次——锚点由 clearAll 一并
@@ -380,9 +381,10 @@ public class SettingsService {
     public SettingsDtos.ResetResult resetKnowledgeBase() {
         GraphStore.Cleared graph = graphStore.clearAll();
         int chunks = chunkStore.clearAll();
-        int memories = memoryStore.clearAll();
+        MemoryMaintenanceService.Cleared mem = memoryMaintenance.clearAll();
         anchorSeeder.seed();
-        return new SettingsDtos.ResetResult(chunks, graph.entities(), graph.relations(), memories);
+        return new SettingsDtos.ResetResult(chunks, graph.entities(), graph.relations(), mem.entries(),
+                mem.events(), mem.items(), mem.candidates(), mem.shares());
     }
 
     // ---------- 运行时解析 ----------

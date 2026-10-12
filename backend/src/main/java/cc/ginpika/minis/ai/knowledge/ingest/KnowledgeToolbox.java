@@ -20,12 +20,28 @@ import cc.ginpika.minis.ai.core.tool.graph.SearchGraphEntitiesTool;
 import cc.ginpika.minis.ai.core.tool.graph.UpsertEdgeTool;
 import cc.ginpika.minis.ai.core.tool.graph.UpsertNodeTool;
 import cc.ginpika.minis.ai.knowledge.anchor.GraphAnchors;
+import cc.ginpika.minis.ai.core.MemoryExec;
+import cc.ginpika.minis.ai.core.tool.memory.ForgetMemoryTool;
+import cc.ginpika.minis.ai.core.tool.memory.NoteWorkingTool;
+import cc.ginpika.minis.ai.core.tool.memory.PublishKnowledgeTool;
+import cc.ginpika.minis.ai.core.tool.memory.UpdateMemoryTool;
 import cc.ginpika.minis.ai.knowledge.recall.RagRecallRecorder;
 import cc.ginpika.minis.ai.knowledge.retrieval.FastSearchService;
 import cc.ginpika.minis.ai.knowledge.retrieval.GraphExplorer;
 import cc.ginpika.minis.ai.knowledge.retrieval.GraphPathFinder;
 import cc.ginpika.minis.ai.llm.EmbeddingClient;
+import cc.ginpika.minis.ai.memory.MemoryEditService;
 import cc.ginpika.minis.ai.memory.MemoryEmbeddingWriter;
+import cc.ginpika.minis.ai.memory.MemoryItemEmbeddingWriter;
+import cc.ginpika.minis.ai.memory.MemoryPolicy;
+import cc.ginpika.minis.ai.memory.MemoryPublisher;
+import cc.ginpika.minis.ai.memory.MemoryStage;
+import cc.ginpika.minis.ai.memory.MemoryVocabulary;
+import cc.ginpika.minis.ai.memory.ScopeGuard;
+import cc.ginpika.minis.ai.memory.WorkingSetService;
+import cc.ginpika.minis.ai.memory.recall.MemoryItemRecall;
+import cc.ginpika.minis.ai.memory.store.MemoryItemStore;
+import cc.ginpika.minis.config.MemoryProps;
 import cc.ginpika.minis.ai.memory.recall.MemoryRecall;
 import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
 import cc.ginpika.minis.ai.knowledge.store.DocumentStore;
@@ -95,14 +111,28 @@ public class KnowledgeToolbox {
     private final ToolManager tools;
     /* 记忆域两件套（ai.memory 与本包平级）：所有工具面的默认分发都汇到这里，就近代发 */
     private final MemoryRecall memoryRecall;
+    private final MemoryItemRecall memoryItems;
     private final MemoryEmbeddingWriter memoryVectors;
+    /* 记忆写入侧（memory-v6 §9.2）：Agent 主动发布（L4）——落条目 + 共享授权，走轮内缓冲 */
+    private final MemoryItemStore memoryItemStore;
+    private final MemoryItemEmbeddingWriter memoryItemVectors;
+    private final MemoryPublisher memoryPublisher;
+    /** 工作集（memory-v6 §13）：L3 工作状态的写入点（note_working 工具） */
+    private final WorkingSetService workingSet;
+    /** 记忆改写 / 遗忘（memory-v6 §9.1）：update_memory / forget_memory 的执行落点（权限边界在它里面） */
+    private final MemoryEditService memoryEdit;
+    private final MemoryProps memoryProps;
     /* RAG 召回留痕：三路召回工具调用记一行（查询 + 回给模型的原始数据），供潜意识页回看效果 */
     private final RagRecallRecorder ragRecalls;
 
     public KnowledgeToolbox(FastSearchService fast, GraphStore graph, GraphPathFinder pathFinder,
                             ChunkStore chunkStore, DocumentStore documents, EmbeddingClient embedding,
                             ToolManager tools, MemoryRecall memoryRecall,
-                            MemoryEmbeddingWriter memoryVectors, RagRecallRecorder ragRecalls) {
+                            MemoryItemRecall memoryItems,
+                            MemoryEmbeddingWriter memoryVectors, RagRecallRecorder ragRecalls,
+                            MemoryItemStore memoryItemStore, MemoryItemEmbeddingWriter memoryItemVectors,
+                            MemoryPublisher memoryPublisher, WorkingSetService workingSet,
+                            MemoryEditService memoryEdit, MemoryProps memoryProps) {
         this.fast = fast;
         this.graph = graph;
         this.pathFinder = pathFinder;
@@ -111,8 +141,15 @@ public class KnowledgeToolbox {
         this.embedding = embedding;
         this.tools = tools;
         this.memoryRecall = memoryRecall;
+        this.memoryItems = memoryItems;
         this.memoryVectors = memoryVectors;
         this.ragRecalls = ragRecalls;
+        this.memoryItemStore = memoryItemStore;
+        this.memoryItemVectors = memoryItemVectors;
+        this.memoryPublisher = memoryPublisher;
+        this.workingSet = workingSet;
+        this.memoryEdit = memoryEdit;
+        this.memoryProps = memoryProps;
     }
 
     /** 执行一次 OpenAI 风格的工具调用节点；source 标明来自哪条流（chat / multiagent / heartbeat / plan / agent） */
@@ -140,6 +177,11 @@ public class KnowledgeToolbox {
             case SearchDocumentsTool.NAME -> searchDocumentsTool(args);
             case ReadDocumentTool.NAME -> readDocumentTool(args);
             case RecallMemoryTool.NAME -> recallMemoryTool(args);
+            case PublishKnowledgeTool.NAME -> publishKnowledgeTool(args);
+            case "manage_handoff" -> manageHandoff(args);
+            case NoteWorkingTool.NAME -> noteWorkingTool(args);
+            case UpdateMemoryTool.NAME -> updateMemoryTool(args);
+            case ForgetMemoryTool.NAME -> forgetMemoryTool(args);
             case BackfillMemoryVectorsTool.NAME -> backfillMemoryVectorsTool(args);
             case NowTool.NAME -> nowText();
             default -> "未知工具: " + name;
@@ -548,12 +590,166 @@ public class KnowledgeToolbox {
         if (query.isEmpty()) {
             return "参数缺少 query";
         }
+        /* mode=event：下钻原始事件流（证据层，见 MemoryRecall）；缺省读记忆条目（默认面） */
+        if ("event".equalsIgnoreCase(args.path("mode").asText("").trim())) {
+            return recallMemoryEvents(args, query);
+        }
+        String scope = blankToNull(args.path("scope").asText(null));
+        int limit = clamp(args.path("limit").asInt(8), 1, 30);
+        /* memory-v6 §8.6：工具面召回必须走作用域谓词——作用域取执行入口圈定的 MemoryScopeCtx，
+           没有作用域时退化为「只读正式画像」，绝不退化为读全量（v5 的 G2 类漏洞修复） */
+        MemoryExec exec = ScopeGuard.resolveRead(null);
+        String text = MemoryItemRecall.hitsText(memoryItems.recall(exec, query, scope, limit));
+        return text.isEmpty() ? "（没有相关的记忆）" : text;
+    }
+
+    /**
+     * note_working（memory-v6 §13 · L3）：把**临时工作状态**记进工作集，而不是长期记忆。
+     *
+     * <p>这是「三概念分离」在工具面的落点：临时的结论留在工作状态里，本轮之后照常注入，
+     * 会话收尾由 {@link WorkingSetService#distill} 决定有没有值得长期留的部分。
+     */
+    private String noteWorkingTool(JsonNode args) {
+        String body = args.path("body").asText("").trim();
+        if (body.isEmpty()) {
+            return "参数缺少 body";
+        }
+        String kind = args.path("kind").asText("").trim();
+        String title = args.path("title").asText("").trim();
+        MemoryExec exec = ScopeGuard.resolve(null);
+        if (exec == null) {
+            return "当前执行没有记忆作用域，无法记录工作状态（memory-v6 I1）";
+        }
+        String[] out = new String[1];
+        boolean deferred = MemoryStage.defer(() -> {
+            long id = workingSet.record(exec, kind, title, body, null, null);
+            out[0] = id > 0
+                    ? "已记入本会话工作集（work=" + id + "）"
+                    : "未记录：当前执行没有会话 / 任务绑定（工作状态必须可归属）";
+        }, memoryProps);
+        if (out[0] != null) {
+            return out[0];
+        }
+        return deferred ? "已记入本会话工作集（本轮末提交，下一轮起可见）" : "已记入本会话工作集";
+    }
+
+    /**
+     * update_memory（memory-v6 §9.1）：改写一条**自己有权**的记忆。
+     *
+     * <p>权限边界与「按描述定位命中多条时不猜」都在 {@link MemoryEditService} 里；写入同样走轮内缓冲，
+     * 于是改写不影响本轮注入、下一轮才生效。
+     */
+    private String updateMemoryTool(JsonNode args) {
+        String body = args.path("new_content").asText("").trim();
+        Long itemId = args.path("item_id").isNumber() ? args.path("item_id").asLong() : null;
+        String match = blankToNull(args.path("match").asText(null));
+        String title = blankToNull(args.path("title").asText(null));
+        MemoryExec exec = ScopeGuard.resolve(null);
+        if (exec == null) {
+            return "当前执行没有记忆作用域，无法改写（memory-v6 I1）";
+        }
+        String[] out = new String[1];
+        boolean deferred = MemoryStage.defer(
+                () -> out[0] = memoryEdit.update(exec, itemId, match, title, body).message(),
+                memoryProps);
+        return out[0] != null ? out[0] : (deferred ? "已登记改写（本轮末提交，下一轮生效）" : "已处理");
+    }
+
+    /** forget_memory（memory-v6 §12.5 · Agent 侧）：撤销 + 墓碑，同样受「只能忘自己有权条目」约束 */
+    private String forgetMemoryTool(JsonNode args) {
+        Long itemId = args.path("item_id").isNumber() ? args.path("item_id").asLong() : null;
+        String match = blankToNull(args.path("match").asText(null));
+        String reason = blankToNull(args.path("reason").asText(null));
+        MemoryExec exec = ScopeGuard.resolve(null);
+        if (exec == null) {
+            return "当前执行没有记忆作用域，无法遗忘（memory-v6 I1）";
+        }
+        String[] out = new String[1];
+        boolean deferred = MemoryStage.defer(
+                () -> out[0] = memoryEdit.forget(exec, itemId, match, reason).message(),
+                memoryProps);
+        return out[0] != null ? out[0] : (deferred ? "已登记遗忘（本轮末提交）" : "已处理");
+    }
+
+    /**
+     * publish_knowledge（memory-v6 §9.2 · L4）：把一条结论发布出去。
+     *
+     * <p>落点两步：① 新建一条 {@code layer=L4} 的条目（归属由当前作用域派生：有项目归项目，否则归本 Agent）；
+     * ② 写一条共享授权（发布动作即是来源凭据，满足 I6）。带 {@code handoff=true} 时再记一条
+     * {@code offered} 交接，对方在收件箱里 accept / done 跟进。
+     *
+     * <p>写入走 {@link MemoryStage}：本轮发布不影响本轮注入，下一轮才被对方发现（§4.4）。
+     */
+    private String publishKnowledgeTool(JsonNode args) {
+        String content = args.path("content").asText("").trim();
+        if (content.isEmpty()) {
+            return "参数缺少 content";
+        }
+        String toKind = args.path("to_kind").asText("").trim().toLowerCase();
+        switch (toKind) {
+            case "agent", "project", "session", "user" -> {
+            }
+            default -> {
+                return "参数 to_kind 非法（agent|project|session|user）：" + toKind;
+            }
+        }
+        MemoryExec exec = ScopeGuard.resolve(null);
+        if (exec == null) {
+            return "当前执行没有记忆作用域，无法发布（memory-v6 I1）";
+        }
+        String toRef = publishTarget(toKind, args.path("to_ref").asText("").trim(), exec);
+        if (toRef == null && !"user".equals(toKind)) {
+            return "缺少接收方：" + toKind + "（当前执行也没有可用的默认目标）";
+        }
+        String title = args.path("title").asText("").trim();
+        String note = args.path("note").asText("");
+        boolean handoff = args.path("handoff").asBoolean(false);
+        String[] result = new String[1];
+        boolean deferred = MemoryStage.defer(() -> {
+            long[] ids = memoryPublisher.publishNew(exec, content, title, toKind, toRef, note, handoff);
+            result[0] = "已发布到 " + toKind + ":" + toRef + "（share=" + ids[0] + ")";
+
+        }, memoryProps);
+        if (result[0] != null) {
+            return result[0];
+        }
+        return deferred ? "已登记发布（本轮末提交；接收方下一轮可见）：" + content
+                : "已发布：" + content;
+    }
+
+    /** 接收方缺省目标：agent=自己、project/session=当前、user=不填（全用户可见） */
+    private static String publishTarget(String toKind, String toRef, MemoryExec exec) {
+        if (toRef != null && !toRef.isBlank()) {
+            return toRef;
+        }
+        return switch (toKind) {
+            case "agent" -> exec.agentOrBuiltin();
+            case "project" -> exec.projectId();
+            case "session" -> exec.sessionId();
+            default -> null;
+        };
+    }
+
+    private String manageHandoff(JsonNode args) {
+        MemoryExec exec = ScopeGuard.resolve(null);
+        if (exec == null) { return "无记忆执行作用域"; }
+        String action = args.path("action").asText("list");
+        if ("list".equals(action)) {
+            return new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(java.util.stream.Stream.concat(memoryPublisher.inbox(exec, 50).stream(),
+                    memoryPublisher.inbox(exec, 50, "accepted").stream()).toList()).toString();
+        }
+        memoryPublisher.move(exec, args.path("handoff_id").asLong(), action);
+        return "交接状态已更新为 " + action;
+    }
+
+    /** mode=event：原始事件流召回（证据层下钻 / 审计用，见 {@link MemoryRecall}） */
+    private String recallMemoryEvents(JsonNode args, String query) {
         Long since = null;
         if (args.path("days").isNumber()) {
             since = System.currentTimeMillis()
                     - (long) (args.path("days").asDouble() * 86_400_000L);
         }
-        List<MemoryRecall.Hit> hits = memoryRecall.recall(query, since, null,
+        List<MemoryRecall.Hit> hits = memoryRecall.recall(ScopeGuard.resolveRead(null), query, since, null,
                 blankToNull(args.path("kind").asText(null)),
                 blankToNull(args.path("actor").asText(null)),
                 clamp(args.path("limit").asInt(8), 1, 30));
@@ -568,8 +764,8 @@ public class KnowledgeToolbox {
         }
         int done = memoryVectors.backfill(clamp(args.path("limit").asInt(16), 1,
                 MemoryEmbeddingWriter.BACKFILL_MAX));
-        return done == 0 ? "没有缺向量的记忆事件（或本次全部跳过）"
-                : "已补齐 " + done + " 条记忆事件的向量（模型: " + embedding.model() + "）";
+        int itemDone = memoryItemVectors.backfill(clamp(args.path("limit").asInt(16), 1, 64));
+        return "已补齐事件向量 " + done + " 条、记忆条目向量 " + itemDone + " 条";
     }
 
     /** now：当前本地日期时间（yyyy-MM-dd HH:mm:ss）——运行时素材不再注入，由模型按需现取 */

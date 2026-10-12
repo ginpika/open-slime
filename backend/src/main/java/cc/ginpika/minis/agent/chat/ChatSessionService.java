@@ -6,6 +6,7 @@ import cc.ginpika.minis.agent.chat.store.ChatMessageStore.MessageRow;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore.HubRow;
 import cc.ginpika.minis.agent.context.ChatProtocol;
+import cc.ginpika.minis.agent.member.AgentDirectory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -45,13 +46,16 @@ public class ChatSessionService {
     private final ChatMessageStore messages;
     /** 列表要带上「该会话此刻是否在生成」，供前端在答完时弹通知 */
     private final ChatLiveStore live;
+    /** 删除会话时一并清掉它的待办清单（plan-of-record），免得留下孤儿行 */
+    private final TodoService todo;
     private final ObjectMapper om;
 
     public ChatSessionService(HubSessionStore sessions, ChatMessageStore messages,
-                              ChatLiveStore live, ObjectMapper om) {
+                              ChatLiveStore live, TodoService todo, ObjectMapper om) {
         this.sessions = sessions;
         this.messages = messages;
         this.live = live;
+        this.todo = todo;
         this.om = om;
     }
 
@@ -62,11 +66,45 @@ public class ChatSessionService {
                 .toList();
     }
 
-    /** 新建一个空会话 */
+    /** 新建一个空会话（无项目：记忆归属退化为 Agent 私有） */
     public ChatDtos.NewSession create() {
+        return create(null);
+    }
+
+    /**
+     * 新建会话并绑定项目（memory-v6 §7.1 / D1 修复）：项目是记忆归属与跨项目隔离的依据——
+     * 有项目的会话，提炼出的记忆落 {@code PROJECT×L1}；无项目则落 {@code AGENT×L2}。
+     */
+    public ChatDtos.NewSession create(String projectId) {
         String hubId = UUID.randomUUID().toString();
-        sessions.insert(hubId, null);
-        return new ChatDtos.NewSession(hubId);
+        sessions.insert(hubId, null, blankToNull(projectId));
+        return new ChatDtos.NewSession(hubId, blankToNull(projectId));
+    }
+
+    /** 绑定 / 解绑会话所属项目（切换后记忆读侧立即按新作用域生效；旧项目条目不删除、只是不可见） */
+    public ChatDtos.NewSession setProject(String hubId, String projectId) {
+        sessions.findById(hubId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
+        String pid = blankToNull(projectId);
+        sessions.setProject(hubId, pid);
+        return new ChatDtos.NewSession(hubId, pid);
+    }
+
+    /**
+     * 会话对话归属 Agent：{@code agent_id} 为空 = 内置 Agent。
+     *
+     * <p>这是<b>「按会话归属」数据的唯一口径</b>：待办清单的写入侧（{@code ChatTurnRunner#agentOf}）
+     * 与读取侧（{@code ChatService#todos}）都委托本方法，两处不再各写一份 fallback——
+     * 否则会话一旦在「…」菜单绑了某位成员，写进去的清单会读不回来。
+     */
+    public static String ownerOf(String agentId) {
+        return (agentId == null || agentId.isBlank()) ? AgentDirectory.BUILTIN_ID : agentId;
+    }
+
+    /** 某会话的对话归属 Agent（读取该会话清单等按它定位）；会话不存在时回退内置 Agent */
+    public String owner(String hubId) {
+        return sessions.findById(hubId).map(r -> ownerOf(r.agentId()))
+                .orElse(AgentDirectory.BUILTIN_ID);
     }
 
     /** 更新会话配置（「…」菜单在该会话的选择）：仅更新请求中非 null 的项，返回更新后的完整配置 */
@@ -93,12 +131,13 @@ public class ChatSessionService {
                 showRounds != null ? showRounds : row.showRounds());
     }
 
-    /** 删除会话：连同其消息正本一并清除（不存在的会话返回 404） */
+    /** 删除会话：连同其消息正本与待办清单一并清除（不存在的会话返回 404） */
     @Transactional
     public ChatDtos.SessionDeleted delete(String hubId) {
         sessions.findById(hubId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
         int removed = messages.deleteBySession(hubId);
+        todo.clear(hubId);
         sessions.delete(hubId);
         return new ChatDtos.SessionDeleted(hubId, removed);
     }
@@ -145,10 +184,46 @@ public class ChatSessionService {
         return new ChatDtos.Rewind(hubId, messages.deleteFrom(hubId, target.id()));
     }
 
+    /**
+     * 分支：以某条消息为界，创建一个副本会话——把源会话到这条消息（含）为止的转录整段复制进新会话，
+     * 并继承源会话的「…」菜单配置（模型 / 提示词 / Agent / CoT / 轮数等），此后两边的走向各自独立。
+     *
+     * <p>分支点只认本会话的一条消息（user 或 assistant）；拿别的会话或系统行的 id 一律拒。
+     * 源会话本身不动（与回退相反：回退是删，分支是复制）。
+     */
+    @Transactional
+    public ChatDtos.NewSession branch(String hubId, Long messageId) {
+        HubRow src = sessions.findById(hubId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
+        if (messageId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少分支位置 messageId");
+        }
+        boolean found = messages.listBySession(hubId).stream().anyMatch(m -> messageId.equals(m.id())
+                && ("user".equals(m.role()) || "assistant".equals(m.role())));
+        if (!found) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "分支位置无效（需为本会话的一条消息）: " + messageId);
+        }
+        String newId = UUID.randomUUID().toString();
+        String base = (src.title() == null || src.title().isBlank()) ? "未命名会话" : src.title();
+        /* 分支继承项目绑定：同一工作域内的分叉不该掉出项目（记忆归属随之一致） */
+        sessions.insert(newId, base + " · 分支", src.projectId());
+        messages.copyUpTo(hubId, newId, messageId);
+        /* 继承会话级配置：模型 / 提示词 / Agent / CoT / 上下文留痕 / 轮数上限 / 轮次计数 */
+        sessions.updateConfig(newId, src.modelId(), src.promptId(), src.agentId(), src.showCot(),
+                src.contextTrace(), src.maxRounds(), src.showRounds());
+        return new ChatDtos.NewSession(newId, src.projectId());
+    }
+
     private static ChatDtos.SessionItem toItem(HubRow row, boolean generating) {
         return new ChatDtos.SessionItem(row.id(), row.title(), row.modelId(), row.promptId(), row.agentId(),
-                row.showCot(), row.contextTrace(), row.maxRounds(), row.showRounds(), row.unread(),
-                generating, iso(row.updatedAt() != null ? row.updatedAt() : row.createdAt()));
+                row.projectId(), row.showCot(), row.contextTrace(), row.maxRounds(), row.showRounds(),
+                row.unread(), generating, iso(row.updatedAt() != null ? row.updatedAt() : row.createdAt()));
+    }
+
+    /** 空串 / 空白 → null（项目绑定：空 = 无项目） */
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private static String iso(Long ms) {

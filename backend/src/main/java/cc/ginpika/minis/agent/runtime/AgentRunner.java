@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import cc.ginpika.minis.agent.chat.ChatTraceCodec;
 import cc.ginpika.minis.ai.core.tool.ToolResult;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
+import cc.ginpika.minis.ai.memory.MemoryIngest;
 import cc.ginpika.minis.ai.memory.MemoryWriter;
 import cc.ginpika.minis.config.ModelTarget;
 import cc.ginpika.minis.config.SettingsService;
@@ -47,12 +48,18 @@ public class AgentRunner implements TaskRunner {
     private final ChangeSetStore changes;
     private final ObjectMapper om;
     private final MemoryWriter memory;
+    /** 记忆提炼入口（memory-v6 §7.3）：执行结论也进长期记忆——子代理 / 心跳的产出不再只躺在事件流里 */
+    private final MemoryIngest memoryIngest;
+    @org.springframework.beans.factory.annotation.Autowired
+    private cc.ginpika.minis.ai.memory.WorkingSetService workingSet;
+    @org.springframework.beans.factory.annotation.Autowired
+    private cc.ginpika.minis.ai.memory.store.MemoryItemStore memoryItems;
     /** 校验节点（STEP 4）：写入 / 执行类工具落地前过一道参数自检（只读放行） */
     private final ToolValidator validator;
 
     public AgentRunner(HeartbeatProps props, SettingsService settings, AgentRuntime runtime,
                        ExecStore execs, TaskStore tasks, ChangeSetStore changes, ObjectMapper om,
-                       MemoryWriter memory, ToolValidator validator) {
+                       MemoryWriter memory, MemoryIngest memoryIngest, ToolValidator validator) {
         this.props = props;
         this.settings = settings;
         this.runtime = runtime;
@@ -61,6 +68,7 @@ public class AgentRunner implements TaskRunner {
         this.changes = changes;
         this.om = om;
         this.memory = memory;
+        this.memoryIngest = memoryIngest;
         this.validator = validator;
     }
 
@@ -85,6 +93,15 @@ public class AgentRunner implements TaskRunner {
     /** 跑一次已登记的执行（execId 由 {@link #openExec} 给出）：多轮工具往返 → 落结论与过程 */
     @Override
     public Outcome run(Request req, long execId) {
+        var parent = cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
+        if (parent == null) { return runScoped(req, execId); }
+        var scope = new cc.ginpika.minis.ai.core.MemoryExec(parent.userId(), parent.agentId(),
+                parent.projectId(), parent.sessionId(), execId, parent.surface(), false,
+                "task:" + execId, parent.identityOrInferred());
+        return cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope, () -> runScoped(req, execId));
+    }
+
+    private Outcome runScoped(Request req, long execId) {
         ModelTarget target = settings.resolveChatModel(req.modelId());
         if (!target.configured()) {
             execs.finishExec(execId, "failed", null, null, null, "LLM 未配置");
@@ -139,6 +156,21 @@ public class AgentRunner implements TaskRunner {
                 ChatTraceCodec.writeRounds(om, state.toolRounds()), null);
         artifact(execId, req.title(), output);
         memory.onExecDone(execId, req.kind(), req.title(), output);
+        /* memory-v6 §7.3：事件之外再提炼一次条目——子代理 / 心跳 / 职责的结论因此能进长期记忆
+           （作用域由执行入口圈定；没有作用域则自动跳过，见 MemoryIngest#tapExec） */
+        memoryIngest.tapExec(req.title(), output);
+        // 独立执行确实结束：仅收尾该任务的工作集，不蒸馏派发方整个会话。
+        var scope = cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
+        if (scope != null && workingSet != null && memoryItems != null) {
+            var taskScope = new cc.ginpika.minis.ai.core.MemoryExec(scope.userId(), scope.agentId(),
+                    scope.projectId(), null, execId, scope.surface(), false, scope.turnId(), scope.identityOrInferred());
+            try {
+                memoryItems.closeTask(taskScope);
+                workingSet.distill(taskScope);
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(AgentRunner.class).warn("任务记忆收尾失败，保留工作状态：{}", e.getMessage());
+            }
+        }
         return new Outcome(execId, "done", output, null);
     }
 

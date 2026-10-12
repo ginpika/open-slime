@@ -38,9 +38,15 @@ import org.springframework.stereotype.Component;
 public class AgentRuntime {
 
     private final OpenAiChatClient client;
+    private cc.ginpika.minis.ai.memory.MemoryLiveContext liveMemory;
 
     public AgentRuntime(OpenAiChatClient client) {
         this.client = client;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setLiveMemory(cc.ginpika.minis.ai.memory.MemoryLiveContext liveMemory) {
+        this.liveMemory = liveMemory;
     }
 
     // ---------- 契约 ----------
@@ -161,12 +167,28 @@ public class AgentRuntime {
 
     /** 跑一次：多轮模型往返与工具批，直到拿到最终回答或用尽轮数 */
     public Result run(Spec spec) {
+        var previous = cc.ginpika.minis.ai.memory.MemoryLiveContext.begin((ArrayNode) spec.body().get("messages"));
+        boolean ownsStage = !cc.ginpika.minis.ai.memory.MemoryStage.active();
+        if (ownsStage) { cc.ginpika.minis.ai.memory.MemoryStage.begin(); }
+        try {
+            Result result = runScoped(spec);
+            if (ownsStage) { cc.ginpika.minis.ai.memory.MemoryStage.commit(); }
+            return result;
+        } catch (RuntimeException error) {
+            cc.ginpika.minis.ai.memory.MemoryStage.clear();
+            throw error;
+        }
+        finally { cc.ginpika.minis.ai.memory.MemoryLiveContext.restore(previous); }
+    }
+
+    private Result runScoped(Spec spec) {
         ArrayNode msgs = (ArrayNode) spec.body().get("messages");
         int maxRounds = Math.max(0, spec.maxRounds());
         Listener listener = spec.listener();
         RunState state = spec.runState();
 
         for (int round = 0; round <= maxRounds; round++) {
+            if (liveMemory != null) { liveMemory.refresh(msgs); }
             if (listener != null) {
                 listener.round(round);
             }
@@ -239,7 +261,10 @@ public class AgentRuntime {
                 }
             }
             List<String> contents = ToolBatch.run(calls, spec.dispatch()::parallelizable,
-                    spec.dispatch()::run);
+                    call -> {
+                        if (liveMemory != null) { liveMemory.refresh(msgs); }
+                        return spec.dispatch().run(call);
+                    });
             for (int i = 0; i < calls.size(); i++) {
                 ObjectNode toolMsg = msgs.addObject()
                         .put("role", "tool")

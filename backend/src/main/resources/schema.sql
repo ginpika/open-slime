@@ -31,12 +31,14 @@ CREATE TABLE IF NOT EXISTS hub_session (
   model_id          TEXT,                    -- 本会话所选模型（llm_model.id 或内置 'env'）；NULL=设置页默认
   prompt_id         TEXT,                    -- 本会话所选「对话身份」版本（prompt_version.id）；NULL=提示词页绑定
   agent_id          TEXT,                    -- 本会话跟哪位 Agent 对话（agent.id）；NULL / 'builtin'=内置 Agent（用全局提示词）
+  project_id        TEXT,                    -- 本会话所属项目（project.id）；NULL=无项目（记忆归属退化为 Agent 私有，见 memory-v5）
   show_cot          INTEGER NOT NULL DEFAULT 1, -- 本会话是否显示思维链（1=显示）；「…」菜单开关
   context_trace     INTEGER NOT NULL DEFAULT 0, -- 本会话是否把历史思考与工具调用回灌上下文（1=加入）；「…」菜单开关
   max_rounds        INTEGER NOT NULL DEFAULT 30, -- 本会话单次提问的工具调用轮数上限（超限后撤掉 tools 强制出最终回答）；「…」菜单配置
   show_rounds       INTEGER NOT NULL DEFAULT 0, -- 本会话思维链分段是否显示轮次计数（1=显示，缺省不显示）；「…」菜单开关
   unread            INTEGER NOT NULL DEFAULT 0, -- 子代理投递过新消息且用户未查看（1=未读）；打开会话即清零
   member_ids        TEXT,                    -- 圆桌会话的成员名册（agent.id 的 JSON 数组；NULL=全体名册）；首页会话为 NULL
+  memory_off        INTEGER NOT NULL DEFAULT 0, -- 临时会话：1=本次不进记忆（memory_event 写入与提炼均跳过）；「…」菜单开关
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER
 );
@@ -370,6 +372,7 @@ CREATE TABLE IF NOT EXISTS task (
   workspace_id TEXT,                          -- 绑定工作空间（为 IDE 预留；当前未用）
   budget       TEXT,                          -- JSON：token / 轮数 / 时长上限（成本护栏；当前未用）
   payload      TEXT,                          -- JSON：重跑所需输入（子代理：工具调用参数原文）
+  memory_checkpoint TEXT,                     -- JSON：任务记忆检查点（暂停/恢复用的工作状态快照，见 memory-v5 §9）
   run_id       TEXT,                          -- 归属批次（heartbeat_run.id）
   plan_id      TEXT,                          -- kind=plan 时的编制 id（heartbeat_plan.id）
   origin       TEXT,                          -- 这次执行的来源：heartbeat | plan | agent（读侧按它分类）
@@ -546,6 +549,7 @@ CREATE INDEX IF NOT EXISTS idx_roundtable_topic_event ON roundtable_topic_event(
 -- M0 范围：写入 + 时间窗召回（memory 注入器）；M1 挂上向量轴（memory_event_embedding）；
 -- 图轴与固化管道见后续里程碑。
 CREATE TABLE IF NOT EXISTS memory_event (
+  agent_id TEXT, project_id TEXT, session_id TEXT, task_id INTEGER, identity TEXT,
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   event_key   TEXT NOT NULL UNIQUE,            -- 幂等键（ref_type:ref_id）
   kind        TEXT NOT NULL,                   -- chat | exec
@@ -571,6 +575,259 @@ CREATE TABLE IF NOT EXISTS memory_event_embedding (
   vec         BLOB NOT NULL,
   updated_at  INTEGER NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- 记忆条目（memory_item，记忆体系 v2 · STEP M1）：系统里「记忆」的一等公民。
+--
+--   与 memory_event（证据层）的分工：memory_event 是「发生过什么的原始投影」（只追加、逐条），
+--   本表是「关于用户 / 项目的稳定信息」（会更新、会过期、会被取代）。记忆召回默认读本表，
+--   需要原始细节时再按 source_refs 下钻回 memory_event。
+--   scope：directive（对记忆行为的指令）| profile（长期画像）| project（进行中的事）| episode（时段摘要）。
+--   superseded_by 指向取代它的新条目（NULL=仍有效）；valid_until 到期即失效——两者由巩固（M4）维护。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS memory_item (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id      TEXT,                      -- 归属 Agent（agent.id）；NULL 已规范化：历史 NULL 归 'builtin'（见 memory-v5）
+  scope         TEXT NOT NULL,             -- profile|directive|project|episode|fact|decision|method|open_issue|checkpoint|handoff|knowledge
+  title         TEXT,                      -- 一句话标题（列表 / 注入的极简识别）
+  body          TEXT NOT NULL,             -- 记忆正文（关于用户 / 项目的稳定信息，非原文切片）
+  confidence    REAL NOT NULL DEFAULT 0.5, -- 提炼置信度 0..1
+  source        TEXT NOT NULL DEFAULT 'auto', -- auto(隐式提炼) | explicit(用户明说) | manual(人工编辑)
+  pinned        INTEGER NOT NULL DEFAULT 0, -- 1=人工固定：强制注入，不受相关性门控过滤
+  valid_from    INTEGER NOT NULL,
+  valid_until   INTEGER,                   -- 过期时刻（NULL=不过期）
+  superseded_by INTEGER,                   -- 被哪条新条目取代（NULL=仍有效）
+  source_refs   TEXT,                      -- 来源证据：memory_event.id 数组（JSON），供下钻
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  ---------------------------------------------------------------- memory-v5 增量（可空；老库由 SchemaColumnPatches 补）
+  user_id       TEXT,                      -- 多租户预留：app_user.id
+  owner         TEXT,                      -- USER|PROJECT|AGENT|TASK —— 归属者（决定读写权限）
+  domain        TEXT,                      -- USER_PROFILE|PROJECT|AGENT|TASK_EPISODIC —— 描述什么
+  layer         TEXT,                      -- L1|L2|L3|L4 —— 流转层（决定可见范围与生命周期）
+  project_id    TEXT,                      -- owner=PROJECT 时非空
+  session_id    TEXT,                      -- owner=TASK 时非空
+  task_id       INTEGER,                   -- 归属任务
+  producer_agent TEXT,                     -- 生产者 Agent（仅审计；与 owner 解耦）
+  source_kind   TEXT,                      -- real|fiction|project_pref|inferred —— role-play 隔离依据
+  evidence_level TEXT,                     -- explicit|repeated|inferred —— 画像升级闸门
+  status        TEXT,                      -- active|superseded|expired|conflicted|revoked|archived
+  retention     TEXT,                      -- pinned|long|normal|ephemeral —— 保护级别
+  version       INTEGER,                   -- 乐观锁版本（并发写保护）
+  fingerprint   TEXT,                      -- 幂等键：sha1(owner|project_id|agent_id|domain|scope|normalize(body))
+  valid_at      INTEGER,                   -- 双时态：事实在世界中成立的时间
+  invalid_at    INTEGER,                   -- 双时态：事实失效时间（矛盾时关闭，不删除）
+  learned_at    INTEGER,                   -- 双时态：系统学到它的时间
+  expired_at    INTEGER,                   -- 双时态：系统得知其失效的时间
+  ---------------------------------------------------------------- memory-v6 增量（identity / 提升来源 / 软过期）
+  identity      TEXT,                      -- REAL|FICTION|PROJECT_PREF|INFERRED —— 身份上下文（role-play 隔离）
+  promoted_from INTEGER,                   -- 提升来源：memory_promotion.id（L4/L1 的可追溯凭据）
+  expires_soft  INTEGER                    -- 软过期时刻：到期只「不再注入」，不删除（与 hard 过期分开）
+);
+CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON memory_item(scope, superseded_by, valid_until);
+CREATE INDEX IF NOT EXISTS idx_memory_item_agent ON memory_item(agent_id, scope);
+-- 注意：memory-v5 新增列（owner/project_id/domain/status/fingerprint…）上的索引**不在这里**建：
+-- 老库执行 schema.sql 时这些列尚未由 SchemaColumnPatches 补上，建索引会当场报 no such column。
+-- 它们统一由 SchemaIndexes 在加列之后创建（见 config/SchemaIndexes.java）。
+
+-- 记忆条目向量（memory_item_embedding，M1）：memory_item 的 embedding 投影，列结构对齐
+-- memory_event_embedding（BLOB = little-endian float32，同模型余弦）。
+CREATE TABLE IF NOT EXISTS memory_item_embedding (
+  item_version INTEGER,
+  item_id    INTEGER PRIMARY KEY REFERENCES memory_item(id),
+  model      TEXT NOT NULL,                  -- embedding 模型名（同 memory_event_embedding 的语义）
+  dim        INTEGER NOT NULL,
+  vec        BLOB NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- 项目（project，memory-v5 §4.1）：跨 Session/Task/Agent 的业务工作域。项目的存在让「项目间记忆隔离」
+-- 成为可能——记忆按 owner=PROJECT + project_id 归属，读侧 visible 谓词只放行当前项目。
+--   kind：novel|software|research|other；narrative=1 表示创作/虚构类项目 → 域内记忆禁止升级为用户画像。
+CREATE TABLE IF NOT EXISTS project (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT,                          -- 多租户预留；单用户阶段= app_user 唯一行
+  name        TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'other',
+  narrative   INTEGER NOT NULL DEFAULT 0,    -- 1=创作/虚构类 → 记忆不得升画像（memory-v5 §3.6）
+  status      TEXT NOT NULL DEFAULT 'active',-- active|paused|archived
+  note        TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_user ON project(user_id, status);
+
+-- 画像候选（memory_candidate，memory-v5 §5.4）：用户画像的唯一权威入口。普通 Agent 不得直接写
+-- memory_item 的 USER_PROFILE 域——只能生成候选，经证据/审批闸门方可由 UserProfileService 落为正式画像。
+--   evidence_level：explicit（用户明说）| repeated（多次出现）| inferred（推断，不足以上升）
+--   fingerprint 在 pending 内唯一：同指纹追证只累加 evidence_count，不重复建候选。
+CREATE TABLE IF NOT EXISTS memory_candidate (
+  valid_until INTEGER,
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  fingerprint    TEXT NOT NULL,
+  user_id        TEXT,
+  owner          TEXT NOT NULL DEFAULT 'USER',
+  scope          TEXT NOT NULL,              -- profile | directive
+  title          TEXT,
+  body           TEXT NOT NULL,
+  source_kind    TEXT NOT NULL DEFAULT 'inferred', -- real|fiction|project_pref|inferred
+  evidence_level TEXT NOT NULL,              -- explicit|repeated|inferred
+  evidence_count INTEGER NOT NULL DEFAULT 1,
+  evidence_refs  TEXT,                       -- JSON：chat_message.id 数组
+  status         TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_candidate_fp
+  ON memory_candidate(fingerprint) WHERE status='pending';
+
+-- 共享授权（memory_share，memory-v5 §7.3 · L4 交接/知识）：Agent 主动把条目发布到指定作用域。
+-- 读侧 R5 经此表联合查询发现（不推送）；revoked 后天然不可见。
+CREATE TABLE IF NOT EXISTS memory_share (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id      INTEGER NOT NULL REFERENCES memory_item(id),
+  from_owner   TEXT NOT NULL,
+  from_agent   TEXT,
+  from_project TEXT,
+  to_kind      TEXT NOT NULL,                -- user|project|agent|session
+  to_ref       TEXT,
+  status       TEXT NOT NULL DEFAULT 'published', -- published|revoked
+  note         TEXT,
+  created_at   INTEGER NOT NULL,
+  revoked_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_share_item ON memory_share(item_id, status);
+CREATE INDEX IF NOT EXISTS idx_share_target ON memory_share(to_kind, to_ref, status);
+
+-- 撤销墓碑（memory_revocation，memory-v5 §5.4）：画像撤销/拒绝后写墓碑，防同指纹被自动重建。
+--   allow_relearn=1 表示用户解除了封锁，允许重新学习。
+CREATE TABLE IF NOT EXISTS memory_revocation (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_item_id INTEGER,
+  fingerprint    TEXT NOT NULL,
+  reason         TEXT,
+  allow_relearn  INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_revocation_fp ON memory_revocation(fingerprint);
+
+-- 双时态知识边（memory_edge，memory-v5 §7.1 · P4）：记忆的「关系轴」，借鉴 Zep/Graphiti。
+-- 每条边是 (subject, predicate, object) 三元组，带双时态：valid_at（事实世界成立）/ invalid_at（失效）/
+-- learned_at（系统学到）/ expired_at（系统得知失效）。新事实与旧事实矛盾时，**关闭旧边有效期**（写 invalid_at）
+-- 而非删除——保留完整审计与「某时刻知道什么」的点查能力。归属同条目（owner × project × agent）。
+CREATE TABLE IF NOT EXISTS memory_edge (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT,
+  owner        TEXT NOT NULL,
+  project_id   TEXT,
+  agent_id     TEXT,
+  subject      TEXT NOT NULL,
+  predicate    TEXT NOT NULL,
+  object       TEXT NOT NULL,
+  confidence   REAL NOT NULL DEFAULT 0.5,
+  valid_at     INTEGER,
+  invalid_at   INTEGER,
+  learned_at   INTEGER NOT NULL,
+  expired_at   INTEGER,
+  source_item  INTEGER REFERENCES memory_item(id),
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_edge_subject ON memory_edge(subject, predicate, invalid_at);
+CREATE INDEX IF NOT EXISTS idx_edge_object  ON memory_edge(object, predicate, invalid_at);
+CREATE INDEX IF NOT EXISTS idx_edge_owner   ON memory_edge(owner, project_id, agent_id, invalid_at);
+
+-- 提炼水位（memory_cursor，M2）：每个会话已提炼到哪条 memory_event，避免重复提炼。
+CREATE TABLE IF NOT EXISTS memory_cursor (
+  session_id    TEXT PRIMARY KEY,
+  last_event_id INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- memory-v6 · 记忆运行时（见 docs/memory-v6.md）
+-- ---------------------------------------------------------------------------
+
+-- 写入审计（memory_revision，memory-v6 §6.1）：每次提交留一条，可回放、可追责、可 purge 溯源。
+-- 与 memory_event 的区别：event 是「说过/做过」的正本投影，revision 是「记忆条目被谁改成了什么」。
+CREATE TABLE IF NOT EXISTS memory_revision (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id      INTEGER,                     -- 关联条目（新建时可空，落库后回填）
+  op           TEXT NOT NULL,               -- create|update|supersede|status|promote|publish|revoke|purge
+  actor_kind   TEXT NOT NULL,               -- AGENT|USER|SYSTEM
+  actor_id     TEXT,                        -- agent.id / 'user' / 'migrator'
+  turn_id      TEXT,                        -- 回放键（MemoryExec.turnId）
+  before_json  TEXT,                        -- 变更前（JSON，审计用）
+  after_json   TEXT,                        -- 变更后
+  reason       TEXT,
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rev_item ON memory_revision(item_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rev_turn ON memory_revision(turn_id);
+
+-- 工作状态（memory_work，memory-v6 §13 · L3 的工程实现）：会话 / 任务级临时物，
+-- 与长期记忆物理分离（三概念分离）。会话/任务结束时由 MemoryDistiller 蒸馏进 L2/L4 后归档。
+CREATE TABLE IF NOT EXISTS memory_work (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT NOT NULL,
+  task_id     INTEGER,
+  agent_id    TEXT,
+  project_id  TEXT,
+  kind        TEXT NOT NULL,                -- progress|temp_conclusion|tool_result|decision_in_flight|todo_snapshot
+  title       TEXT,
+  body        TEXT NOT NULL,
+  ref_type    TEXT,                         -- chat_message|task|tool_exec（指回正本）
+  ref_id      INTEGER,
+  status      TEXT NOT NULL DEFAULT 'open', -- open|closed|distilled|archived
+  expires_at  INTEGER,                      -- TTL：到期不再注入
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_work_session ON memory_work(session_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_work_task ON memory_work(task_id, status);
+
+-- 提升记录（memory_promotion，memory-v6 §9.3）：L2→L4 / L4→L1 的来源凭据。
+-- 不变量 I6：layer=L4 的条目必须有可追溯发布来源（memory_share 或本表）。
+CREATE TABLE IF NOT EXISTS memory_promotion (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id        INTEGER NOT NULL,
+  from_layer     TEXT NOT NULL,
+  to_layer       TEXT NOT NULL,
+  policy         TEXT NOT NULL,             -- auto|manual|approved
+  evidence_count INTEGER NOT NULL DEFAULT 1,
+  state          TEXT NOT NULL DEFAULT 'candidate', -- candidate|applied|rejected
+  note           TEXT,
+  created_at     INTEGER NOT NULL,
+  applied_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_promotion_item ON memory_promotion(item_id, state);
+
+-- 交接状态（memory_handoff，memory-v6 §9.2）：L4 的「交到谁手上、做到哪一步」。
+CREATE TABLE IF NOT EXISTS memory_handoff (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id    INTEGER NOT NULL REFERENCES memory_item(id),
+  to_kind    TEXT NOT NULL,                 -- agent|project|session|user
+  to_ref     TEXT,
+  state      TEXT NOT NULL DEFAULT 'offered', -- offered|accepted|done|rejected
+  note       TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_handoff_target ON memory_handoff(to_kind, to_ref, state);
+
+-- 快照回放（memory_snapshot，memory-v6 §4.3）：只存引用（turnId → 命中条目与水位），不存正文。
+-- 回答「这一轮模型到底看见了什么」，也是「本轮写入不回改本轮」的取证依据。
+CREATE TABLE IF NOT EXISTS memory_snapshot (
+  content_json TEXT,
+  turn_id    TEXT PRIMARY KEY,
+  session_id TEXT,
+  agent_id   TEXT,
+  project_id TEXT,
+  watermark  INTEGER NOT NULL,
+  item_ids   TEXT,                          -- JSON 数组（命中条目的 id）
+  tokens     INTEGER NOT NULL DEFAULT 0,
+  built_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_session ON memory_snapshot(session_id, built_at);
 
 -- RAG 召回留痕（潜意识页「RAG 召回」子页的数据源）：每次「三路召回」工具调用记一行，
 -- 让用户能回看「模型当初问了什么、拿到了什么原始数据」。三路指：

@@ -25,10 +25,16 @@ public class TaskRecovery {
 
     private final TaskStore tasks;
     private final ExecStore execs;
+    private final TaskCheckpointService checkpoints;
+    /** 工作状态恢复（memory-v6 §9.2）：把检查点还原成工作集条目，下一次执行接得上 */
+    private final WorkingSetRestorer restorer;
 
-    public TaskRecovery(TaskStore tasks, ExecStore execs) {
+    public TaskRecovery(TaskStore tasks, ExecStore execs, TaskCheckpointService checkpoints,
+                        WorkingSetRestorer restorer) {
         this.tasks = tasks;
         this.execs = execs;
+        this.checkpoints = checkpoints;
+        this.restorer = restorer;
     }
 
     @PostConstruct
@@ -41,5 +47,13 @@ public class TaskRecovery {
         } else {
             log.info("启动恢复：没有残留的在途任务");
         }
+        /* memory-v6 §9.2：带记忆检查点的中断任务——把「做到哪一步」还原进工作集（幂等，重启不重复还原） */
+        var restorable = checkpoints.restorable();
+        if (restorable.isEmpty()) {
+            return;
+        }
+        int restored = restorer.restoreInterrupted();
+        log.info("启动恢复：{} 条中断任务带记忆检查点，其中 {} 条已还原工作状态（可手动 /promote 触发重跑）",
+                restorable.size(), restored);
     }
 }

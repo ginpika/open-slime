@@ -76,10 +76,16 @@ public class MemoryRecall {
      */
     public List<Hit> recall(String query, Long sinceMs, Long untilMs, String kind, String actor,
                             int limit) {
+        return recall(cc.ginpika.minis.ai.core.MemoryExec.system(null), query, sinceMs, untilMs,
+                kind, actor, limit);
+    }
+
+    public List<Hit> recall(cc.ginpika.minis.ai.core.MemoryExec exec, String query, Long sinceMs,
+                           Long untilMs, String kind, String actor, int limit) {
         int cap = Math.max(1, Math.min(limit, LIMIT_MAX));
         List<MemoryEventStore.EventRow> candidates = actor == null || actor.isBlank()
-                ? events.window(sinceMs, untilMs, kind, null, BACKGROUND_ACTORS, CANDIDATE_LIMIT)
-                : events.window(sinceMs, untilMs, kind, actor, CANDIDATE_LIMIT);
+                ? events.window(exec, sinceMs, untilMs, kind, null, BACKGROUND_ACTORS, CANDIDATE_LIMIT)
+                : events.window(exec, sinceMs, untilMs, kind, actor, List.of(), CANDIDATE_LIMIT);
         if (candidates.isEmpty()) {
             return List.of();
         }

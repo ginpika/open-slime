@@ -57,7 +57,8 @@ public final class HeartbeatDtos {
      * （session / subagent / plan / code）。
      *
      * <p>parentId=派它的那个任务（心跳 → 职责 → 子代理 这条链），顶层为 null；
-     * agentId=归属 Agent；execId=它落到的执行留痕（{@code task.id}，可点开看全过程）。
+     * agentId=归属 Agent；execId=它落到的执行留痕（{@code task.id}，可点开看全过程），
+     * 仅「真正的执行」有值——前台会话任务没有执行上下文，此处为 null（行不可点）。
      */
     public record TaskView(long id, Long parentId, String kind, String status, String title,
                            String sessionId, String agentId, Long execId, long createdAt,
