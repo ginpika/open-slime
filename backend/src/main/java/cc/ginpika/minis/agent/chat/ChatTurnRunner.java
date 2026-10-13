@@ -163,6 +163,9 @@ public class ChatTurnRunner implements ChatExecution {
     /** 任务检查点（工作状态的一部分）：把「做到哪一步」落到 task.memory_checkpoint（修 D11） */
     private final TaskCheckpointService taskCheckpoints;
     private final MemoryProps memoryProps;
+    private ProjectWorkflowService projectWorkflows;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setProjectWorkflows(ProjectWorkflowService workflows) { this.projectWorkflows=workflows; }
 
     /* 下面这些 public 方法与几个常量同为一组「可替换点」（见 {@link ChatExecution}）：首页对话用
        本类自己的实现；多智能体那条流实现同一个接口、换成自己的落点与组装方式，但整条生成过程
@@ -551,7 +554,11 @@ public class ChatTurnRunner implements ChatExecution {
         if (exec.turnTracked() && !sessions.memoryOff(row.id())) {
             /* memory-v6 §7.3：写侧作用域与本轮圈定的读侧是同一份（谁 × 项目 × 会话 × 身份），
                不再各构造一份；创作类项目身份为 FICTION → 写侧 source_kind=fiction 且永不升画像 */
-            memoryIngest.tap(row.id(), memScope, input, result.content(),
+            HubRow latestRow=sessions.findById(row.id()).orElse(row);
+            // Binding changed by a project tool: the answer belongs to the new context for future extraction.
+            MemoryExec writeScope=MemoryExec.chat(memScope.agentId(),latestRow.projectId(),row.id(),memScope.taskId(),
+                    memScope.turnId(),MemoryIdentity.ofNarrative(projects.isNarrative(latestRow.projectId())));
+            memoryIngest.tap(row.id(), writeScope, input, result.content(),
                     cc.ginpika.minis.ai.memory.MemoryEvidence.ref("chat_message", userMsgId, input));
             /* memory-v6 §4.4 / D11：把「工作到哪一步」落成任务检查点（工作状态，不是长期记忆）；
                同时收尾蒸馏更早的工作集——本轮刚记的临时结论留到下一次收尾再整理（§13、T12） */
@@ -813,6 +820,10 @@ public class ChatTurnRunner implements ChatExecution {
                 call.path("function").path("arguments").asText(""));
         if (invalid != null) {
             return invalid;
+        }
+        if (cc.ginpika.minis.ai.core.tool.memory.ManageProjectTool.NAME.equals(name)) {
+            try { return projectWorkflows.runTool(hubId,om.readTree(call.path("function").path("arguments").asText("{}"))); }
+            catch (Exception e) { return "项目工具参数无效："+e.getMessage(); }
         }
         if (TodoService.TOOLS.contains(name)) {
             /* 个人清单归属当前 Agent：首页 = 内置 Agent，圆桌执行态 = 当前发言成员（见 AgentScope）。

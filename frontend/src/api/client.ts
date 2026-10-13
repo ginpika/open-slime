@@ -2999,6 +2999,18 @@ export function createProject(req: ProjectRequest): Promise<Project> {
   return requestJson<Project>('/api/projects', { method: 'POST', body: JSON.stringify(req) })
 }
 
+export function organizeSessionProject(sessionId: string, req: { name: string; kind: string; note?: string; projectId?: string }): Promise<Project> {
+  return requestJson(`/api/projects/sessions/${encodeURIComponent(sessionId)}/organize`, { method: 'POST', body: JSON.stringify(req) })
+}
+
+export function continueSessionProject(sessionId: string): Promise<{ id: string; projectId: string | null; agentId: string | null; sourceSessionId: string }> {
+  return requestJson(`/api/projects/sessions/${encodeURIComponent(sessionId)}/continue`, { method: 'POST', body: '{}' })
+}
+
+export function revokeSessionContinuation(sessionId: string): Promise<{ revoked: boolean }> {
+  return requestJson(`/api/projects/sessions/${encodeURIComponent(sessionId)}/continuation`, { method: 'DELETE' })
+}
+
 export function updateProject(id: string, req: Partial<ProjectRequest>): Promise<Project> {
   return requestJson<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(req) })
 }

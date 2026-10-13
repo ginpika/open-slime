@@ -3,7 +3,6 @@ package cc.ginpika.minis.web.controller;
 import cc.ginpika.minis.project.ProjectStore;
 import cc.ginpika.minis.project.ProjectStore.ProjectRow;
 import java.util.List;
-import java.util.UUID;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,9 +23,11 @@ import org.springframework.http.HttpStatus;
 public class ProjectController {
 
     private final ProjectStore projects;
+    private final cc.ginpika.minis.agent.chat.ProjectWorkflowService workflows;
 
-    public ProjectController(ProjectStore projects) {
+    public ProjectController(ProjectStore projects, cc.ginpika.minis.agent.chat.ProjectWorkflowService workflows) {
         this.projects = projects;
+        this.workflows=workflows;
     }
 
     @GetMapping
@@ -46,11 +47,7 @@ public class ProjectController {
         if (name.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "项目名不能为空");
         }
-        String id = UUID.randomUUID().toString();
-        String kind = req.kind() == null || req.kind().isBlank() ? "other" : req.kind().trim();
-        boolean narrative = req.narrative() != null ? req.narrative() : ProjectKinds.narrative(kind);
-        projects.insert(id, null, name, kind, narrative, "active", req.note());
-        return projects.findById(id).orElseThrow();
+        return workflows.createProject(name,req.kind(),req.narrative(),req.note());
     }
 
     @PutMapping("/{id}")

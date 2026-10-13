@@ -1083,3 +1083,20 @@ CREATE TABLE IF NOT EXISTS roundtable_work_run (
 CREATE INDEX IF NOT EXISTS idx_work_run_todo ON roundtable_work_run(todo_id, id);
 CREATE INDEX IF NOT EXISTS idx_work_run_session ON roundtable_work_run(session_id, id);
 
+-- Explicit session continuation grants; ordinary memory visibility remains unchanged.
+CREATE TABLE IF NOT EXISTS session_continuation (
+    target_session_id TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'granted',
+    PRIMARY KEY (target_session_id, source_session_id, agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS project_proposal (
+    session_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    user_message_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);

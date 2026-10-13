@@ -96,6 +96,9 @@ public class MemoryProvider implements ContextProvider {
                 sb.append(MemorySnapshotBuilder.workLine(w, maxChars)).append('\n');
             }
         }
+        for (var p : snapshot.progress()) {
+            sb.append('\n').append(cc.ginpika.minis.project.ProjectProgressStore.render(p)).append('\n');
+        }
         return sb.toString().stripTrailing();
     }
 

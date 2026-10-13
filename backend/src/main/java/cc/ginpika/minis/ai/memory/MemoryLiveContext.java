@@ -20,6 +20,9 @@ public class MemoryLiveContext {
     private static final ThreadLocal<MemorySnapshot> CAPTURED = new ThreadLocal<>();
     private final MemoryItemStore items;
     private final MemoryWorkStore work;
+    private cc.ginpika.minis.project.ProjectProgressStore progress;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setProgress(cc.ginpika.minis.project.ProjectProgressStore progress) { this.progress=progress; }
     private cc.ginpika.minis.config.MemoryProps props = new cc.ginpika.minis.config.MemoryProps();
 
     public MemoryLiveContext(MemoryItemStore items, MemoryWorkStore work) {
@@ -69,6 +72,13 @@ public class MemoryLiveContext {
                         || (w.taskId() != null && w.taskId().equals(exec.taskId())))
                     && (w.expiresAt() == null || w.expiresAt() > System.currentTimeMillis()))
                     .ifPresent(w -> text.append('\n').append(MemorySnapshotBuilder.workLine(old, maxChars)));
+        }
+        if (progress!=null) {
+            for (var p : initial.progress()) {
+                if (java.util.Objects.equals(p.projectId(),exec.projectId()) && progress.allowed(exec,p.sourceSessionId())) {
+                    text.append('\n').append(cc.ginpika.minis.project.ProjectProgressStore.render(p));
+                }
+            }
         }
         String rendered = START + "\n当前可用记忆（含实时权限与指令校验）：\n" + text + "\n" + END;
         for (int i = 0; i < messages.size(); i++) {

@@ -37,6 +37,9 @@ public class MemorySnapshotBuilder {
     private final MemorySnapshotStore snapshots;
     private final WorkingSetService workingSet;
     private final MemoryProps props;
+    private cc.ginpika.minis.project.ProjectProgressStore progress;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setProgress(cc.ginpika.minis.project.ProjectProgressStore progress) { this.progress=progress; }
 
     public MemorySnapshotBuilder(MemoryItemRecall recall, MemorySnapshotStore snapshots,
                                  WorkingSetService workingSet, MemoryProps props) {
@@ -60,11 +63,12 @@ public class MemorySnapshotBuilder {
         Budgets budgets = new Budgets(props.getBudget());
         List<MemoryItemStore.ItemRow> items = items(scope, query, budgets);
         List<MemoryWorkStore.WorkRow> work = work(scope, budgets);
+        var continuation=continuation(scope);
         MemorySnapshot snapshot = new MemorySnapshot(turnId, scope, watermark, items, work,
-                System.currentTimeMillis(), props.getSnapshot().getTtlMs());
+                System.currentTimeMillis(), props.getSnapshot().getTtlMs(),continuation);
         if (props.getSnapshot().isReplay() && turnId != null && !turnId.isBlank()) {
             try {
-                snapshots.save(snapshot, budgets.used());
+                snapshots.save(snapshot, budgets.used()+continuation.stream().mapToInt(p->tokens(cc.ginpika.minis.project.ProjectProgressStore.render(p))).sum());
                 MemoryMetrics.snapshotSaved();
             } catch (RuntimeException e) {
                 /* 回放是审计能力，写不进去不能影响注入 */
@@ -72,6 +76,26 @@ public class MemorySnapshotBuilder {
             }
         }
         return snapshot;
+    }
+
+    private List<cc.ginpika.minis.project.ProjectProgressStore.Progress> continuation(MemoryExec scope) {
+        if (progress==null || !props.isEnabled() || props.getContinuationTokens()<=0) { return List.of(); }
+        List<cc.ginpika.minis.project.ProjectProgressStore.Progress> result=new ArrayList<>();
+        int remaining=props.getContinuationTokens();
+        for (var p : progress.visible(scope)) {
+            String body=p.body();
+            var kept=p;
+            while (tokens(cc.ginpika.minis.project.ProjectProgressStore.render(kept))>remaining && body.length()>160) {
+                int length=Math.max(100,body.length()*3/4);
+                body=body.substring(0,Math.min(100,length/3))+"\n[…续接摘录省略…]\n"+body.substring(body.length()-(length-Math.min(100,length/3)));
+                kept=new cc.ginpika.minis.project.ProjectProgressStore.Progress(p.sourceSessionId(),p.title(),p.projectId(),
+                        p.agentId(),p.messageIds(),body,p.observedAt());
+            }
+            int used=tokens(cc.ginpika.minis.project.ProjectProgressStore.render(kept));
+            if (used>remaining) { break; }
+            result.add(kept); remaining-=used;
+        }
+        return result;
     }
 
     // ---------------------------------------------------------------- 长期记忆条目

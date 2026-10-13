@@ -13,7 +13,7 @@ export type FrozenItem = {
 }
 export type FrozenWork = { id: number; kind: string; title: string | null; body: string; status: string }
 export type SnapshotDetail = {
-  summary: SnapshotSummary; content: { items: FrozenItem[]; work: FrozenWork[] } | null; itemIds: number[]
+  summary: SnapshotSummary; content: { items: FrozenItem[]; work: FrozenWork[]; progress?: { sourceSessionId: string; title: string | null; projectId: string | null; messageIds: number[]; body: string; observedAt: number }[] } | null; itemIds: number[]
   requests: { round: number; requestRecorded: boolean; memorySectionPresent: boolean; memoryText: string | null; responseRecorded: boolean }[]
   requestNote: string
 }

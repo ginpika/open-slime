@@ -49,6 +49,12 @@ public class ChatSessionService {
     /** 删除会话时一并清掉它的待办清单（plan-of-record），免得留下孤儿行 */
     private final TodoService todo;
     private final ObjectMapper om;
+    private ProjectWorkflowService projectWorkflows;
+    private cc.ginpika.minis.project.ProjectProgressStore projectProgress;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setProjectProgress(cc.ginpika.minis.project.ProjectProgressStore progress) { projectProgress=progress; }
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setProjectWorkflows(ProjectWorkflowService workflows) { this.projectWorkflows=workflows; }
 
     public ChatSessionService(HubSessionStore sessions, ChatMessageStore messages,
                               ChatLiveStore live, TodoService todo, ObjectMapper om) {
@@ -76,6 +82,7 @@ public class ChatSessionService {
      * 有项目的会话，提炼出的记忆落 {@code PROJECT×L1}；无项目则落 {@code AGENT×L2}。
      */
     public ChatDtos.NewSession create(String projectId) {
+        if (blankToNull(projectId)!=null) { projectWorkflows.validateProject(projectId); }
         String hubId = UUID.randomUUID().toString();
         sessions.insert(hubId, null, blankToNull(projectId));
         return new ChatDtos.NewSession(hubId, blankToNull(projectId));
@@ -86,7 +93,7 @@ public class ChatSessionService {
         sessions.findById(hubId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
         String pid = blankToNull(projectId);
-        sessions.setProject(hubId, pid);
+        projectWorkflows.bind(hubId, pid);
         return new ChatDtos.NewSession(hubId, pid);
     }
 
@@ -138,6 +145,8 @@ public class ChatSessionService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
         int removed = messages.deleteBySession(hubId);
         todo.clear(hubId);
+        projectProgress.clear(hubId);
+        projectWorkflows.clearProposal(hubId);
         sessions.delete(hubId);
         return new ChatDtos.SessionDeleted(hubId, removed);
     }

@@ -30,6 +30,10 @@ public class MemoryProps {
 
     /** 攒批阈值：同一会话攒够这么多轮对话，就合并提炼一次（大幅降低调用次数） */
     private int batchTurns = 4;
+    /** Explicit continuation context has its own bounded token allowance. */
+    private int continuationTokens = 1800;
+    public int getContinuationTokens() { return continuationTokens; }
+    public void setContinuationTokens(int tokens) { continuationTokens=Math.max(0,tokens); }
 
     /** 空闲阈值（毫秒）：会话静默这么久后，把缓冲里的对话合并提炼一次 */
     private long idleMs = 300_000L;

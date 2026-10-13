@@ -27,7 +27,17 @@ import java.util.List;
  */
 public record MemorySnapshot(String turnId, MemoryExec exec, long watermark,
                              List<MemoryItemStore.ItemRow> items, List<MemoryWorkStore.WorkRow> work,
-                             long builtAt, long ttlMs) {
+                             long builtAt, long ttlMs,
+                             List<cc.ginpika.minis.project.ProjectProgressStore.Progress> progress) {
+
+    public MemorySnapshot {
+        progress=progress==null ? List.of() : List.copyOf(progress);
+    }
+    public MemorySnapshot(String turnId, MemoryExec exec, long watermark,
+                          List<MemoryItemStore.ItemRow> items, List<MemoryWorkStore.WorkRow> work,
+                          long builtAt, long ttlMs) {
+        this(turnId,exec,watermark,items,work,builtAt,ttlMs,List.of());
+    }
 
     /** 快照在 {@code now} 此刻是否仍有效 */
     public boolean fresh(long now) {
@@ -46,6 +56,6 @@ public record MemorySnapshot(String turnId, MemoryExec exec, long watermark,
 
     @com.fasterxml.jackson.annotation.JsonIgnore
     public boolean isEmpty() {
-        return (items == null || items.isEmpty()) && (work == null || work.isEmpty());
+        return (items == null || items.isEmpty()) && (work == null || work.isEmpty()) && progress.isEmpty();
     }
 }

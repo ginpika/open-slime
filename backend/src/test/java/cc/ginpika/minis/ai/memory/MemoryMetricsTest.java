@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 class MemoryMetricsTest {
 
     @AfterEach
+    @org.junit.jupiter.api.BeforeEach
     void cleanup() {
         MemoryMetrics.reset();
     }

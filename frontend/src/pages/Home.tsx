@@ -16,6 +16,10 @@ import {
   bindSessionProject,
   branchSession,
   createSession,
+  createProject,
+  organizeSessionProject,
+  continueSessionProject,
+  revokeSessionContinuation,
   deleteSession,
   getPrompts,
   getSettings,
@@ -42,6 +46,7 @@ import {
   type TraceSegment,
 } from '../api/client'
 import FloatWindow from '../components/FloatWindow'
+import ProjectDialog, { type ProjectChoice } from '../components/ProjectDialog'
 import { Select } from '../components/formKit'
 import PeerAvatar from '../components/PeerAvatar'
 import { RawContextView } from '../components/JsonViewer'
@@ -64,6 +69,8 @@ import { subscribeSessionEvents } from '../components/sessionEvents'
 import { useThemeState } from '../theme/store'
 
 type Props = { connErr: string | null }
+
+const projectActionBtn = 'flex w-full items-center gap-2.5 rounded-md border px-3 py-2 text-left text-xs font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-50'
 
 /** 记住最近打开的会话：刷新后凭它判断「刚才那条会话是不是还在生成」，是就自动回去续看（断点续传） */
 const LAST_SESSION_KEY = 'minis.chat.lastSession'
@@ -836,6 +843,10 @@ export default function Home({ connErr }: Props) {
   /* 项目（memory-v6）：会话所属项目决定记忆归属与跨项目隔离；空 = 无项目（个人工作域） */
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState('')
+  const [projectDialog, setProjectDialog] = useState<'create' | 'organize' | null>(null)
+  const [projectSaving, setProjectSaving] = useState(false)
+  const activeSessionRef = useRef(sessionId)
+  useEffect(() => { activeSessionRef.current = sessionId }, [sessionId])
   /** 输入框左侧「…」菜单：向上弹出，切换模型 / 提示词 / CoT 显示 */
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -1269,6 +1280,8 @@ export default function Home({ connErr }: Props) {
     try {
       const list = await listSessions()
       setSessions(list)
+      const active = list.find(item => item.id === activeSessionRef.current)
+      if (active) setProjectId(active.projectId ?? '')
       return list
     } catch (e) {
       const msg = errorText(e)
@@ -1348,7 +1361,7 @@ export default function Home({ connErr }: Props) {
    *  已落定的先收尾再拉历史——成功/停止的答复已在历史里，失败时的半截输出只在快照里，要并回列表。
    *  **生成中也能切走**：生成托管在应用级运行时（见 chatLive），离开只是不再看它，
    *  那边照常产出并落库；切回去照样续看进度、续点停止。 */
-  const openSession = async (id: string) => {
+  const openSession = async (id: string, knownItem?: SessionItem) => {
     try {
       const snapshot = getLive(id)
       const settled = snapshot && !snapshot.running ? snapshot : null
@@ -1366,7 +1379,7 @@ export default function Home({ connErr }: Props) {
         /* 隐私模式等场景忽略持久化失败 */
       }
       /* 恢复该会话的「…」菜单配置：未设置项回退提示词页绑定 / 设置页默认模型 / CoT 默认显示 */
-      const item = sessions.find((s) => s.id === id)
+      const item = knownItem ?? sessions.find((s) => s.id === id)
       if (item) {
         setModelId(item.modelId ?? settings?.defaultModelId ?? '')
         setPromptId(item.promptId ?? '')
@@ -1486,6 +1499,59 @@ export default function Home({ connErr }: Props) {
       const msg = errorText(e)
       if (msg !== null) setToast(`新建会话失败：${msg}`)
     }
+  }
+
+  const saveProjectChoice = async (choice: ProjectChoice) => {
+    const p = sessionId
+      ? await organizeSessionProject(sessionId, choice)
+      : await createProject({ name: choice.name, kind: choice.kind, note: choice.note })
+    setProjectId(p.id)
+    setProjects(await listProjects().then(list => list.filter(item => item.status === 'active')))
+    await refreshSessions()
+    setToast(`已绑定项目「${p.name}」，可在新会话中继续`)
+  }
+
+  const selectProject = async (next: string) => {
+    if (busy || projectSaving) return
+    setProjectSaving(true)
+    try {
+      if (sessionId) await bindSessionProject(sessionId, next || null)
+      setProjectId(next)
+      await refreshSessions()
+    } catch (e) {
+      const message = errorText(e)
+      if (message) setToast(`项目绑定失败：${message}`)
+    } finally { setProjectSaving(false) }
+  }
+
+  const continueInNewSession = async () => {
+    if (!sessionId || busy || projectSaving) return
+    setProjectSaving(true)
+    setMenuOpen(false)
+    try {
+      const next = await continueSessionProject(sessionId)
+      const list = await refreshSessions()
+      await openSession(next.id, list.find(item => item.id === next.id))
+      setProjectId(next.projectId ?? '')
+      setAgentId(next.agentId ?? '')
+      setToast('已创建续接会话，最近进度会在发送消息时带入')
+    } catch (e) {
+      const message = errorText(e)
+      if (message) setToast(`续接失败：${message}`)
+    } finally { setProjectSaving(false) }
+  }
+
+  const revokeContinuation = async () => {
+    if (!sessionId || projectSaving) return
+    setProjectSaving(true)
+    try {
+      await revokeSessionContinuation(sessionId)
+      setToast('本会话已停止读取其他会话的进度；重新绑定项目或明确续接可恢复')
+      setMenuOpen(false)
+    } catch (e) {
+      const message = errorText(e)
+      if (message) setToast(`取消续接失败：${message}`)
+    } finally { setProjectSaving(false) }
   }
 
   /** 发一条消息：生成全程交给应用级运行时（components/chatLive）托管——页面卸载/切走都不影响它，
@@ -2099,77 +2165,58 @@ export default function Home({ connErr }: Props) {
                         </svg>
                       </button>
                       {menuOpen && (
-                        <div className="absolute bottom-full right-0 z-30 mb-2 flex overflow-hidden rounded-xl border border-line bg-bg shadow-xl">
-                          {/* 左栏：智能体名册（头像直达），点选切换本会话对话的 Agent */}
-                          <div className="flex w-56 shrink-0 flex-col border-r border-line p-2">
+                        <div className="absolute bottom-full right-0 z-30 mb-2 grid grid-cols-[16rem_18rem] overflow-hidden rounded-xl border border-line bg-bg shadow-xl">
+                          {/* 左栏：Agent 网格与项目记忆入口 */}
+                          <div className="scrollbar-slim flex max-h-[75vh] w-64 shrink-0 flex-col overflow-y-auto border-r border-line p-2">
                             <p className="px-2 pb-2 pt-1 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
-                              和不同的智能体对话
+                              选择 Agent
                             </p>
-                            <div className="scrollbar-slim flex-1 overflow-y-auto">
+                            <div className="scrollbar-slim grid max-h-60 shrink-0 grid-cols-3 gap-1.5 overflow-y-auto p-1">
                             {peers.length === 0 && (
-                              <p className="px-2 py-1.5 text-2xs text-faint">名册加载中…</p>
+                              <p className="col-span-3 px-2 py-1.5 text-2xs text-faint">名册加载中…</p>
                             )}
                             {peers.map((p) => (
                               <button
                                 key={p.id}
                                 type="button"
+                                title={p.name}
+                                aria-label={p.name}
+                                aria-pressed={effectiveAgentId === p.id}
                                 onClick={() => {
                                   /* 内置 Agent 存空串 = 清除所选、回到默认（后端落 NULL） */
                                   const next = p.builtin ? '' : p.id
                                   setAgentId(next)
                                   if (sessionId !== null) void saveConfig(sessionId, { agentId: next })
                                 }}
-                                className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition ${
+                                className={`flex min-w-0 cursor-pointer flex-col items-center gap-2 rounded-lg border px-1.5 py-3 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
                                   effectiveAgentId === p.id
-                                    ? 'bg-accent/10 font-medium text-fg'
-                                    : 'text-muted hover:bg-fg/5 hover:text-fg'
+                                    ? 'border-accent/40 bg-accent/10 font-medium text-accent'
+                                    : 'border-transparent text-muted hover:border-line hover:bg-fg/5 hover:text-fg'
                                 }`}
                               >
                                 <PeerAvatar
                                   name={p.name}
                                   avatar={p.avatar}
-                                  size="h-7 w-7"
-                                  textClass="text-xs"
+                                  size="h-11 w-11"
+                                  textClass="text-base"
                                 />
-                                <span className="flex-1 truncate">{p.name}</span>
-                                {effectiveAgentId === p.id && (
-                                  <svg
-                                    className="h-3.5 w-3.5 shrink-0"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    aria-hidden="true"
-                                  >
-                                    <path
-                                      d="m5 12.5 4.5 4.5L19 7"
-                                      stroke="currentColor"
-                                      strokeWidth="2.2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
-                                )}
+                                <span className="w-full truncate text-xs leading-4">{p.name}</span>
                               </button>
                             ))}
                           </div>
                           {effectiveAgentId !== 'builtin' && (
-                            <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs text-faint">
+                            <p className="mt-1 px-2 pt-2 text-2xs text-faint">
                               由「{currentAgentName}」的人设决定 system；右栏「身份提示词」对其不生效
                             </p>
                           )}
-                          </div>
-                          {/* 右栏：原有会话配置（模型 / 身份提示词 / 显示 / 生成 / 检索 / 调试） */}
-                          <div className="w-72 p-1.5">
+                          <div className="mt-3 border-t border-line pt-3">
                           <p className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
-                            项目（记忆归属）
+                            项目与记忆
                           </p>
                           <div className="px-2 pb-1.5">
                             <Select
                               value={projectId}
-                              onChange={(next) => {
-                                setProjectId(next)
-                                /* 已开着的会话切换项目：记忆读侧立即按新作用域生效（旧项目条目不删、只是不再注入） */
-                                if (sessionId !== null) void bindSessionProject(sessionId, next || null)
-                              }}
+                              onChange={(next) => { void selectProject(next) }}
                               options={[
                                 { value: '', label: '无项目（个人工作域）' },
                                 ...projects.map((p) => ({
@@ -2178,7 +2225,32 @@ export default function Home({ connErr }: Props) {
                                 })),
                               ]}
                             />
+                          <p className="mt-1 text-2xs text-faint">绑定后，同一 Agent 可续接项目内其他会话的最近进度。</p>
+                            <div className="mt-3 flex flex-col gap-2">
+                              <button type="button" disabled={busy || projectSaving} className={`${projectActionBtn} border-accent bg-accent text-accent-fg hover:border-accent-hover hover:bg-accent-hover`} onClick={() => { setMenuOpen(false); setProjectDialog('create') }}>
+                                <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                                <span>新建项目并绑定</span>
+                              </button>
+                              {sessionId && <>
+                                <button type="button" disabled={busy || projectSaving} className={`${projectActionBtn} border-line bg-bg text-fg hover:border-accent/40 hover:bg-accent/5`} onClick={() => { setMenuOpen(false); setProjectDialog('organize') }}>
+                                  <svg className="h-4 w-4 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M8 12h8M8 16h5" /></svg>
+                                  <span>将当前会话整理为项目</span>
+                                </button>
+                                <button type="button" disabled={busy || projectSaving} className={`${projectActionBtn} border-line bg-bg text-fg hover:border-accent/40 hover:bg-accent/5`} onClick={() => { void continueInNewSession() }}>
+                                  <svg className="h-4 w-4 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg>
+                                  <span>在新会话继续{projectId ? '项目' : '当前会话'}</span>
+                                </button>
+                                <button type="button" disabled={projectSaving} className={`${projectActionBtn} mt-1 border-red-500/20 bg-red-500/5 text-red-500 hover:border-red-500/40 hover:bg-red-500/10`} onClick={() => { void revokeContinuation() }}>
+                                  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M9 9h6v6H9Z" /></svg>
+                                  <span>停止本会话的跨会话续接</span>
+                                </button>
+                              </>}
+                            </div>
                           </div>
+                          </div>
+                          </div>
+                          {/* 右栏：原有会话配置（模型 / 身份提示词 / 显示 / 生成 / 检索 / 调试） */}
+                          <div className="scrollbar-slim max-h-[75vh] w-72 overflow-y-auto p-1.5">
                           <p className="px-2 pb-1 pt-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                             模型
                           </p>
@@ -2619,6 +2691,14 @@ export default function Home({ connErr }: Props) {
           </button>
         </div>
       )}
+
+      {projectDialog && <ProjectDialog
+        organize={projectDialog === 'organize'}
+        initialName={sessions.find(item => item.id === sessionId)?.title ?? ''}
+        projects={projects}
+        onConfirm={saveProjectChoice}
+        onClose={() => setProjectDialog(null)}
+      />}
 
       {/* 子代理完整结论：点气泡打开，Esc / 关闭钮退出（可拖动、无遮罩，与其它详情窗一致） */}
       {reportView && (
