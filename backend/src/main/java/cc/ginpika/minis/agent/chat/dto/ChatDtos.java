@@ -3,7 +3,7 @@ package cc.ginpika.minis.agent.chat.dto;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 
-/** AI 会话请求/响应对（ai/ChatService ↔ 前端） */
+/** AI 会话请求/响应对（ChatController ↔ 前端） */
 public final class ChatDtos {
 
     /** POST /api/chat body：sessionId 缺省=最近会话或新建；modelId/promptId 缺省=设置页默认项 */

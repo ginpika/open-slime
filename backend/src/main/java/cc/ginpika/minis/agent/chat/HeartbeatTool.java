@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
  *
  * <p>对话工具面（CHAT）里挂了几个心跳工具——
  * 派职责（delegate_heartbeat）与立/改/撤编制（create_heartbeat / update_heartbeat / delete_heartbeat，另有 list_heartbeats），
- * 执行要落到「潜意识」模块——由 {@link ChatService} 在工具分发时转交过来。
+ * 执行要落到「潜意识」模块——由 {@link ChatToolDispatcher} 在工具分发时转交过来。
  * 抽成接口是为了让依赖方向单向：潜意识模块依赖 chat 包（会话编排与工具执行口），
  * 而 chat 包不反过来依赖潜意识模块。
  *

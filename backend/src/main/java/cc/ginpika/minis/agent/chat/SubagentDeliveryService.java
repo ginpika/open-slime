@@ -25,7 +25,7 @@ import org.springframework.stereotype.Component;
 /**
  * 子代理结论的投递侧：把跑完的子代理回执渲染进它派出去的那个会话。
  *
- * <p>从 {@link ChatService} 搬出来（行为零变化）。它监听两个事件、各做一件事：
+ * <p>从 {@link ChatTurnRunner} 搬出来（行为零变化）。它监听两个事件、各做一件事：
  * <ul>
  *   <li>{@link #onSubagentReport}——一件跑完：把长报告压成「标题 + 摘要」，落成一条
  *       {@code kind=subagent} 气泡（前端只显示卡片，点开看全文）；</li>

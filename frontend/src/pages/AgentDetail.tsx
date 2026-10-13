@@ -52,17 +52,19 @@ import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
 import AgentBackground, { SUB_TABS, type SubView } from './AgentBackground'
 import PromptsPanel from './PromptsPanel'
+import TtsPanel from '../components/TtsPanel'
 
 /** 路径末段用 new 表示「新建成员」（成员 id 是 uuid，不会撞） */
 const NEW_ID = 'new'
 
 /** 右栏 tab：提示词（最优先配置，放最左）/ 能力 / 后台各子页（心跳·常驻职责·行动日志·RAG 召回）/
  *  图谱人格锚点。各块都不短，切换显示而不是竖着堆成一整条长栏 */
-type RightTab = 'cap' | SubView | 'anchor' | 'prompt'
+type RightTab = 'cap' | SubView | 'anchor' | 'prompt' | 'tts'
 
 const RIGHT_TABS: { key: RightTab; label: string }[] = [
   { key: 'prompt', label: '提示词 & 上下文工程' },
   { key: 'cap', label: '能力' },
+  { key: 'tts', label: '语音配置' },
   ...SUB_TABS,
   { key: 'anchor', label: '图谱人格锚点' },
 ]
@@ -776,6 +778,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
 
             <div className="p-5">
             {/* 能力：逐成员各配一份——额外可用工具（按业务领域分 Tab）+ 可访问的工作空间（绑了才给终端工具） */}
+            {tab === 'tts' && (peer ? <TtsPanel agentId={peer.id} /> : <kit.Empty>请先保存 Agent，再配置语音档案。</kit.Empty>)}
             {tab === 'cap' && (
               <div className="flex flex-col gap-5">
                 <p className="text-sm leading-relaxed text-muted">

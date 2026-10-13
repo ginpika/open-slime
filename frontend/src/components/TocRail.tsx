@@ -32,12 +32,15 @@ export default function TocRail({
   scroller,
   label = 'Contents',
   compact = false,
+  expanded = false,
 }: {
   items: TocItem[]
   side?: 'left' | 'right'
   scroller?: () => HTMLElement | null
   label?: string
   compact?: boolean
+  /** Always-visible directory for settings and other pages with room beside the content. */
+  expanded?: boolean
 }) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const navRef = useRef<HTMLElement>(null)
@@ -57,7 +60,7 @@ export default function TocRail({
         return
       }
       const top = sc.getBoundingClientRect().top
-      let current: string | null = null
+      let current: string | null = expanded ? ids[0] ?? null : null
       for (const id of ids) {
         const el = document.getElementById(id)
         if (el && el.getBoundingClientRect().top - top <= 96) current = id
@@ -67,7 +70,7 @@ export default function TocRail({
     onScroll()
     sc.addEventListener('scroll', onScroll, { passive: true })
     return () => sc.removeEventListener('scroll', onScroll)
-  }, [idsKey, scroller])
+  }, [idsKey, scroller, expanded])
 
   /* 点击用 scrollIntoView：直接改 hash 会与 hash 路由冲突 */
   const jump = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
@@ -80,6 +83,13 @@ export default function TocRail({
 
   /* 圆点轨要渲染的项：紧凑档只保留最近 RAIL_MAX 个点（卡片列表仍是全量，靠滚动看全） */
   const railItems = compact ? items.slice(-RAIL_MAX) : items
+
+  if (expanded) return (
+    <nav ref={navRef} aria-label={label} className="ui-card ui-surface p-4">
+      <p className="ui-label mb-3">{label}</p>
+      <TocList items={items} activeId={activeId} jump={jump} />
+    </nav>
+  )
 
   return (
     <nav
@@ -159,7 +169,7 @@ function TocList({
             }`
         return (
           <li key={it.id}>
-            <a href={`#${it.id}`} onClick={(e) => jump(e, it.id)} title={it.text} className={cls}>
+            <a href={`#${it.id}`} onClick={(e) => jump(e, it.id)} title={it.text} aria-current={active ? 'location' : undefined} className={cls}>
               {it.text}
             </a>
           </li>

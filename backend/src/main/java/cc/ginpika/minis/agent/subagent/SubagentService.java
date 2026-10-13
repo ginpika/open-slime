@@ -19,7 +19,6 @@ import cc.ginpika.minis.ai.core.MemoryExec;
 import cc.ginpika.minis.ai.core.MemoryScopeCtx;
 import cc.ginpika.minis.ai.core.MemorySurface;
 import cc.ginpika.minis.agent.runtime.ExecStore;
-import cc.ginpika.minis.agent.runtime.TaskRunner;
 import cc.ginpika.minis.agent.runtime.TaskStore;
 import cc.ginpika.minis.agent.runtime.ToolBatch;
 import cc.ginpika.minis.ai.core.prompt.PromptManager;
@@ -85,7 +84,7 @@ public class SubagentService implements SubagentTool {
     private cc.ginpika.minis.agent.chat.store.HubSessionStore hubSessions;
     @org.springframework.beans.factory.annotation.Autowired
     private cc.ginpika.minis.project.ProjectStore projects;
-    private final TaskRunner runner;
+    private final AgentRunner runner;
     private final ExecStore store;
     /** 任务：对话侧的异步派活每条落一行，进程重启后可恢复为「已中断、可重跑」 */
     private final TaskStore tasks;
@@ -97,7 +96,7 @@ public class SubagentService implements SubagentTool {
     private final ObjectMapper om;
     /** 上下文平面：子代理的 system 由它 + {@code SubagentContextProvider} 组装（见 STEP 6-③） */
     private final ContextBuilder context;
-    /** 结论投回的落点：发事件让 ChatService 把「子代理回报」渲染进派它的那个会话 */
+    /** 结论投回的落点：发事件让 SubagentDeliveryService 把「子代理回报」渲染进派它的那个会话 */
     private final ApplicationEventPublisher publisher;
 
     /** 子代理自己开的批次序号（与心跳的 beat 无关，只是页面上的 #N 展示用） */
@@ -118,7 +117,7 @@ public class SubagentService implements SubagentTool {
     /** 各会话在跑的子代理（hubId → 执行 id）：每轮据此告诉主模型「还有什么活派出去没回来」 */
     private final ConcurrentHashMap<String, Set<Long>> running = new ConcurrentHashMap<>();
 
-    public SubagentService(TaskRunner runner, ExecStore store, TaskStore tasks,
+    public SubagentService(AgentRunner runner, ExecStore store, TaskStore tasks,
                            ScratchpadStore scratchpad, PromptManager prompts,
                            ToolManager tools, KnowledgeToolbox toolbox, ObjectMapper om,
                            @Lazy ContextBuilder context, ApplicationEventPublisher publisher) {
@@ -185,7 +184,7 @@ public class SubagentService implements SubagentTool {
     /**
      * 这一批跑完了才收：还欠着执行、或调用方还没说要收，都不动。
      *
-     * <p>收批也是「整批子代理都回来了」的唯一时点：在这里通知 {@code ChatService} 补一条整体的
+     * <p>收批也是「整批子代理都回来了」的唯一时点：在这里通知 {@code SubagentDeliveryService} 补一条整体的
      * 秘书式总结——一次输入派出多个子代理时，总结只做一次（每件的结论仍各自落一条气泡）。
      */
     private void settle(String runId) {
@@ -235,7 +234,7 @@ public class SubagentService implements SubagentTool {
         List<String> tools = names(args.path("tools"));
         String title = title(args.path("name").asText(""), instruction);
 
-        TaskRunner.Outcome outcome;
+        AgentRunner.Outcome outcome;
         try {
             outcome = runSync(batchId, agentId, title, instruction, tools, parentTaskId,
                     args.toString());
@@ -257,10 +256,10 @@ public class SubagentService implements SubagentTool {
      * 同步派活与对话侧异步派活同属子代理流，任务树里应当都在——故这里同样落一行任务，
      * 并挂到派它的那个任务下（心跳主会话 / 计划）。
      */
-    private TaskRunner.Outcome runSync(String runId, String agentId, String title, String instruction,
+    private AgentRunner.Outcome runSync(String runId, String agentId, String title, String instruction,
                                        List<String> toolNames, Long parentTaskId, String payload) {
         MemoryExec inherited = memScope(agentId, null);
-        TaskRunner.Request req = MemoryScopeCtx.run(inherited, () -> request(runId, agentId, title,
+        AgentRunner.Request req = MemoryScopeCtx.run(inherited, () -> request(runId, agentId, title,
                 instruction, toolNames, null, parentTaskId, null, payload));
         /* 开一次执行＝建那行任务（带上下文与来源）；收尾也由执行器一并落状态 */
         long execId = runner.openExec(req);
@@ -280,13 +279,13 @@ public class SubagentService implements SubagentTool {
      * {@code hubId} 用于注入本会话的共享黑板（子代理的结论沉淀）；心跳侧无会话，传 null。
      * {@code agentId} 写进任务行，标明这次子代理是替哪个 Agent 干的。
      */
-    private TaskRunner.Request request(String runId, String agentId, String title, String instruction,
+    private AgentRunner.Request request(String runId, String agentId, String title, String instruction,
                                        List<String> toolNames, String hubId, Long parentTaskId,
                                        String sessionId, String payload) {
         ArrayNode toolSchemas = toolNames.isEmpty()
                 ? tools.readOnlyToolsOf(ToolSurface.CHAT)
                 : tools.toolsOf(toolNames, ToolSurface.CHAT);
-        return new TaskRunner.Request(runId, ExecStore.KIND_AGENT, null, title, null,
+        return new AgentRunner.Request(runId, ExecStore.KIND_AGENT, null, title, null,
                 messages(prompts.resolve(SubagentBlock.KEY), instruction, hubId, agentId), toolSchemas,
                 (call, execId) -> toolbox.run(call, "agent"), parentTaskId, sessionId, agentId, payload);
     }
@@ -359,7 +358,7 @@ public class SubagentService implements SubagentTool {
                        Long parentTaskId) {
         String instruction = args.path("instruction").asText("").trim();
         MemoryExec inherited = memScope(agentId, hubId);
-        TaskRunner.Request req = MemoryScopeCtx.run(inherited, () -> request(batchId, agentId,
+        AgentRunner.Request req = MemoryScopeCtx.run(inherited, () -> request(batchId, agentId,
                 title(args.path("name").asText(""), instruction),
                 instruction, names(args.path("tools")), hubId, parentTaskId, hubId, args.toString()));
         /* 开一次执行＝建那行任务：上下文、来源、归属会话、待重跑输入（工具调用参数原文）都在这一行里 */
@@ -385,8 +384,8 @@ public class SubagentService implements SubagentTool {
     }
 
     /** 后台跑一次子代理：无论成败都把回声投回会话——不投，派活方就永远等不到它的消息 */
-    private void runAsync(TaskRunner.Request req, long execId, String hubId) {
-        TaskRunner.Outcome outcome;
+    private void runAsync(AgentRunner.Request req, long execId, String hubId) {
+        AgentRunner.Outcome outcome;
         try {
             outcome = MemoryScopeCtx.run(memScope(req.agentId(), hubId),
                     () -> AgentScope.run(req.agentId(), () -> runner.run(req, execId)));
@@ -394,7 +393,7 @@ public class SubagentService implements SubagentTool {
             log.warn("子代理「{}」执行失败：{}", req.title(), e.getMessage());
             /* 引擎中途抛错时那行任务还停在 running：这里补一笔，免得页面上永远显示「进行中」 */
             store.finishExec(execId, "failed", null, null, null, e.getMessage());
-            outcome = new TaskRunner.Outcome(execId, "failed", null, e.getMessage());
+            outcome = new AgentRunner.Outcome(execId, "failed", null, e.getMessage());
         } finally {
             /* 执行既然结束了就先注销「在跑」：投回结论时还要跑摘要与秘书总结两次模型调用，
                不该让主模型在这段时间里仍被告知这件活没回来 */
@@ -410,14 +409,14 @@ public class SubagentService implements SubagentTool {
     }
 
     /**
-     * 结论投回派它的那个会话：把「谁、跑出了什么」发出去，由 {@code ChatService} 落一条结论气泡
+     * 结论投回派它的那个会话：把「谁、跑出了什么」发出去，由 {@code SubagentDeliveryService} 落一条结论气泡
      * （只显示标题+摘要，点开看全文）。主模型的秘书式总结不在这里——那要等整批都跑完，
      * 由 {@link #settle} 发收批事件时做一次（一次输入派多个子代理，也只总结一次）。
      *
      * <p>这一条与主对话自己的答复地位相同：后续轮次照常把它带进上下文，
      * 于是「子代理查到的」也能被主模型接着用。
      */
-    private void deliver(String hubId, String title, long execId, TaskRunner.Outcome outcome) {
+    private void deliver(String hubId, String title, long execId, AgentRunner.Outcome outcome) {
         if (hubId == null || hubId.isBlank()) {
             return;
         }

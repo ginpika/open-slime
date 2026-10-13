@@ -3,7 +3,6 @@ package cc.ginpika.minis.arch;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -35,6 +34,26 @@ class LayeringTest {
     private static final String MEMORY = "cc.ginpika.minis.ai.memory..";
     private static final String TERMINAL = "cc.ginpika.minis.ai.terminal..";
     private static final String AGENT = "cc.ginpika.minis.agent..";
+
+    @Test
+    void agentServicesDoNotDependOnWebTransport() {
+        noClasses().that().resideInAPackage(AGENT)
+                .should().dependOnClassesThat().resideInAPackage("cc.ginpika.minis.web..")
+                .because("应用编排不依赖 HTTP 控制器，流式回调契约归应用层")
+                .check(CLASSES);
+    }
+
+    @Test
+    void contextAssemblyDoesNotExecuteAgentsOrTools() {
+        noClasses().that().haveSimpleName("ChatContextService")
+                .should().dependOnClassesThat().haveSimpleName("AgentRuntime")
+                .because("上下文预览与真实请求共用只读组装路径，不运行模型循环")
+                .check(CLASSES);
+        noClasses().that().haveSimpleName("ChatContextService")
+                .should().dependOnClassesThat().haveSimpleName("ChatToolDispatcher")
+                .because("上下文组装不执行工具")
+                .check(CLASSES);
+    }
 
     @Test
     void coreDoesNotDependOnKnowledge() {

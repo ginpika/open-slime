@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 /**
  * 执行留痕的编解码：思考分段（trace）与工具轮原生消息（tool_rounds）的 JSON 序列化 / 反序列化。
  *
- * <p>这套格式原本有两份实现——{@code ChatService} 的 writeTrace / readTrace / writeRounds 与
+ * <p>这套格式原本有两份实现——{@code 旧会话执行器} 的 writeTrace / readTrace / writeRounds 与
  * {@code AgentRunner} 的 writeStr——同一个 JSON 形状各写一遍。收在这里，两条流共用一份。
  *
  * <p>纯函数：不持有状态，也不需要成为 bean（故为静态工具，调用方把 {@link ObjectMapper} 传进来）。

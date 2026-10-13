@@ -11,9 +11,9 @@ import org.slf4j.LoggerFactory;
 /**
  * 对话补全消息的协议与解码约定：出站消息该怎么拼、历史留痕该怎么读回来。
  *
- * <p>这些约定被多条流共用——对话循环（{@code ChatService#runChat}）、执行引擎（{@code AgentRunner}）、
+ * <p>这些约定被多条流共用——对话循环（{@code ChatTurnRunner}）、执行引擎（{@code AgentRunner}）、
  * 历史回放（{@link cc.ginpika.minis.agent.chat.turn.History}）——与「谁在组装」无关，故独立于此，不挂在任何业务类上：
- * 组装搬进 {@link ContextBuilder} 之后，若这些助手还留在 {@code ChatService}，
+ * 组装搬进 {@link ContextBuilder} 之后，若这些助手还留在 {@code 旧会话执行器}，
  * 上下文子系统再想用它们就成了反向依赖。
  */
 public final class ChatProtocol {

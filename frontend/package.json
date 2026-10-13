@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test:memory": "node tests/run-memory-tests.mjs"
+    "test:memory": "node tests/run-memory-tests.mjs",
+    "test:chat": "node --test tests/settled-chat.test.cjs"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",

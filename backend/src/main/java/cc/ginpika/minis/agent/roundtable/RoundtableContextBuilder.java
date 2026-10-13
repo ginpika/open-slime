@@ -7,6 +7,10 @@ import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.RoundtableTopicStore.TopicRow;
 import cc.ginpika.minis.ai.core.prompt.block.CoordinationBlock;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import cc.ginpika.minis.config.RoundtableProps;
+import cc.ginpika.minis.stats.TokenUsageService;
 import org.springframework.stereotype.Component;
 
 /**
@@ -33,12 +37,19 @@ public class RoundtableContextBuilder {
     private final AgentDirectory directory;
     private final AgentPromptService peerPrompts;
     private final TopicStateMachine machine;
+    private final RoundtableMessageStore maMessages;
+    private final RoundtableTodoStore taskBoard;
+    private final RoundtableProps props;
 
     public RoundtableContextBuilder(AgentDirectory directory, AgentPromptService peerPrompts,
-                              TopicStateMachine machine) {
+                              TopicStateMachine machine, RoundtableMessageStore maMessages,
+                              RoundtableTodoStore taskBoard, RoundtableProps props) {
         this.directory = directory;
         this.peerPrompts = peerPrompts;
         this.machine = machine;
+        this.maMessages = maMessages;
+        this.taskBoard = taskBoard;
+        this.props = props;
     }
 
     /**
@@ -133,5 +144,158 @@ public class RoundtableContextBuilder {
             case "closed" -> "已结束";
             default -> "进行中";
         };
+    }
+
+    /**
+     * 调度器交给这位成员的那条 user：一份调度文书（{@code <dispatch>}），里面两段——
+     * {@code <transcript>} 是本场对话的公开记录，{@code <situation>} 是此刻局面。
+     *
+     * <p>分节是为了把「谁说了什么」「圆桌上发生过什么」「此刻谁是什么状态」在结构上分开：
+     * 三类内容混在一段散文里时，模型只能靠「谁：」这种前缀去猜哪句是发言、哪句是动作。
+     *
+     * @param budget 公开记录能占的 token 预算（已扣除 system、工具面与输出预留）
+     */
+    public String dispatch(String sessionId, int budget, TopicRow topic, String peerId) {
+        StringBuilder sb = new StringBuilder(RoundtablePrompts.DISPATCH_HEAD).append('\n');
+        sb.append(RoundtablePrompts.TRANSCRIPT_HEAD).append('\n');
+        for (String line : transcriptLines(sessionId, budget)) {
+            sb.append(line).append('\n');
+        }
+        sb.append(RoundtablePrompts.TRANSCRIPT_TAIL).append('\n');
+        if (topic != null) {
+            sb.append(situation(topic, peerId)).append('\n');
+            /* 顺手把共享任务区摊在桌面上：不摊，讨论就看不见「哪条受阻、还有什么没做」——
+               成员只会回应人的那句话，受阻条目与后续交付就断在这里（踩过这个坑） */
+            String board = boardBlock(topic.sessionId());
+            if (!board.isEmpty()) {
+                sb.append(board).append('\n');
+            }
+        }
+        return sb.append(RoundtablePrompts.DISPATCH_TAIL).toString();
+    }
+
+    /**
+     * 共享任务区的快照（只列没做完的条目）：贴在局面之后，让讨论看得见全桌的活。
+     *
+     * <p>受阻条目会带上原因——那正是这轮讨论要处理的事。
+     */
+    private String boardBlock(String sessionId) {
+        if (sessionId == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(RoundtablePrompts.BOARD_HEAD).append('\n');
+        boolean any = false;
+        for (RoundtableTodoStore.TodoRow t : taskBoard.openOnes(sessionId)) {
+            if (RoundtableTodoStore.STATUS_DROPPED.equals(t.status())) {
+                continue;
+            }
+            any = true;
+            sb.append("  <todo id=\"").append(t.id()).append("\" status=\"").append(t.status()).append('"');
+            if (t.ownerPeer() != null) {
+                sb.append(" owner=\"").append(nameOr(t.ownerPeer())).append('"');
+            }
+            sb.append('>').append(t.title());
+            if (RoundtableTodoStore.STATUS_BLOCKED.equals(t.status())
+                    && t.blockReason() != null && !t.blockReason().isBlank()) {
+                sb.append("（受阻：").append(t.blockReason()).append('）');
+            }
+            sb.append("</todo>\n");
+        }
+        return any ? sb.append(RoundtablePrompts.BOARD_TAIL).toString() : "";
+    }
+
+    /**
+     * 本次回放哪些公开记录行：先按条数封顶，再从<b>最新往回</b>按 token 预算收。
+     *
+     * <p>「从最新往回」是关键：圆桌的记录里既有人的话、也有各成员的发言与状态动作，
+     * 越靠后越相关。窗口的选取规则抽在 {@link #windowOf}（纯函数，便于单测）。
+     */
+    private List<String> transcriptLines(String sessionId, int budget) {
+        List<RoundtableMessageStore.MessageRow> all = maMessages.bySession(sessionId);
+        if (all.isEmpty()) {
+            return List.of();
+        }
+        List<Long> costs = new ArrayList<>(all.size());
+        for (RoundtableMessageStore.MessageRow m : all) {
+            costs.add(TokenUsageService.estimateTokens(lineOf(m)));
+        }
+        List<String> out = new ArrayList<>();
+        for (int index : windowOf(costs, props.getHistoryLimit(), budget, lastUserIndex(all))) {
+            out.add(lineOf(all.get(index)));
+        }
+        return out;
+    }
+
+    /**
+     * 公开记录窗口的选取规则（纯函数：只吃「每行的 token 估算」与两个上限，不碰库，故可直接单测）。
+     *
+     * <p>三条规则，按优先级：
+     * <ol>
+     *   <li><b>从最新往回</b>收：累加最靠后的若干行，直到再加一行就超预算为止；</li>
+     *   <li><b>最后一行永远保留</b>：哪怕它一个人就超预算——空着比只给半句强；</li>
+     *   <li><b>「本轮人的话」必须在</b>（{@code askedIndex}）：它是这一桌为什么开口的全部依据。
+     *       窗口没够到它（被条数封顶挡在外面，或预算先耗尽）时，把它补在<b>最末</b>——
+     *       紧邻后面的局面交代，是模型注意力最近处。少了它，成员会以为「还没有实际话题」而集体沉默。</li>
+     * </ol>
+     *
+     * @param costs      每行的 token 估算（按时间升序）
+     * @param limit      条数上限
+     * @param budget     token 预算
+     * @param askedIndex 最近一条「人的话」的下标；没有则 -1
+     * @return 要回放的行的下标（升序；补进来的那条在最末）
+     */
+    static List<Integer> windowOf(List<Long> costs, int limit, int budget, int askedIndex) {
+        int end = costs.size();
+        if (end == 0) {
+            return List.of();
+        }
+        int floor = Math.max(0, end - Math.max(1, limit));
+        int keep = end;
+        long used = 0;
+        while (keep > floor) {
+            long cost = Math.max(0L, costs.get(keep - 1));
+            /* 已经保住了一行，再往前加会超预算就停手（第一行不看预算，见规则 2） */
+            if (keep < end && used + cost > budget) {
+                break;
+            }
+            used += cost;
+            keep--;
+        }
+        List<Integer> out = new ArrayList<>();
+        for (int i = keep; i < end; i++) {
+            out.add(i);
+        }
+        if (askedIndex >= 0 && askedIndex < keep) {
+            out.add(askedIndex);
+        }
+        return out;
+    }
+
+    /** 最近一条「人的话」的下标（没有返回 -1）：它是「本轮人的话必须带上」的锚点 */
+    private static int lastUserIndex(List<RoundtableMessageStore.MessageRow> rows) {
+        for (int i = rows.size() - 1; i >= 0; i--) {
+            if (RoundtableMessageStore.ROLE_USER.equals(rows.get(i).role())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * 公开记录里的一行：人的话与成员的发言是 {@code <message speaker="谁">}，状态机动作是
+     * {@code <event>}——两类内容在结构上就分开，模型不必靠前缀去猜这一行是发言还是动作。
+     */
+    private static String lineOf(RoundtableMessageStore.MessageRow m) {
+        if (RoundtableMessageStore.ROLE_EVENT.equals(m.role())) {
+            return "<event>" + m.content() + "</event>";
+        }
+        String who = RoundtableMessageStore.ROLE_USER.equals(m.role()) ? "用户"
+                : (m.peerName() == null || m.peerName().isBlank() ? "某位成员" : m.peerName());
+        return "<message speaker=\"" + who + "\">" + m.content() + "</message>";
+    }
+
+    private String nameOr(String peerId) {
+        String name = directory.nameOf(peerId);
+        return name == null ? peerId : name;
     }
 }

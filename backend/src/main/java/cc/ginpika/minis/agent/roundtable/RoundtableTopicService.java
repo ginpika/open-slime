@@ -1,6 +1,6 @@
 package cc.ginpika.minis.agent.roundtable;
 
-import cc.ginpika.minis.agent.chat.ChatService;
+import cc.ginpika.minis.agent.chat.ChatStream;
 import cc.ginpika.minis.agent.roundtable.TopicStateMachine.PeerState;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.member.AgentDtos;
@@ -577,7 +577,7 @@ public class RoundtableTopicService {
             RoundtableChatService.Speech speech;
             try {
                 speech = chat.speak(topicId, next.id(), forward(sink));
-            } catch (ChatService.ChatCancelledException cancelledEx) {
+            } catch (ChatStream.ChatCancelledException cancelledEx) {
                 /* 人说了一句打断（或按了停止）：当前这位的话停在这里，本轮到此为止 */
                 machine.interrupt(topicId, RoundtableTopicEventStore.ACTOR_USER, next.id(), "被打断");
                 this.interruptedPeer = next.id();
@@ -796,9 +796,9 @@ public class RoundtableTopicService {
 
     // ---------- 私有 ----------
 
-    /** 成员发言的流式回调转发：只把增量、发言分段与工具调用转出去（父类的 meta 带的是 -1，无意义） */
-    private ChatService.StreamSink forward(StreamSink sink) {
-        return new ChatService.StreamSink() {
+    /** 成员发言的流式回调转发：只转发增量、发言分段与工具调用，忽略无用户输入的 meta。 */
+    private ChatStream forward(StreamSink sink) {
+        return new ChatStream() {
             @Override
             public void delta(String reasoning, String content) {
                 sink.delta(reasoning, content);

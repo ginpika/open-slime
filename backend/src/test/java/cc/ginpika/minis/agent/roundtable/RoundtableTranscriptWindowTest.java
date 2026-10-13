@@ -20,46 +20,46 @@ class RoundtableTranscriptWindowTest {
     void generousBudgetKeepsEverything() {
         /* 预算远大于总量：一行都不该丢（这正是那次事故的反面） */
         assertEquals(List.of(0, 1, 2, 3),
-                RoundtableChatService.windowOf(List.of(10L, 10L, 10L, 10L), 128, 100_000, -1));
+                RoundtableContextBuilder.windowOf(List.of(10L, 10L, 10L, 10L), 128, 100_000, -1));
     }
 
     @Test
     void tightBudgetKeepsTheNewestOnes() {
         /* 预算 250、每行 100：只留最后两行（200 ≤ 250；再加一行 300 > 250） */
         assertEquals(List.of(2, 3),
-                RoundtableChatService.windowOf(List.of(100L, 100L, 100L, 100L), 128, 250, -1));
+                RoundtableContextBuilder.windowOf(List.of(100L, 100L, 100L, 100L), 128, 250, -1));
     }
 
     @Test
     void countLimitCapsFirst() {
         /* 条数上限 2：预算再多也只回放最后两行 */
         assertEquals(List.of(3, 4),
-                RoundtableChatService.windowOf(List.of(1L, 1L, 1L, 1L, 1L), 2, 100_000, -1));
+                RoundtableContextBuilder.windowOf(List.of(1L, 1L, 1L, 1L, 1L), 2, 100_000, -1));
     }
 
     @Test
     void keepsLastLineEvenWhenItAloneBlowsTheBudget() {
         /* 预算为 0：仍然保留最后一行——空着比只给半句强 */
         assertEquals(List.of(2),
-                RoundtableChatService.windowOf(List.of(50L, 50L, 50L), 128, 0, -1));
+                RoundtableContextBuilder.windowOf(List.of(50L, 50L, 50L), 128, 0, -1));
     }
 
     @Test
     void questionIsAlwaysCarriedEvenWhenOutsideTheWindow() {
         /* 人的话在第 0 行、窗口只够到最后一行：它必须被补上，且补在最末（紧邻局面） */
         assertEquals(List.of(3, 0),
-                RoundtableChatService.windowOf(List.of(100L, 100L, 100L, 100L), 128, 150, 0));
+                RoundtableContextBuilder.windowOf(List.of(100L, 100L, 100L, 100L), 128, 150, 0));
     }
 
     @Test
     void questionInsideTheWindowIsNotDuplicated() {
         /* 人的话本来就在窗口内：按原序回放，不重复 */
         assertEquals(List.of(2, 3),
-                RoundtableChatService.windowOf(List.of(100L, 100L, 100L, 100L), 128, 250, 3));
+                RoundtableContextBuilder.windowOf(List.of(100L, 100L, 100L, 100L), 128, 250, 3));
     }
 
     @Test
     void emptyHistoryYieldsNothing() {
-        assertEquals(List.of(), RoundtableChatService.windowOf(List.of(), 128, 100_000, -1));
+        assertEquals(List.of(), RoundtableContextBuilder.windowOf(List.of(), 128, 100_000, -1));
     }
 }

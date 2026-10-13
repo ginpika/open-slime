@@ -1,3 +1,6 @@
+import SpeechButton from '../components/SpeechButton'
+import { backfillSettledReply } from '../components/settledChat'
+import { getTtsSettings } from '../api/client'
 import {
   forwardRef,
   memo,
@@ -555,6 +558,8 @@ const AssistantRow = memo(function AssistantRow({
   showRounds,
   canBranch,
   onBranch,
+  speechAgentId,
+  speechEnabled,
 }: {
   msg: ChatMsg
   showCot: boolean
@@ -562,6 +567,8 @@ const AssistantRow = memo(function AssistantRow({
   /** 可分支（这条回复已落库、且当前不在生成中）；不满足时整排按钮不渲染 */
   canBranch: boolean
   onBranch: (msg: ChatMsg) => void
+  speechAgentId: string
+  speechEnabled: boolean
 }) {
   return (
     <div className="group break-words border-l border-line pl-4 text-md leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
@@ -596,6 +603,7 @@ const AssistantRow = memo(function AssistantRow({
             </svg>
             分支
           </button>
+          {speechEnabled && <SpeechButton text={msg.content} agentId={speechAgentId} />}
         </div>
       )}
     </div>
@@ -832,6 +840,12 @@ export default function Home({ connErr }: Props) {
   /* 本次会话使用的模型 / 系统提示词 / 是否显示 CoT / 工具轮数上限 / 思维链轮次计数：
      属会话级配置（「…」菜单），随会话存取——进入历史会话时从后端恢复，菜单变更时回写后端 */
   const [settings, setSettings] = useState<SettingsView | null>(null)
+  const [speechEnabled, setSpeechEnabled] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void getTtsSettings().then(v => { if (alive) setSpeechEnabled(v.profiles.length > 0) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
   /* 提示词页的「对话身份」位：会话可在「…」菜单里单独切换其版本 */
   const [prompts, setPrompts] = useState<PromptsView | null>(null)
   const [modelId, setModelId] = useState('')
@@ -1008,6 +1022,15 @@ export default function Home({ connErr }: Props) {
     committedRef.current = live
     setMsgs((m) => commitLive(m, live))
     clearLive(live.sessionId)
+    // The terminal stream has no assistant row ID. Fetch the persisted turn so actions work immediately.
+    void sessionMessages(live.sessionId).then(rows => {
+      if (activeSessionRef.current !== live.sessionId || committedRef.current !== live
+        || getLive(live.sessionId)?.running) return
+      setMsgs(current => backfillSettledReply(current, live, rows))
+    }).catch(() => {
+      if (activeSessionRef.current === live.sessionId && committedRef.current === live)
+        setToast('回复已结束，但消息操作加载失败，请重新打开会话重试')
+    })
   }, [live])
 
   /* 生成失败：统一在这里提示（本地发起与刷新后重挂两条路径共用一个 error 字段） */
@@ -2069,6 +2092,8 @@ export default function Home({ connErr }: Props) {
                     showRounds={showRounds}
                     canBranch={!busy && m.id != null && !m.streaming}
                     onBranch={onBranch}
+                    speechAgentId={agentId || 'builtin'}
+                    speechEnabled={speechEnabled}
                   />
                 ),
               )}

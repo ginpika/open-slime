@@ -1,6 +1,11 @@
 package cc.ginpika.minis.web.controller;
 
-import cc.ginpika.minis.agent.chat.ChatService;
+import cc.ginpika.minis.agent.chat.ChatTurnRunner;
+import cc.ginpika.minis.agent.chat.ChatContextService;
+import cc.ginpika.minis.agent.chat.ChatSessionService;
+import cc.ginpika.minis.agent.chat.ChatLiveStore;
+import cc.ginpika.minis.agent.chat.ChatStream;
+import cc.ginpika.minis.agent.chat.TodoService;
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,8 +33,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * AI 会话接口（B4）：/api/sessions*、/api/chat（SSO 门禁见 WebConfig/SsoInterceptor）。
  *
- * <p>只对接 {@link ChatService} 一个门面：生成 / 会话域 / 在途续传三摊由它分发，控制器不直接认识
- * 背后的领域对象（执行侧、会话域、在途仓）。
+ * <p>传输层负责 HTTP / SSE，生成、会话管理与在途续传由对应应用服务处理。
  */
 @RestController
 public class ChatController {
@@ -39,13 +43,22 @@ public class ChatController {
     /** SSE 流最长保持：与 nginx 的 proxy_read_timeout（300s）对齐 */
     private static final long STREAM_TIMEOUT_MS = 300_000L;
 
-    private final ChatService service;
+    private final ChatTurnRunner turns;
+    private final ChatContextService context;
+    private final ChatSessionService sessions;
+    private final ChatLiveStore live;
+    private final TodoService todo;
     private final ObjectMapper om;
     /** 流式会话在独立线程里跑（虚拟线程）：边收 LLM 边推前端，不占请求线程 */
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public ChatController(ChatService service, ObjectMapper om) {
-        this.service = service;
+    public ChatController(ChatTurnRunner turns, ChatContextService context, ChatSessionService sessions,
+                          ChatLiveStore live, TodoService todo, ObjectMapper om) {
+        this.turns = turns;
+        this.context = context;
+        this.sessions = sessions;
+        this.live = live;
+        this.todo = todo;
         this.om = om;
     }
 
@@ -56,7 +69,7 @@ public class ChatController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "input 为空");
         }
         try {
-            return service.chat(blank(req.sessionId()) ? null : req.sessionId(), input,
+            return turns.chat(blank(req.sessionId()) ? null : req.sessionId(), input,
                     req.modelId(), req.promptId());
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, e.getMessage(), e);
@@ -68,7 +81,7 @@ public class ChatController {
      * reasoning、content（增量片段）/ tool（一次工具调用：name+args），
      * 结束推 done（完整回复），异常推 error。
      *
-     * <p>每一片增量同时写进在途生成仓（经 {@link ChatService}）：发起方这条连接断了（刷新页面等）
+     * <p>每一片增量同时写进在途生成仓（经 {@link ChatLiveStore}）：发起方这条连接断了（刷新页面等）
      * 不再中断生成，结果照常落库、在途状态也让后来者能续看（见下面的续传流）。
      */
     @PostMapping(value = "/api/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -83,13 +96,13 @@ public class ChatController {
             /* 本次生成实际落入的会话 id：由 meta 事件给出（New Chat 时由后端新建），收尾按它落定在途状态 */
             String[] liveSid = {null};
             try {
-                ChatDtos.ChatReply reply = service.chatStream(
+                ChatDtos.ChatReply reply = turns.chatStream(
                         blank(req.sessionId()) ? null : req.sessionId(), input,
-                        req.modelId(), req.promptId(), new ChatService.StreamSink() {
+                        req.modelId(), req.promptId(), new ChatStream() {
                             @Override
                             public void meta(String sessionId, long messageId) {
                                 liveSid[0] = sessionId;
-                                service.liveStart(sessionId, messageId, input);
+                                live.start(sessionId, messageId, input);
                                 sendQuiet(emitter, alive, "meta",
                                         Map.of("sessionId", sessionId, "messageId", messageId));
                             }
@@ -97,7 +110,7 @@ public class ChatController {
                             @Override
                             public void round(int round) {
                                 if (liveSid[0] != null) {
-                                    service.liveRound(liveSid[0], round);
+                                    live.round(liveSid[0], round);
                                 }
                                 sendQuiet(emitter, alive, "round", Map.of("round", round));
                             }
@@ -105,7 +118,7 @@ public class ChatController {
                             @Override
                             public void delta(String reasoning, String content) {
                                 if (liveSid[0] != null) {
-                                    service.liveDelta(liveSid[0], reasoning, content);
+                                    live.delta(liveSid[0], reasoning, content);
                                 }
                                 if (reasoning != null) {
                                     sendQuiet(emitter, alive, "reasoning", Map.of("delta", reasoning));
@@ -118,20 +131,20 @@ public class ChatController {
                             @Override
                             public void tool(String name, String args) {
                                 if (liveSid[0] != null) {
-                                    service.liveTool(liveSid[0], name, args);
+                                    live.tool(liveSid[0], name, args);
                                 }
                                 sendQuiet(emitter, alive, "tool", Map.of("name", name, "args", args));
                             }
                         });
                 if (liveSid[0] != null) {
-                    service.liveFinish(liveSid[0], reply.message());
+                    live.finish(liveSid[0], reply.message());
                 }
                 sendQuiet(emitter, alive, "done", reply);
                 emitter.complete();
-            } catch (ChatService.ChatCancelledException e) {
+            } catch (ChatStream.ChatCancelledException e) {
                 /* 用户主动停止且无任何正文产出：在途状态落定（有正文的部分回答已由 service 落库），静默收尾不推 error */
                 if (liveSid[0] != null) {
-                    service.liveFinish(liveSid[0], null);
+                    live.finish(liveSid[0], null);
                 }
                 emitter.complete();
             } catch (Exception e) {
@@ -139,7 +152,7 @@ public class ChatController {
                 /* 出错即落日志（含堆栈），便于回溯「请求被打断」的具体成因 */
                 log.warn("流式会话失败：sessionId={} error={}", req.sessionId(), msg, e);
                 if (liveSid[0] != null) {
-                    service.liveFail(liveSid[0], msg);
+                    live.fail(liveSid[0], msg);
                 }
                 sendQuiet(emitter, alive, "error", Map.of("error", msg));
                 emitter.complete();
@@ -151,7 +164,7 @@ public class ChatController {
     /** 该会话此刻的在途生成快照（前端刷新后先查它：running=true 才去订阅下面的续传流） */
     @GetMapping("/api/sessions/{id}/live")
     public ChatDtos.LiveRun live(@PathVariable String id) {
-        return service.live(id);
+        return live.snapshot(id);
     }
 
     /**
@@ -165,7 +178,7 @@ public class ChatController {
     public SseEmitter liveStream(@PathVariable String id) {
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         AtomicBoolean alive = new AtomicBoolean(true);
-        boolean attached = service.attachLive(id, (name, payload) -> {
+        boolean attached = live.attach(id, (name, payload) -> {
             boolean sent = sendQuiet(emitter, alive, name, payload);
             if ("done".equals(name) || "error".equals(name)) {
                 emitter.complete();
@@ -186,12 +199,12 @@ public class ChatController {
      */
     @PostMapping("/api/chat/stop")
     public ChatDtos.StopResult stop(@RequestBody ChatDtos.StopRequest req) {
-        return new ChatDtos.StopResult(service.requestStop(req == null ? null : req.sessionId()));
+        return new ChatDtos.StopResult(turns.requestStop(req == null ? null : req.sessionId()));
     }
 
     @GetMapping("/api/sessions")
     public List<ChatDtos.SessionItem> sessions() {
-        return service.list();
+        return sessions.list();
     }
 
     /**
@@ -200,26 +213,26 @@ public class ChatController {
      */
     @PostMapping("/api/sessions")
     public ChatDtos.NewSession createSession(@RequestBody(required = false) ChatDtos.ProjectBind req) {
-        return service.create(req == null ? null : req.projectId());
+        return sessions.create(req == null ? null : req.projectId());
     }
 
     /** 绑定 / 解绑会话所属项目（记忆作用域切换：旧项目条目不删除、只是不再注入） */
     @PutMapping("/api/sessions/{id}/project")
     public ChatDtos.NewSession bindProject(@PathVariable String id,
                                           @RequestBody(required = false) ChatDtos.ProjectBind req) {
-        return service.setProject(id, req == null ? null : req.projectId());
+        return sessions.setProject(id, req == null ? null : req.projectId());
     }
 
     /** 删除会话（含其消息正本）：最近会话列表的删除按钮调用 */
     @DeleteMapping("/api/sessions/{id}")
     public ChatDtos.SessionDeleted deleteSession(@PathVariable String id) {
-        return service.delete(id);
+        return sessions.delete(id);
     }
 
     @GetMapping("/api/sessions/{id}/messages")
     public List<ChatDtos.MessageRow> messages(@PathVariable String id) {
         try {
-            return service.messages(id);
+            return sessions.messages(id);
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, e.getMessage(), e);
         }
@@ -229,34 +242,34 @@ public class ChatController {
      *  实时性由会话事件（kind=todo）驱动——清单一变，后端推一条，前端据此重拉本端点 */
     @GetMapping("/api/sessions/{id}/todos")
     public List<ChatDtos.TodoItem> todos(@PathVariable String id) {
-        return service.todos(id);
+        return todo.list(id, sessions.owner(id));
     }
 
     /** 会话的原始上下文预览：按与真实发送完全一致的规则组装的请求体（model + messages + tools），
      *  并附各 Turn 在 messages 中的切片；会话页「…」菜单的「查看原始上下文」调用（不发送、不落库） */
     @GetMapping("/api/sessions/{id}/raw-context")
     public ChatDtos.RawContext rawContext(@PathVariable String id) {
-        return service.rawContext(id);
+        return context.rawContext(id);
     }
 
     /** 某条回答（一个 Turn）的 LLM 调用留痕：每一轮真正发出的请求体与收到的响应体。
      *  「查看原始上下文」里每个 Turn 的「请求 / 响应」按钮调用（replyMessageId 取自 raw-context 的切片） */
     @GetMapping("/api/sessions/{id}/turns/{replyMessageId}/llm-calls")
     public ChatDtos.TurnCalls turnCalls(@PathVariable String id, @PathVariable long replyMessageId) {
-        return service.turnCalls(id, replyMessageId);
+        return context.turnCalls(id, replyMessageId);
     }
 
     /** 会话配置（「…」菜单在该会话的选择：模型 / 提示词 / 是否显示 CoT）：仅更新传入的字段 */
     @PutMapping("/api/sessions/{id}/config")
     public ChatDtos.SessionConfig updateConfig(@PathVariable String id,
                                                @RequestBody ChatDtos.ConfigRequest req) {
-        return service.updateConfig(id, req);
+        return sessions.updateConfig(id, req);
     }
 
     /** 回退到某条提问之前：该条及其后的消息一并删除 */
     @PostMapping("/api/sessions/{id}/rewind")
     public ChatDtos.Rewind rewind(@PathVariable String id, @RequestBody ChatDtos.RewindRequest req) {
-        return service.rewind(id,
+        return sessions.rewind(id,
                 req == null ? null : req.messageId(),
                 req == null ? null : req.keep());
     }
@@ -265,7 +278,7 @@ public class ChatController {
     @PostMapping("/api/sessions/{id}/branch")
     public ChatDtos.NewSession branch(@PathVariable String id,
                                       @RequestBody ChatDtos.BranchRequest req) {
-        return service.branch(id, req == null ? null : req.messageId());
+        return sessions.branch(id, req == null ? null : req.messageId());
     }
 
     /**

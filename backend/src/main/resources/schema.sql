@@ -1100,3 +1100,7 @@ CREATE TABLE IF NOT EXISTS project_proposal (
     user_message_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 );
+-- TTS profiles and per-agent selection (empty selection inherits the default).
+CREATE TABLE IF NOT EXISTS tts_profile (id TEXT PRIMARY KEY, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tts_endpoint (id TEXT PRIMARY KEY, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tts_selection (agent_id TEXT PRIMARY KEY, profile_id TEXT);

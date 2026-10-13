@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import cc.ginpika.minis.agent.chat.ChatTraceCodec;
 import cc.ginpika.minis.ai.core.tool.ToolResult;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
@@ -21,21 +22,49 @@ import org.springframework.stereotype.Component;
  *
  * <p>三种执行共用它，靠 {@code kind} 区分（见 {@link ExecStore}）：心跳主会话登场、任务计划被派出、
  * 子代理被当场交代。它们的差别只在「上下文怎么组装」与「工具调用落到谁身上」——
- * 前者由调用方自己造 messages，后者由调用方给的 {@link TaskRunner.Dispatch} 决定。
+ * 前者由调用方自己造 messages，后者由调用方给的 {@link AgentRunner.Dispatch} 决定。
  *
  * <p><b>循环不在这里</b>：模型往返与工具批已收进 {@link AgentRuntime}（与首页对话共用同一条内核）。
  * 本类只负责三件事：组装请求体、把「逐轮进度落进 {@code task}」接到内核的过程回调上、
  * 把结论与过程落库（含任务产物与记忆投影）。
- *
- * <p>它是 {@link TaskRunner} 的默认实现（STEP 1 起不再自称「唯一引擎」，只是其中一种）：
- * 契约见接口，调用方按接口注入，后续后台队列 / 沙箱实现可以并存。
  *
  * <p>没有状态：给模型的 messages 每次现造，引擎自己不缓存任何东西（这正是「LLM 无状态、
  * 状态在库里」的落点）。工具往返上限见 {@code minis.heartbeat.max-tool-rounds}，
  * 最后一轮撤掉 tools 逼模型给出结论（见 {@link AgentRuntime}）。
  */
 @Component
-public class AgentRunner implements TaskRunner {
+public class AgentRunner {
+    /**
+     * 一次执行的输入。
+     *
+     * @param runId    归属批次（{@code heartbeat_run.id}）
+     * @param kind     执行来源：心跳 / 计划 / 子代理（见 {@link ExecStore#KIND_HEARTBEAT} 等），
+     *                 落进任务行的 {@code origin} 列——读侧按它分类
+     * @param planId   {@code kind=plan} 时的编制 id（{@code heartbeat_plan.id}）；其余为 null
+     * @param parentId 派它的那个任务（心跳 → 计划 → 子代理 这条链靠它连起来）；顶层执行传 null
+     * @param sessionId 归属会话（子代理：结论要投回的那个会话）；无会话的执行传 null
+     * @param agentId  归属 Agent（{@code agent.id}）：这次执行是哪个智能体产生的；可为 null
+     * @param payload  重跑所需的原始输入（JSON）；无可重跑输入时为 null
+     */
+    public record Request(String runId, String kind, String planId, String title, String modelId,
+                   ArrayNode messages, ArrayNode toolSchemas, Dispatch dispatch, Long parentId,
+                   String sessionId, String agentId, String payload) {
+    }
+
+    /** 一次执行的结果：execId 可在留痕里回看这次执行的全过程 */
+    public record Outcome(long execId, String status, String output, String error) {
+    }
+
+    /** 工具分发：把模型请求的一次调用落地成一条 tool 结果（不同调用方带不同的工具面） */
+    public interface Dispatch {
+
+        ToolResult run(JsonNode call, long execId);
+
+        /** 多个调用同时到达时，本工具能否并行执行（默认不能：多数工具有顺序语义） */
+        default boolean parallelizable(String name) {
+            return false;
+        }
+    }
 
     private final HeartbeatProps props;
     private final SettingsService settings;
@@ -73,7 +102,6 @@ public class AgentRunner implements TaskRunner {
     }
 
     /** 跑一次执行：落 exec 行 → 多轮工具往返 → 落结论与过程 */
-    @Override
     public Outcome run(Request req) {
         return run(req, openExec(req));
     }
@@ -84,14 +112,12 @@ public class AgentRunner implements TaskRunner {
      * <p>异步派活（对话侧的子代理）走这条路——调用方要<b>立刻</b>拿到 id 回一张受理回执，
      * 不能等这次执行整个跑完才拿到；后台跑起来与回执无关，两边只在那一行上相遇。
      */
-    @Override
     public long openExec(Request req) {
         return tasks.beginExec(req.kind(), req.runId(), req.planId(), req.parentId(),
                 req.sessionId(), req.agentId(), req.title(), req.payload(), req.messages().toString());
     }
 
     /** 跑一次已登记的执行（execId 由 {@link #openExec} 给出）：多轮工具往返 → 落结论与过程 */
-    @Override
     public Outcome run(Request req, long execId) {
         var parent = cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
         if (parent == null) { return runScoped(req, execId); }

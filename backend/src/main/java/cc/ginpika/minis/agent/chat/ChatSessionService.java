@@ -21,7 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 /**
  * 会话域：会话的增删改查、转录读取、回退，以及围绕它们的那几条规则。
  *
- * <p>从 {@link ChatService} 原样搬出（行为零变化）。之所以能切开，是因为这两件事本就没有依赖关系：
+ * <p>会话管理与执行编排分开：
  * 这里不调模型、不跑工具、不参与循环，只碰会话与消息两张表；而循环也不需要知道「会话怎么列出来」。
  *
  * <p>规则集中在这里，不再散落于循环的各个调用点：
@@ -32,7 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
  * </ul>
  *
  * <p><b>刻意不含</b>：运行时状态（在途生成 / 停止标志，见 {@link ChatLiveStore}）与对话循环
- * （见 {@link ChatService}）。会话在这里是「事实」，不是「流程」。
+ * （见 {@link ChatTurnRunner}）。会话在这里是「事实」，不是「流程」。
  */
 @Service
 public class ChatSessionService {
@@ -101,7 +101,7 @@ public class ChatSessionService {
      * 会话对话归属 Agent：{@code agent_id} 为空 = 内置 Agent。
      *
      * <p>这是<b>「按会话归属」数据的唯一口径</b>：待办清单的写入侧（{@code ChatTurnRunner#agentOf}）
-     * 与读取侧（{@code ChatService#todos}）都委托本方法，两处不再各写一份 fallback——
+     * 与读取侧（{@code cc.ginpika.minis.web.controller.ChatController#todos}）都委托本方法，两处不再各写一份 fallback——
      * 否则会话一旦在「…」菜单绑了某位成员，写进去的清单会读不回来。
      */
     public static String ownerOf(String agentId) {

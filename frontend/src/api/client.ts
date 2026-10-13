@@ -2,6 +2,10 @@
 
 import { apiFetch } from './desktop'
 
+export function getTtsSettings(): Promise<{ profiles: { id: string; name: string }[]; defaultProfileId: string | null }> {
+  return requestJson('/api/settings/tts')
+}
+
 export class ApiError extends Error {
   status: number
   body: string

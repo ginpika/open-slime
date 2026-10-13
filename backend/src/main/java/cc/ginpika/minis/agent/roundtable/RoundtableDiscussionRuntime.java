@@ -4,7 +4,6 @@ import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.member.AgentDtos;
 import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.RoundtableTopicService.Advance;
-import cc.ginpika.minis.agent.runtime.ConversationOrchestrator;
 import cc.ginpika.minis.agent.runtime.ExecutionId;
 import cc.ginpika.minis.agent.runtime.event.InterruptKind;
 import cc.ginpika.minis.agent.runtime.event.RuntimeEvent;
@@ -26,8 +25,7 @@ import org.springframework.stereotype.Component;
 /**
  * 圆桌讨论运行时：<b>事件驱动的会话级协调器</b>（设计一 §二 / 设计二 §一）。
  *
- * <p>它实现 {@link ConversationOrchestrator}——设计二要求的协调层抽象。设计二把它与单聊的请求驱动
- * 协调器并列：两者共用底层 Agent 执行能力（{@code AgentRuntime} + {@code ChatTurnRunner}），
+ * <p>群聊与单聊的请求驱动编排分开：两者共用底层 Agent 执行能力（{@code AgentRuntime} + {@code ChatTurnRunner}），
  * 但拥有不同的生命周期与调度策略。本类就是群聊那一侧的策略：
  * <b>事件从这里进，下一步由它决定；Agent 只负责推理与提出行动。</b>
  *
@@ -50,7 +48,24 @@ import org.springframework.stereotype.Component;
  * 「只取消受影响的那一次，未受影响的继续」。
  */
 @Component
-public class RoundtableDiscussionRuntime implements ConversationOrchestrator {
+public class RoundtableDiscussionRuntime {
+    /**
+     * 一次编排的可观测快照。
+     *
+     * @param conversationId 会话 id
+     * @param mode           会话模式（单聊 / 群聊）
+     * @param running        此刻是否有一次推进正在跑
+     * @param topicId        当前话题（无则 null）
+     * @param topicStatus    当前话题状态（无则 null）
+     * @param floorPeer      当前持有发言权的成员（无则 null）
+     * @param communications 成员名 → 发言状态（{@code SPEAKING / LISTENING / SILENT}）
+     * @param executions     成员名 → 执行状态（{@code READY / RUNNING / …}）
+     */
+    public record ConversationSnapshot(String conversationId, String mode, boolean running, String topicId,
+                                String topicStatus, String floorPeer,
+                                Map<String, String> communications,
+                                Map<String, String> executions) {
+    }
 
     private static final Logger log = LoggerFactory.getLogger(RoundtableDiscussionRuntime.class);
 
@@ -124,7 +139,7 @@ public class RoundtableDiscussionRuntime implements ConversationOrchestrator {
         });
     }
 
-    // ---------- 事件入口（ConversationOrchestrator） ----------
+    // ---------- 事件入口 ----------
 
     /**
      * 协调器的统一事件入口：落正本、广播，并按类型决定下一步。
@@ -132,7 +147,6 @@ public class RoundtableDiscussionRuntime implements ConversationOrchestrator {
      * <p>这是设计二「事件从这里进、下一步由它决定」的落点。普通通知（工具 / 任务事件）不改调度，
      * 只更新状态；只有用户消息、取消、插话、场外报告会改变编排走向。
      */
-    @Override
     public void onEvent(RuntimeEvent event) {
         /* 先落正本再处理：任何输入都先成为事件，再被折叠成调度决策（设计一 §二） */
         events.publish(event);
@@ -150,7 +164,6 @@ public class RoundtableDiscussionRuntime implements ConversationOrchestrator {
     }
 
     /** 会话快照（只读）：编排水位 + 话题 + 各成员二维状态 */
-    @Override
     public ConversationSnapshot snapshot(String conversationId) {
         boolean running = this.running.containsKey(conversationId);
         Optional<AgentDtos.TopicView> topic = topics.currentTopic(conversationId);

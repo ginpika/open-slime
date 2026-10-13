@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
  *
  * <p>对话工具面（CHAT）里挂了两个子代理工具——
  * 派活（delegate_subagent）与翻过程（read_subagent_run），执行要落到「子代理」模块，
- * 由 {@link ChatService} 在工具分发时转交过来。
+ * 由 {@link ChatToolDispatcher} 在工具分发时转交过来。
  * 抽成接口是为了让依赖方向单向：子代理模块依赖 chat 包（会话编排与工具执行口），
  * 而 chat 包不反过来依赖子代理模块。
  *

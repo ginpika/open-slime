@@ -66,7 +66,7 @@ import org.springframework.stereotype.Component;
  * 知识库工具执行器：按 OpenAI 风格的工具调用节点分发到具体的 RAG 检索 / 图谱查询 / 图谱写入 /
  * 文档工具实现，返回给模型的 tool 消息内容。
  *
- * <p>由 {@link cc.ginpika.minis.agent.chat.ChatService} 在工具轮中调用（{@link #run(JsonNode)}）；抽为独立组件以便写入侧
+ * <p>由 {@link cc.ginpika.minis.agent.chat.ChatToolDispatcher} 在工具轮中调用（{@link #run(JsonNode)}）；抽为独立组件以便写入侧
  * 复用与单独测试。工具名与参数 schema 见 {@link cc.ginpika.minis.ai.core.tool.AiTool} 各实现类，
  * 是否写库由 {@link ToolManager} 判定。记忆域工具（recall_memory / backfill_memory_vectors）
  * 也在此代发——所有工具面的默认分发都汇到本类，避免各调用点重复布线。

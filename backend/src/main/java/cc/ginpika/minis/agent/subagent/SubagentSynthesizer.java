@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  * <p><b>关键在失败也收口</b>：只要有一件没跑出结论，就在指令里点名是哪几件，要求如实交代原因与补救，
  * 绝不假装它们成功了——于是「一件失败」不会让整批白跑，人拿到的是一份说得清的收尾。
  *
- * <p>与 {@code ChatService#onSubagentBatchDone} 的分工：那里管「什么时候触发、总结落哪条消息」，
+ * <p>与 {@code SubagentDeliveryService#onSubagentBatchDone} 的分工：那里管「什么时候触发、总结落哪条消息」，
  * 本类只管「归纳这段文字」。把模型调用收在这里，便于单独回归，也让 chat 包不必背这段 prompt。
  */
 @Component

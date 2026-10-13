@@ -33,7 +33,7 @@ public final class RoundtablePrompts {
      * 共享任务区：全桌没做完的条目（{@code <todo status="..." owner="...">标题</todo>}）。
      *
      * <p>不摊在桌面上，讨论就看不见「哪条受阻、还剩什么没做」——成员会只顾着回应人的那句话，
-     * 受阻条目与后续交付就断在那里（见 {@code RoundtableChatService#boardBlock}）。
+     * 受阻条目与后续交付就断在那里（见 {@code RoundtableContextBuilder#boardBlock}）。
      */
     public static final String BOARD_HEAD = "<board>";
     public static final String BOARD_TAIL = "</board>";

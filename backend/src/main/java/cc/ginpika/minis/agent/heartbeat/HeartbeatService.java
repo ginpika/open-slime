@@ -16,7 +16,6 @@ import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.MemoryExec;
 import cc.ginpika.minis.ai.core.MemoryScopeCtx;
 import cc.ginpika.minis.ai.core.MemorySurface;
-import cc.ginpika.minis.agent.runtime.TaskRunner;
 import cc.ginpika.minis.agent.runtime.TaskStore;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolResult;
@@ -98,7 +97,7 @@ public class HeartbeatService implements HeartbeatTool {
     /** 任务：心跳主会话与它派出的每份职责各落一行，父子关系（心跳 → 职责）在此成树 */
     private final TaskStore tasks;
     private final HeartbeatContextBuilder builder;
-    private final TaskRunner runner;
+    private final AgentRunner runner;
     private final SubagentTool subagent;
     private final KnowledgeToolbox toolbox;
     private final TerminalService terminal;
@@ -130,7 +129,7 @@ public class HeartbeatService implements HeartbeatTool {
 
     public HeartbeatService(HeartbeatProps props, PlanStore plans, ExecStore execs,
                             TaskStore tasks, HeartbeatContextBuilder builder,
-                            TaskRunner runner,
+                            AgentRunner runner,
                             SubagentTool subagent, KnowledgeToolbox toolbox,
                             TerminalService terminal, ToolManager tools,
                             ObjectMapper om, ChatThreads threads,
@@ -302,11 +301,11 @@ public class HeartbeatService implements HeartbeatTool {
             AtomicInteger failed = new AtomicInteger();
             /* 这一拍的心跳任务 id：发射器（heartbeatTool）要拿它把派出的职责 / 子代理挂成子任务 */
             AtomicLong heartbeatTask = new AtomicLong();
-            TaskRunner.Request req = new TaskRunner.Request(runId, ExecStore.KIND_HEARTBEAT, null,
+            AgentRunner.Request req = new AgentRunner.Request(runId, ExecStore.KIND_HEARTBEAT, null,
                     title, hb.modelId(), built.messages(), tools.toolsOf(ToolSurface.HEARTBEAT),
                     (call, execId) -> heartbeatTool(agentId, runId, call, agents, failed, heartbeatTask),
                     null, null, agentId, null);
-            TaskRunner.Outcome outcome;
+            AgentRunner.Outcome outcome;
             try {
                 long execId = runner.openExec(req);
                 heartbeatTask.set(execId);
@@ -314,7 +313,7 @@ public class HeartbeatService implements HeartbeatTool {
                         () -> AgentScope.run(agentId, () -> runner.run(req, execId)));
             } catch (RuntimeException e) {
                 log.warn("心跳主会话执行失败：agent={} {}", agentId, e.getMessage());
-                outcome = new TaskRunner.Outcome(-1, "failed", null, e.getMessage());
+                outcome = new AgentRunner.Outcome(-1, "failed", null, e.getMessage());
             }
 
             /* 这一拍真正跑起来的执行数：减去主会话自己那一行 */
@@ -348,7 +347,7 @@ public class HeartbeatService implements HeartbeatTool {
             long beat = beatSeq.incrementAndGet();
             String runId = UUID.randomUUID().toString();
             execs.insertRun(runId, agentId, beat, "manual");
-            TaskRunner.Outcome outcome = runChild(agentId, runId, plan, null);
+            AgentRunner.Outcome outcome = runChild(agentId, runId, plan, null);
             execs.finishRun(runId, outcome.status(), 1, "页面点名执行");
             return new BeatSummary(runId, beat, "manual", 1);
         } finally {
@@ -404,7 +403,7 @@ public class HeartbeatService implements HeartbeatTool {
         }
         agents.incrementAndGet();
         try {
-            TaskRunner.Outcome outcome = runChild(agentId, runId,
+            AgentRunner.Outcome outcome = runChild(agentId, runId,
                     delegatePlan(agentId, parsed.path("plan").asText("").trim(), instruction),
                     heartbeatTask.get());
             if (!"done".equals(outcome.status())) {
@@ -444,9 +443,9 @@ public class HeartbeatService implements HeartbeatTool {
      *
      * @param parentTaskId 派它的那个任务（心跳主会话）；页面点名 / 对话委托没有父任务，传 null
      */
-    private TaskRunner.Outcome runChild(String agentId, String runId, PlanStore.PlanRow plan,
+    private AgentRunner.Outcome runChild(String agentId, String runId, PlanStore.PlanRow plan,
                                         Long parentTaskId) {
-        TaskRunner.Outcome outcome = execute(agentId, runId, plan, parentTaskId);
+        AgentRunner.Outcome outcome = execute(agentId, runId, plan, parentTaskId);
         if (plan.id() != null) {
             plans.markPlanBeat(plan.id(), System.currentTimeMillis());
         }
@@ -459,10 +458,10 @@ public class HeartbeatService implements HeartbeatTool {
     }
 
     /** 执行一份职责：组装它那份上下文（正文 + 本轮交代）→ 开一次执行 → 交给执行引擎 */
-    private TaskRunner.Outcome execute(String agentId, String runId, PlanStore.PlanRow plan,
+    private AgentRunner.Outcome execute(String agentId, String runId, PlanStore.PlanRow plan,
                                        Long parentTaskId) {
         HeartbeatContextBuilder.Built built = builder.build(plan, agentId);
-        TaskRunner.Request req = new TaskRunner.Request(runId, ExecStore.KIND_PLAN, plan.id(),
+        AgentRunner.Request req = new AgentRunner.Request(runId, ExecStore.KIND_PLAN, plan.id(),
                 plan.name(), plan.modelId(), built.messages(), toolSchemas(plan),
                 (call, execId) -> planTool(agentId, call), parentTaskId, null, agentId, null);
         /* 开执行与跑的整段都在 try 内：写库出问题时兜成一次失败执行，
@@ -473,7 +472,7 @@ public class HeartbeatService implements HeartbeatTool {
                     () -> AgentScope.run(agentId, () -> runner.run(req, execId)));
         } catch (RuntimeException e) {
             log.warn("职责「{}」执行失败：{}", plan.name(), e.getMessage());
-            return new TaskRunner.Outcome(-1, "failed", null, e.getMessage());
+            return new AgentRunner.Outcome(-1, "failed", null, e.getMessage());
         }
     }
 
@@ -587,7 +586,7 @@ public class HeartbeatService implements HeartbeatTool {
         if (!plan.enabled()) {
             return disabledText(plan);
         }
-        TaskRunner.Outcome outcome;
+        AgentRunner.Outcome outcome;
         try {
             outcome = delegate(agentId, instruction, plan);
         } catch (RuntimeException e) {
@@ -601,11 +600,11 @@ public class HeartbeatService implements HeartbeatTool {
     }
 
     /** 把一份职责派出去（供大模型调用）：独占一批 run 同步执行，返回结论（过程完整留痕，可用 id 回看） */
-    public TaskRunner.Outcome delegate(String agentId, String instruction, PlanStore.PlanRow plan) {
+    public AgentRunner.Outcome delegate(String agentId, String instruction, PlanStore.PlanRow plan) {
         long beat = beatSeq.incrementAndGet();
         String runId = UUID.randomUUID().toString();
         execs.insertRun(runId, agentId, beat, "chat");
-        TaskRunner.Outcome outcome = runChild(agentId, runId, new PlanStore.PlanRow(plan.id(),
+        AgentRunner.Outcome outcome = runChild(agentId, runId, new PlanStore.PlanRow(plan.id(),
                 plan.agentId(), plan.name(), plan.role(), plan.content(), plan.tools(), plan.channels(),
                 plan.intervalMs(), instruction, plan.modelId(), plan.rationale(), plan.sort(),
                 plan.lastBeatAt(), true), null);

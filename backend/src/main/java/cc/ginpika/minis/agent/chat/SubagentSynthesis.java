@@ -9,7 +9,7 @@ import java.util.List;
  *
  * <p>与 {@link SubagentTool} 同一手法——把端口定义在 chat 包、实现放在 {@code agent.subagent}，
  * 于是依赖方向保持单向（子代理模块依赖 chat 包，chat 包不反向依赖子代理）。整批子代理跑完时，
- * {@link ChatService#onSubagentBatchDone} 经本口子把多条结论收口成一份整体交代。
+ * {@link SubagentDeliveryService#onSubagentBatchDone} 经本口子把多条结论收口成一份整体交代。
  */
 public interface SubagentSynthesis {
 

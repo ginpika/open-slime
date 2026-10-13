@@ -1,7 +1,7 @@
 package cc.ginpika.minis.agent.roundtable;
 
 import cc.ginpika.minis.agent.chat.ChatExecution;
-import cc.ginpika.minis.agent.chat.ChatService.StreamSink;
+import cc.ginpika.minis.agent.chat.ChatStream;
 import cc.ginpika.minis.agent.chat.ChatTurnRunner;
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 import cc.ginpika.minis.agent.chat.store.ChatMessageStore;
@@ -10,9 +10,6 @@ import cc.ginpika.minis.agent.member.AgentAnchorService;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.member.AgentDtos;
 import cc.ginpika.minis.agent.runtime.TodoStore;
-import cc.ginpika.minis.agent.runtime.event.RuntimeEvent;
-import cc.ginpika.minis.agent.runtime.event.RuntimeEventBus;
-import cc.ginpika.minis.agent.runtime.event.RuntimeEventType;
 import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.MemoryExec;
 import cc.ginpika.minis.ai.core.MemoryIdentity;
@@ -61,7 +58,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
@@ -194,7 +190,7 @@ public class RoundtableChatService implements ChatExecution {
     /** 个人计划清单（chat_todo）：执行态里成员用 write_todos 维护「自己这条活分几步做」，按成员互不串写 */
     private final TodoStore todos;
     /** 运行时事件总线：任务变更 / 开工 / 请讨论从这条流发出，由运行时在全局层面接住 */
-    private final RuntimeEventBus runtimeEvents;
+    private final RoundtableTaskTools taskTools;
     /** 执行态留痕：每条 TODO 的每次执行落一条过程（思考链 / 过程分段 / 工具往返 / 请求体） */
     private final RoundtableWorkRunStore workRuns;
 
@@ -238,7 +234,7 @@ public class RoundtableChatService implements ChatExecution {
                          RoundtableContextBuilder context, AgentAnchorService peerAnchors,
                          TopicStateMachine machine, RoundtableProps maProps, ContextProps contextProps,
                          RoundtableRevision revisions, RoundtableTodoStore taskBoard,
-                         TodoStore todos, RuntimeEventBus runtimeEvents,
+                         TodoStore todos, RoundtableTaskTools taskTools,
                          RoundtableWorkRunStore workRuns, MemorySnapshotBuilder memorySnapshots,
                          MemoryProps memoryProps) {
         this.runner = runner;
@@ -258,7 +254,7 @@ public class RoundtableChatService implements ChatExecution {
         this.revisions = revisions;
         this.taskBoard = taskBoard;
         this.todos = todos;
-        this.runtimeEvents = runtimeEvents;
+        this.taskTools = taskTools;
         this.workRuns = workRuns;
         this.memorySnapshots = memorySnapshots;
         this.memoryProps = memoryProps;
@@ -300,7 +296,7 @@ public class RoundtableChatService implements ChatExecution {
      * <p>正文由 {@link SpeechSink} 攒起来（speak 工具说出的 + 正文信封兜底解出的）；
      * 下游（话题事件、落库、页面）看到的都是人话，不是 {@code {"speech": "..."}}。
      */
-    public Speech speak(String topicId, String peerId, StreamSink sink) {
+    public Speech speak(String topicId, String peerId, ChatStream sink) {
         TopicRow topic = topics.topic(topicId)
                 .orElseThrow(() -> new IllegalStateException("话题不存在: " + topicId));
         AgentRow peer = directory.peer(peerId)
@@ -382,7 +378,7 @@ public class RoundtableChatService implements ChatExecution {
      * @param sink 过程出口；执行态通常不推流，传 null 即可
      */
     public ChatDtos.ChatReply executeTodo(String sessionId, String peerId,
-                                          RoundtableTodoStore.TodoRow todo, StreamSink sink) {
+                                          RoundtableTodoStore.TodoRow todo, ChatStream sink) {
         AgentRow peer = directory.peer(peerId)
                 .orElseThrow(() -> new IllegalStateException("成员不存在: " + peerId));
         String model = peer.modelId() != null ? peer.modelId()
@@ -466,7 +462,7 @@ public class RoundtableChatService implements ChatExecution {
      * @param speech 生成结果（{@link Speech#utterances()} 是待发布的段落）
      * @param sink   这次发言的出口
      */
-    public void publish(Speech speech, StreamSink sink) {
+    public void publish(Speech speech, ChatStream sink) {
         if (sink == null || speech == null || speech.stale()) {
             return;
         }
@@ -485,7 +481,7 @@ public class RoundtableChatService implements ChatExecution {
      * <p>消息仍进 {@code ma_*}：人的话与它的回答各一行（{@link #recordUserInput} /
      * {@link #recordReply}），圆桌页照常读到——只是没有话题与状态行。
      */
-    public ChatDtos.ChatReply speakSolo(String sessionId, String peerId, String input, StreamSink sink) {
+    public ChatDtos.ChatReply speakSolo(String sessionId, String peerId, String input, ChatStream sink) {
         AgentRow peer = directory.peer(peerId)
                 .orElseThrow(() -> new IllegalStateException("成员不存在: " + peerId));
         String model = peer.modelId() != null ? peer.modelId()
@@ -518,7 +514,7 @@ public class RoundtableChatService implements ChatExecution {
      * <p><b>两个来源，一本流水</b>——「说出去」有两条路：
      * <ol>
      *   <li>{@link #say}：{@code speak} 工具的落地。调用的一瞬间把这段话推给页面
-     *       （{@link StreamSink#speech}，桌上的人当场听到并占一个新气泡），并记成一段。
+     *       （{@link ChatStream#speech}，桌上的人当场听到并占一个新气泡），并记成一段。
      *       一次发言里可以走很多次，这是正路；</li>
      *   <li>正文信封：模型没走 speak 时的兜底。某一轮正文是 {@code {"speech": "..."}} 就把它解出来
      *       （见 {@link SpeechEnvelope}），按轮记成一段。</li>
@@ -529,16 +525,16 @@ public class RoundtableChatService implements ChatExecution {
      * <p>这样就不再需要「末轮取正」那套：以前正文按轮重置、只在末轮为空时沿用上一轮的话，
      * 是因为一次输出只能有一份正文；现在发言可以分好几段，逐段记下来才是它真实说过的话。
      */
-    private final class SpeechSink implements StreamSink {
+    private final class SpeechSink implements ChatStream {
 
-        private final StreamSink down;
+        private final ChatStream down;
         private SpeechEnvelope cur = new SpeechEnvelope();
         /** 这次发言里说出口的每一段，顺序即说出的顺序（落库时一段一行，就是一个个气泡） */
         private final List<String> utterances = new ArrayList<>();
         /** 这次发言报出的「下一轮发言欲望」（每次收尾信封里给一个，后报的为准；没报为 null） */
         private Integer lastDesire;
 
-        private SpeechSink(StreamSink down) {
+        private SpeechSink(ChatStream down) {
             this.down = down;
         }
 
@@ -576,7 +572,7 @@ public class RoundtableChatService implements ChatExecution {
         void say(String text) {
             flush();
             utterances.add(text);
-            /* 生成期只入账、不发布：真正推给页面由协调器在版本校验通过后按序发布（见 ChatService#publish） */
+            /* 生成期只入账、不发布：真正推给页面由协调器在版本校验通过后按序发布（见 RoundtableChatService#publish） */
         }
 
         /** 这次发言的全部段落（把最后一轮还没收下的正文一并收下） */
@@ -791,8 +787,9 @@ public class RoundtableChatService implements ChatExecution {
         ArrayNode toolSchemas = toolSchemas();
         /* 公开记录（那条 user）能占多少 token：窗口 − 输出预留 − 安全余量 − system 与工具面的估算。
            输入与输出共用同一个窗口，且 system / 工具面同样占输入——不把它们扣掉，
-           贴着窗口发的请求会被上游拒（口径与首页那条流一致，见 ChatTurnRunner#historyBudget） */
-        String transcript = dispatch(row.id(), transcriptBudget(contextWindow, system, toolSchemas));
+           贴着窗口发的请求会被上游拒（口径与首页那条流一致，见 ChatContextService 的历史预算） */
+        String transcript = context.dispatch(row.id(), transcriptBudget(contextWindow, system, toolSchemas),
+                topicNow(), speakPeer.get());
         /* 本轮议题文本既是给成员看的公开记录，也是记忆召回的相关性依据（memory-v6 §8.5） */
         String mem = memorySuffix(row, transcript);
         msgs.addObject().put("role", "system")
@@ -845,142 +842,6 @@ public class RoundtableChatService implements ChatExecution {
     }
 
     /**
-     * 调度器交给这位成员的那条 user：一份调度文书（{@code <dispatch>}），里面两段——
-     * {@code <transcript>} 是本场对话的公开记录，{@code <situation>} 是此刻局面。
-     *
-     * <p>分节是为了把「谁说了什么」「圆桌上发生过什么」「此刻谁是什么状态」在结构上分开：
-     * 三类内容混在一段散文里时，模型只能靠「谁：」这种前缀去猜哪句是发言、哪句是动作。
-     *
-     * @param budget 公开记录能占的 token 预算（见 {@link #transcriptBudget}）
-     */
-    private String dispatch(String sessionId, int budget) {
-        StringBuilder sb = new StringBuilder(RoundtablePrompts.DISPATCH_HEAD).append('\n');
-        sb.append(RoundtablePrompts.TRANSCRIPT_HEAD).append('\n');
-        for (String line : transcriptLines(sessionId, budget)) {
-            sb.append(line).append('\n');
-        }
-        sb.append(RoundtablePrompts.TRANSCRIPT_TAIL).append('\n');
-        TopicRow topic = topicNow();
-        if (topic != null) {
-            sb.append(context.situation(topic, speakPeer.get())).append('\n');
-            /* 顺手把共享任务区摊在桌面上：不摊，讨论就看不见「哪条受阻、还有什么没做」——
-               成员只会回应人的那句话，受阻条目与后续交付就断在这里（踩过这个坑） */
-            String board = boardBlock(topic.sessionId());
-            if (!board.isEmpty()) {
-                sb.append(board).append('\n');
-            }
-        }
-        return sb.append(RoundtablePrompts.DISPATCH_TAIL).toString();
-    }
-
-    /**
-     * 共享任务区的快照（只列没做完的条目）：贴在局面之后，让讨论看得见全桌的活。
-     *
-     * <p>受阻条目会带上原因——那正是这轮讨论要处理的事。
-     */
-    private String boardBlock(String sessionId) {
-        if (sessionId == null) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder(RoundtablePrompts.BOARD_HEAD).append('\n');
-        boolean any = false;
-        for (RoundtableTodoStore.TodoRow t : taskBoard.openOnes(sessionId)) {
-            if (RoundtableTodoStore.STATUS_DROPPED.equals(t.status())) {
-                continue;
-            }
-            any = true;
-            sb.append("  <todo id=\"").append(t.id()).append("\" status=\"").append(t.status()).append('"');
-            if (t.ownerPeer() != null) {
-                sb.append(" owner=\"").append(nameOr(t.ownerPeer())).append('"');
-            }
-            sb.append('>').append(t.title());
-            if (RoundtableTodoStore.STATUS_BLOCKED.equals(t.status())
-                    && t.blockReason() != null && !t.blockReason().isBlank()) {
-                sb.append("（受阻：").append(t.blockReason()).append('）');
-            }
-            sb.append("</todo>\n");
-        }
-        return any ? sb.append(RoundtablePrompts.BOARD_TAIL).toString() : "";
-    }
-
-    /**
-     * 本次回放哪些公开记录行：先按条数封顶，再从<b>最新往回</b>按 token 预算收。
-     *
-     * <p>「从最新往回」是关键：圆桌的记录里既有人的话、也有各成员的发言与状态动作，
-     * 越靠后越相关。窗口的选取规则抽在 {@link #windowOf}（纯函数，便于单测）。
-     */
-    private List<String> transcriptLines(String sessionId, int budget) {
-        List<RoundtableMessageStore.MessageRow> all = maMessages.bySession(sessionId);
-        if (all.isEmpty()) {
-            return List.of();
-        }
-        List<Long> costs = new ArrayList<>(all.size());
-        for (RoundtableMessageStore.MessageRow m : all) {
-            costs.add(TokenUsageService.estimateTokens(lineOf(m)));
-        }
-        List<String> out = new ArrayList<>();
-        for (int index : windowOf(costs, maProps.getHistoryLimit(), budget, lastUserIndex(all))) {
-            out.add(lineOf(all.get(index)));
-        }
-        return out;
-    }
-
-    /**
-     * 公开记录窗口的选取规则（纯函数：只吃「每行的 token 估算」与两个上限，不碰库，故可直接单测）。
-     *
-     * <p>三条规则，按优先级：
-     * <ol>
-     *   <li><b>从最新往回</b>收：累加最靠后的若干行，直到再加一行就超预算为止；</li>
-     *   <li><b>最后一行永远保留</b>：哪怕它一个人就超预算——空着比只给半句强；</li>
-     *   <li><b>「本轮人的话」必须在</b>（{@code askedIndex}）：它是这一桌为什么开口的全部依据。
-     *       窗口没够到它（被条数封顶挡在外面，或预算先耗尽）时，把它补在<b>最末</b>——
-     *       紧邻后面的局面交代，是模型注意力最近处。少了它，成员会以为「还没有实际话题」而集体沉默。</li>
-     * </ol>
-     *
-     * @param costs      每行的 token 估算（按时间升序）
-     * @param limit      条数上限
-     * @param budget     token 预算
-     * @param askedIndex 最近一条「人的话」的下标；没有则 -1
-     * @return 要回放的行的下标（升序；补进来的那条在最末）
-     */
-    static List<Integer> windowOf(List<Long> costs, int limit, int budget, int askedIndex) {
-        int end = costs.size();
-        if (end == 0) {
-            return List.of();
-        }
-        int floor = Math.max(0, end - Math.max(1, limit));
-        int keep = end;
-        long used = 0;
-        while (keep > floor) {
-            long cost = Math.max(0L, costs.get(keep - 1));
-            /* 已经保住了一行，再往前加会超预算就停手（第一行不看预算，见规则 2） */
-            if (keep < end && used + cost > budget) {
-                break;
-            }
-            used += cost;
-            keep--;
-        }
-        List<Integer> out = new ArrayList<>();
-        for (int i = keep; i < end; i++) {
-            out.add(i);
-        }
-        if (askedIndex >= 0 && askedIndex < keep) {
-            out.add(askedIndex);
-        }
-        return out;
-    }
-
-    /** 最近一条「人的话」的下标（没有返回 -1）：它是「本轮人的话必须带上」的锚点 */
-    private static int lastUserIndex(List<RoundtableMessageStore.MessageRow> rows) {
-        for (int i = rows.size() - 1; i >= 0; i--) {
-            if (RoundtableMessageStore.ROLE_USER.equals(rows.get(i).role())) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
      * 发言工具、状态机工具与终端工具由本类自己接住，其余（只读检索 / 工具箱）照执行器的分发走。
      *
      * <p><b>可用工具由本入口强制</b>：执行器的能力鉴权对「不接能力平面的流」一律放行
@@ -1004,7 +865,8 @@ public class RoundtableChatService implements ChatExecution {
             return stateTool(name, call);
         }
         if (WORK_TOOLS.contains(name)) {
-            return workTool(name, call);
+            return taskTools.runTool(name, call, speakSession.get(), speakPeer.get(),
+                    speakTopic.get(), workTodo.get());
         }
         if (ReadMyAnchorTool.NAME.equals(name)) {
             return readMyAnchorTool();
@@ -1135,19 +997,6 @@ public class RoundtableChatService implements ChatExecution {
         return new ChatMessageStore.MessageRow(m.id(), m.sessionId(),
                 RoundtableMessageStore.ROLE_USER.equals(m.role()) ? "user" : "assistant",
                 m.content(), m.reasoning(), m.trace(), m.toolRounds(), null, null, m.createdAt());
-    }
-
-    /**
-     * 公开记录里的一行：人的话与成员的发言是 {@code <message speaker="谁">}，状态机动作是
-     * {@code <event>}——两类内容在结构上就分开，模型不必靠前缀去猜这一行是发言还是动作。
-     */
-    private static String lineOf(RoundtableMessageStore.MessageRow m) {
-        if (RoundtableMessageStore.ROLE_EVENT.equals(m.role())) {
-            return "<event>" + m.content() + "</event>";
-        }
-        String who = RoundtableMessageStore.ROLE_USER.equals(m.role()) ? "用户"
-                : (m.peerName() == null || m.peerName().isBlank() ? "某位成员" : m.peerName());
-        return "<message speaker=\"" + who + "\">" + m.content() + "</message>";
     }
 
     /** 成员这次发言的 system：人格 + 协作规程（对它恒定，不含局面——局面在那条 user 里） */
@@ -1339,259 +1188,6 @@ public class RoundtableChatService implements ChatExecution {
      * 由运行时在全局层面接住（见 {@code RoundtableWorkRuntime} / {@code RoundtableDiscussionRuntime}）。
      * 于是讨论这条流不必反过来依赖调度器，依赖方向保持单向。
      */
-    private String workTool(String name, JsonNode call) {
-        String sessionId = speakSession.get();
-        String peerId = speakPeer.get();
-        if (sessionId == null || peerId == null) {
-            return "此刻不在圆桌发言中，共享任务区不可用。";
-        }
-        JsonNode args = readTree(call.path("function").path("arguments").asText(""));
-        return switch (name) {
-            case AddTodoTool.NAME -> addTodo(sessionId, peerId, args);
-            case UpdateTodoTool.NAME -> updateTodo(sessionId, peerId, args);
-            case CompleteTodoTool.NAME -> completeTodo(sessionId, peerId, args);
-            case StartWorkTool.NAME -> startWork(sessionId, peerId, args);
-            case RequestDiscussionTool.NAME -> requestDiscussion(sessionId, peerId, args);
-            default -> "未知工具: " + name;
-        };
-    }
-
-    /** add_todo：往共享任务板加一条 */
-    private String addTodo(String sessionId, String peerId, JsonNode args) {
-        String title = args.path("title").asText("").strip();
-        if (title.isEmpty()) {
-            return "title 不能为空：写清这一步要做什么。";
-        }
-        String ownerName = args.path("owner").asText("").strip();
-        String owner = ownerName.isEmpty() ? null : resolveOwner(sessionId, ownerName);
-        if (!ownerName.isEmpty() && owner == null) {
-            return "桌上没有叫「" + ownerName + "」的成员：owner 要么写本桌成员名，要么留空（公共）。";
-        }
-        /* 前置依赖：声明了就先等它们完成，未完成前没人会开工这条（下游不必在没有上游产出时白跑） */
-        List<RoundtableTodoStore.TodoRow> deps = resolveDeps(sessionId, args.path("depends_on"));
-        String id = taskBoard.add(sessionId, speakTopic.get(), owner, title,
-                blankToNull(args.path("detail").asText("")), peerId, depsJson(deps));
-        runtimeEvents.publish(RuntimeEvent.of(RuntimeEventType.TASK_CREATED, sessionId, peerId,
-                Map.of("todoId", id, "title", title, "owner", owner == null ? "" : owner)));
-        return "已加到共享任务区（id=" + id + "）：" + title
-                + (owner == null ? "（公共：谁有空谁做）" : "（负责人：" + directory.nameOf(owner) + "）")
-                + (deps.isEmpty() ? ""
-                        : "（等 " + String.join("、",
-                                deps.stream().map(RoundtableTodoStore.TodoRow::title).toList())
-                                + " 完成后开工）")
-                + "。桌上所有人都看得见；开工后会有成员按顺序去做。";
-    }
-
-    /**
-     * 解析 add_todo 的 depends_on：既接受条目 id，也接受标题（模型更记得住标题）。
-     * 命中不到的忽略；返回命中的前置条目（保持给定顺序、去重）。
-     */
-    private List<RoundtableTodoStore.TodoRow> resolveDeps(String sessionId, JsonNode arg) {
-        if (arg == null || !arg.isArray()) {
-            return List.of();
-        }
-        List<RoundtableTodoStore.TodoRow> board = taskBoard.list(sessionId);
-        List<RoundtableTodoStore.TodoRow> out = new ArrayList<>();
-        for (JsonNode n : arg) {
-            String raw = n.asText("").strip();
-            if (raw.isEmpty()) {
-                continue;
-            }
-            RoundtableTodoStore.TodoRow hit = board.stream()
-                    .filter(t -> raw.equals(t.id()) || raw.equals(t.title()))
-                    .findFirst().orElse(null);
-            if (hit != null && out.stream().noneMatch(t -> t.id().equals(hit.id()))) {
-                out.add(hit);
-            }
-        }
-        return out;
-    }
-
-    /** 前置清单 → JSON 数组文本；空清单落 null（读侧按「无依赖」处理） */
-    private String depsJson(List<RoundtableTodoStore.TodoRow> deps) {
-        if (deps.isEmpty()) {
-            return null;
-        }
-        try {
-            return om.writeValueAsString(deps.stream().map(RoundtableTodoStore.TodoRow::id).toList());
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** update_todo：改状态 / 负责人 / 说明；标记受阻时可同时做「找谁」的决策（with） */
-    private String updateTodo(String sessionId, String peerId, JsonNode args) {
-        String id = args.path("id").asText("").strip();
-        if (id.isEmpty()) {
-            return "id 不能为空：指明要改任务区里的哪一条。";
-        }
-        RoundtableTodoStore.TodoRow existing = taskBoard.todo(id).orElse(null);
-        if (existing == null) {
-            return "任务区里没有这条（id=" + id + "）。";
-        }
-        String status = blankToNull(args.path("status").asText(""));
-        String ownerName = args.path("owner").asText("").strip();
-        String owner = ownerName.isEmpty() ? null : resolveOwner(sessionId, ownerName);
-        if (!ownerName.isEmpty() && owner == null) {
-            return "桌上没有叫「" + ownerName + "」的成员。";
-        }
-        String reason = blankToNull(args.path("reason").asText(""));
-        if (RoundtableTodoStore.STATUS_BLOCKED.equals(status) && reason == null) {
-            return "标记 blocked 时请在 reason 里写清受阻原因（那是请大家再议的凭据）。";
-        }
-        /* 受阻时先做一次决策：找哪位（可多位，用「、」分隔）、还是找用户拍板、还是全桌一起议。
-           名字解析不出来就别落下半截状态——先把它当一次校验失败挡回去。 */
-        List<String> targets = List.of();
-        if (RoundtableTodoStore.STATUS_BLOCKED.equals(status)) {
-            targets = parseWith(sessionId, args.path("with").asText(""));
-            if (targets == null) {
-                return "with 里有认不出的名字：写成员名（可多个，用「、」分隔）、写「用户」请用户拍板，"
-                        + "或留空 / 填「全员」（全桌一起议）。";
-            }
-        }
-        taskBoard.update(id, status, null, reason, owner, blankToNull(args.path("detail").asText("")));
-        if (RoundtableTodoStore.STATUS_BLOCKED.equals(status)) {
-            /* 记下这次「找谁」的决策（执行运行时据它决定定向 / 等用户 / 全桌），再发事件、带上条目标题 */
-            String csv = String.join(",", targets);
-            taskBoard.setBlockWith(id, csv.isEmpty() ? null : csv);
-            runtimeEvents.publish(RuntimeEvent.of(RuntimeEventType.TASK_BLOCKED, sessionId, peerId, null,
-                    Map.of("todoId", id, "title", existing.title(),
-                            "reason", reason == null ? "" : reason,
-                            "with", csv)));
-        }
-        return "已更新任务区（id=" + id + "）" + (status == null ? "。" : "：状态 → " + status + "。");
-    }
-
-    /** complete_todo：标记完成并记结论 */
-    private String completeTodo(String sessionId, String peerId, JsonNode args) {
-        String id = args.path("id").asText("").strip();
-        if (id.isEmpty()) {
-            return "id 不能为空。";
-        }
-        if (taskBoard.todo(id).isEmpty()) {
-            return "任务区里没有这条（id=" + id + "）。";
-        }
-        String result = blankToNull(args.path("result").asText(""));
-        taskBoard.update(id, RoundtableTodoStore.STATUS_DONE, result, null, null, null);
-        runtimeEvents.publish(RuntimeEvent.of(RuntimeEventType.TASK_COMPLETED, sessionId, peerId,
-                Map.of("todoId", id, "result", result == null ? "" : result)));
-        return "已完成（id=" + id + "）" + (result == null ? "。" : "：结论已记进任务板。");
-    }
-
-    /** start_work：讨论定案、开工（发 WORK_STARTED，由执行运行时接住） */
-    private String startWork(String sessionId, String peerId, JsonNode args) {
-        if (taskBoard.openOnes(sessionId).isEmpty()) {
-            return "任务区里还没有待办：先把要做的事用 " + AddTodoTool.NAME + " 落成条目，再说开工。";
-        }
-        String note = args.path("note").asText("").strip();
-        runtimeEvents.publish(RuntimeEvent.of(RuntimeEventType.WORK_STARTED, sessionId, peerId,
-                Map.of("note", note, "by", peerId)));
-        return "已宣布开工：各成员的执行线程开始按顺序完成自己名下的条目。讨论不停，你仍可继续发言。";
-    }
-
-    /** request_discussion：执行遇阻、请大家再议（发 DISCUSSION_REQUESTED，由讨论运行时接住） */
-    private String requestDiscussion(String sessionId, String peerId, JsonNode args) {
-        String reason = args.path("reason").asText("").strip();
-        if (reason.isEmpty()) {
-            return "reason 不能为空：写清卡在哪、已经试过什么、需要什么决定。";
-        }
-        /* 同样带着「找谁」的决策：写成员名 = 只和它们定向沟通一轮；写「用户」= 全桌暂停等用户；
-           留空 / 「全员」= 全桌一起议 */
-        List<String> targets = parseWith(sessionId, args.path("with").asText(""));
-        if (targets == null) {
-            return "with 里有认不出的名字：写成员名（可多个，用「、」分隔）、写「用户」请用户拍板，"
-                    + "或留空 / 填「全员」（全桌一起议）。";
-        }
-        /* 执行态：把这次决策记到当前待办上（受阻走的是 update_todo(blocked) → 执行运行时兜底上报，
-           运行时读的就是这条 block_with）。只写不覆盖空值——update_todo 已经写过的以它为准 */
-        RoundtableTodoStore.TodoRow cur = workTodo.get();
-        if (cur != null && !targets.isEmpty()) {
-            taskBoard.setBlockWith(cur.id(), String.join(",", targets));
-        }
-        runtimeEvents.publish(RuntimeEvent.of(RuntimeEventType.DISCUSSION_REQUESTED, sessionId, peerId,
-                Map.of("reason", reason, "by", peerId, "with", String.join(",", targets))));
-        if (targets.isEmpty()) {
-            return "已把问题抛回桌面：全桌会被激活，一起决定怎么办。";
-        }
-        if (targets.contains(RoundtableTodoStore.BLOCK_WITH_USER)) {
-            return "已把问题交给用户拍板：全桌暂停，等用户发言后继续。";
-        }
-        return "已把问题定向抛给「" + namesOf(targets) + "」：只你们沟通一轮，其余成员不受打扰。";
-    }
-
-    /**
-     * 解析 {@code with}（受阻成员自己做的「找谁」决策）：
-     * 返回目标列表——成员 id，或 {@link RoundtableTodoStore#BLOCK_WITH_USER}（用户）。
-     * <b>空列表 = 全桌</b>（留空 / 「全员」）；<b>null = 无效</b>（有认不出的名字，由调用方报错）。
-     *
-     * <p>多个目标用「、」「,」「，」等分隔；{@code @名字} 里的 @ 会被忽略，方便直接抄界面上的写法。
-     */
-    private List<String> parseWith(String sessionId, String raw) {
-        List<String> targets = new ArrayList<>();
-        String s = raw == null ? "" : raw.strip();
-        if (s.isEmpty() || isEveryone(s)) {
-            return targets;   // 全桌
-        }
-        for (String token : s.split("[、,，;；/\\s]+")) {
-            String name = token.replace("@", "").strip();
-            if (name.isEmpty() || isEveryone(name)) {
-                continue;
-            }
-            if (isUser(name)) {
-                if (!targets.contains(RoundtableTodoStore.BLOCK_WITH_USER)) {
-                    targets.add(RoundtableTodoStore.BLOCK_WITH_USER);
-                }
-                continue;
-            }
-            String id = resolveOwner(sessionId, name);
-            if (id == null) {
-                return null;   // 有认不出的名字：整体判为无效，别落下半截决策
-            }
-            if (!targets.contains(id)) {
-                targets.add(id);
-            }
-        }
-        return targets;
-    }
-
-    /** {@code with} 里表示「找用户拍板」的说法（成员 id 是 uuid，不会与它撞上） */
-    private static boolean isUser(String with) {
-        return Set.of("用户", "user", "人类").contains(with.strip());
-    }
-
-    /** 把目标列表拼成展示名（用户 → 「用户」） */
-    private String namesOf(List<String> targets) {
-        StringBuilder sb = new StringBuilder();
-        for (String t : targets) {
-            if (sb.length() > 0) {
-                sb.append("、");
-            }
-            sb.append(RoundtableTodoStore.BLOCK_WITH_USER.equals(t) ? "用户" : directory.nameOf(t));
-        }
-        return sb.toString();
-    }
-
-    /** {@code with} 里表示「全桌一起议」的说法（留空也算）：不是这些、又解析不出成员名时按无效处理 */
-    private static boolean isEveryone(String with) {
-        if (with == null || with.isBlank()) {
-            return true;
-        }
-        return Set.of("全员", "全桌", "所有人", "全体", "全部", "大家", "all").contains(with.strip());
-    }
-
-    /** 按名字在会话成员里找 id（找不到返回 null） */
-    private String resolveOwner(String sessionId, String name) {
-        if (name == null || name.isBlank()) {
-            return null;
-        }
-        String target = name.strip();
-        return directory.peers(sessionId).stream()
-                .filter(p -> target.equals(p.name()))
-                .map(AgentRow::id)
-                .findFirst()
-                .orElse(null);
-    }
-
     private static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s;
     }

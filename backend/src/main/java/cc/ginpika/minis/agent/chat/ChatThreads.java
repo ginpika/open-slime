@@ -8,16 +8,7 @@ import cc.ginpika.minis.agent.chat.turn.TurnTrigger;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 
-/**
- * 会话投递：往首页 chat 的会话里开一个会话、投一条 assistant 消息。
- *
- * <p>专供外围模块（潜意识的任务计划）的 {@code open_thread} / {@code send_message} 两个工具落地使用：
- * 这两件事只碰会话表与消息表，不含任何模型调用或对话编排，因此从 {@link ChatService} 拆出来单独成件。
- *
- * <p><b>为什么必须拆</b>：{@code ChatService} 需要 {@link HeartbeatTool}（执行计划工具）而
- * 潜意识需要写会话，两个单例构造互指成环，此前只能靠 {@code @Lazy} 撑住。本组件只依赖两张 store 表，
- * 把「写会话」这条边从 ChatService 上摘下来，环即消失——潜意识侧因此不必再引用 ChatService。
- */
+/** 后台消息的会话写入入口：创建会话并投递助手消息，不调用模型和工具。 */
 @Component
 public class ChatThreads {
 

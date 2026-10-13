@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
  * 待办清单的落点（STEP 4）：把 {@link WriteTodosTool} 的一次调用写进 {@code chat_todo}，回一句可读回显。
  *
  * <p>为什么执行不放在工具定义里：工具定义在 {@code ai.core.tool}（最底层），只表达「长什么样」；
- * 落库要碰会话与存储，属编排层的事——所以像计划 / 子代理那样由 {@code ChatService} 分发时转交过来，
+ * 落库要碰会话与存储，属编排层的事——所以像计划 / 子代理那样由 {@code ChatToolDispatcher} 分发时转交过来，
  * 底层不必反向依赖会话存储（见 {@code LayeringTest}）。
  *
  * <p>首页会话的清单落库后额外推一条会话事件，供会话页 TODO 卡片即时刷新；圆桌会话（成员各自的
@@ -25,7 +25,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class TodoService {
 
-    /** 由本服务执行的工具名（ChatService 分发时据此转交） */
+    /** 由本服务执行的工具名（ChatToolDispatcher 分发时据此转交） */
     public static final Set<String> TOOLS = Set.of(WriteTodosTool.NAME);
 
     private final TodoStore todos;

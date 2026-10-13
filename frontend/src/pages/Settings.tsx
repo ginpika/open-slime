@@ -20,6 +20,8 @@ import {
   type SettingsView,
 } from '../api/client'
 import FloatWindow from '../components/FloatWindow'
+import TtsPanel from '../components/TtsPanel'
+import SettingsDirectory from '../components/SettingsDirectory'
 import Toast from '../components/Toast'
 import { btnDanger, btnPrimary, btnQuiet, miniBtn } from '../components/ui'
 import { ModeBtn, Select } from '../components/formKit'
@@ -269,6 +271,7 @@ function ResetKnowledgeDialog({
 }
 
 export default function Settings() {
+  const contentRef = useRef<HTMLDivElement>(null)
   const kit = usePageKit()
   const [data, setData] = useState<SettingsView | null>(null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
@@ -521,7 +524,8 @@ export default function Settings() {
         onClose={() => setToast(null)}
       />
 
-      <div className="flex max-w-3xl flex-col gap-6">
+      <div className="grid w-full max-w-[1016px] grid-cols-[minmax(0,1fr)_clamp(7.5rem,18vw,14rem)] items-start gap-4 md:gap-6">
+      <div ref={contentRef} className="flex w-full min-w-0 max-w-3xl flex-col gap-6">
         {loadErr && (
           <kit.Note tone="warn">
             <span className="font-semibold">设置加载失败</span>
@@ -533,6 +537,7 @@ export default function Settings() {
         {data && (
           <>
             {/* ---------- 大模型 ---------- */}
+            <section id="settings-models" className="scroll-mt-6">
             <kit.Panel title="大模型">
               <kit.Toolbar
                 left={`${data.models.length} 个端点`}
@@ -615,6 +620,8 @@ export default function Settings() {
             </kit.Panel>
 
             {/* ---------- Embedding（与模型配置分开） ---------- */}
+            </section>
+            <section id="settings-embedding" className="scroll-mt-6">
             <kit.Panel title="Embedding">
               <p className="text-sm leading-relaxed text-muted">
                 向量化端点独立于大模型配置：可复用某个已配置模型的端点，或单独填写。
@@ -701,6 +708,8 @@ export default function Settings() {
             </kit.Panel>
 
             {/* ---------- Rerank（检索精排，可整体关闭） ---------- */}
+            </section>
+            <section id="settings-rerank" className="scroll-mt-6">
             <kit.Panel title="Rerank">
               <p className="text-sm leading-relaxed text-muted">
                 检索召回后对「查询 + 文档」重新打分排序（cross-encoder 精排），端点独立于大模型配置。
@@ -824,6 +833,9 @@ export default function Settings() {
             </kit.Panel>
 
             {/* ---------- 危险操作（Danger Zone） ---------- */}
+            </section>
+            <section id="settings-tts" className="scroll-mt-6"><TtsPanel /></section>
+            <section id="settings-danger" className="scroll-mt-6">
             <kit.Panel title="危险操作">
               <p className="text-sm leading-relaxed text-muted">以下操作不可撤销，请谨慎执行。</p>
               <div className="mt-3 rounded-md border border-danger/40 bg-danger/5 p-4">
@@ -846,8 +858,17 @@ export default function Settings() {
                 </div>
               </div>
             </kit.Panel>
+            </section>
           </>
         )}
+      </div>
+      <SettingsDirectory contentRef={contentRef} items={[
+        { id: 'settings-models', text: '大模型' },
+        { id: 'settings-embedding', text: 'Embedding' },
+        { id: 'settings-rerank', text: 'Rerank' },
+        { id: 'settings-tts', text: 'TTS 语音' },
+        { id: 'settings-danger', text: '危险操作' },
+      ]} />
       </div>
 
       {modelDlg.open && (

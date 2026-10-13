@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  * 记忆写入的门面：agent 侧「说过/做过」在发生点顺手 push 进事件流。
  *
  * <p>方向约束：memory 属 ai 一侧，不回头去读 agent 的库——所以是 push 不是 pull
- *（ChatService 落 chat_message 时、AgentRunner 落执行结论时各推一条），
+ *（ChatTurnRunner 落 chat_message 时、AgentRunner 落执行结论时各推一条），
  * agent → ai 的依赖方向与潜意识模块一致。
  *
  * <p>两条硬规则：

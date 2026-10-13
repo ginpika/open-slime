@@ -37,7 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
  * </ol>
  *
  * <p>和 {@code KnowledgeToolbox} 在知识库里扮演的角色一样：工具面唯一的默认分发点，
- * 由会话与心跳两处转交过来（见 {@code ChatService#runTool} / {@code HeartbeatService}）。
+ * 由会话与心跳两处转交过来（见 {@code ChatToolDispatcher#runTool} / {@code HeartbeatService}）。
  *
  * <p><b>这是全项目权限最高的一件工具</b>：它执行的不是检索而是任意命令。因此逐目标默认关、
  * 白黑名单可选而超时与输出上限恒在——把「模型能碰什么」交给配置，

@@ -13,10 +13,10 @@ import org.springframework.stereotype.Component;
  *
  * <p>骨架：{@code model} + 一条 {@code system} + 各源追加的消息 + {@code tools}。system 的正文由
  * 基底（身份提示词 + 对话增强）与各源的尾段（如「在跑的子代理」）以固定分隔线拼成；消息则由各源
- * 按 {@code @Order} 顺序依次插入。真实发送（{@code ChatService#runChat}）与「查看原始上下文」
- * （{@code ChatService#rawContext}）共用这一条路径，保证预览与实际发出去的请求体完全一致。
+ * 按 {@code @Order} 顺序依次插入。真实发送（{@code ChatTurnRunner#chat}）与「查看原始上下文」
+ * （{@code ChatContextService#rawContext}）共用这一条路径，保证预览与实际发出去的请求体完全一致。
  *
- * <p>这是 STEP 2 的等效抽取落点：{@code ChatService#requestBody} 的实现原样搬来这里，行为零变化；
+ * <p>这是 STEP 2 的等效抽取落点：{@code ChatContextService#requestBody} 的实现原样搬来这里，行为零变化；
  * 知识检索 / 记忆 / 代码库三路上下文作为后续 provider 逐步接入，组装骨架不再改动。
  */
 @Component
