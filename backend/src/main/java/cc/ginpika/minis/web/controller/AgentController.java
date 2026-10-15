@@ -118,6 +118,9 @@ public class AgentController {
     private final RoundtableWorkRuntime workRuntime;
     /** 共享任务区：干预之后读回那一条（状态 + 优先级）给页面 */
     private final RoundtableTodoStore taskBoard;
+    private cc.ginpika.minis.coding.CodingFacade coding;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setCoding(@org.springframework.context.annotation.Lazy cc.ginpika.minis.coding.CodingFacade coding){this.coding=coding;}
 
     public AgentController(AgentDirectory peers, RoundtableChatService chat, RoundtableTopicService topics,
                                 AgentPromptService peerPrompts, AgentAnchorService peerAnchors,
@@ -387,9 +390,12 @@ public class AgentController {
     @GetMapping("/{agentId}/tasks")
     public List<HeartbeatDtos.TaskView> tasks(@PathVariable String agentId,
                                               @RequestParam(defaultValue = "100") int limit,
-                                              @RequestParam(required = false) String kind) {
+                                              @RequestParam(required = false) String kind,
+                                              jakarta.servlet.http.HttpServletRequest request) {
         requirePeer(agentId);
+        String owner=codingOwner(request);
         return tasks.recent(agentId, blank(kind) ? null : kind.trim(), clampLimit(limit)).stream()
+                .filter(row -> !"coding".equals(row.origin()) || (coding!=null && coding.ownsTask(owner,row.id())))
                 .map(AgentController::toTask)
                 .toList();
     }
@@ -551,9 +557,10 @@ public class AgentController {
      * </ul>
      */
     @GetMapping("/workflow")
-    public AgentDtos.WorkflowView workflow(@RequestParam(required = false) String sessionId) {
+    public AgentDtos.WorkflowView workflow(@RequestParam(required = false) String sessionId,
+                                          jakarta.servlet.http.HttpServletRequest request) {
         return sessionId == null || sessionId.isBlank()
-                ? workflowFlow.overview() : workflowFlow.view(sessionId);
+                ? workflowFlow.overview(codingOwner(request)) : workflowFlow.view(sessionId,codingOwner(request));
     }
 
     /**
@@ -608,7 +615,7 @@ public class AgentController {
      * 详见 {@link RoundtableAgenda} 与 {@link RoundtableLiveBus}。
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chatStream(@RequestBody AgentDtos.SendRequest req) {
+    public SseEmitter chatStream(@RequestBody AgentDtos.SendRequest req, jakarta.servlet.http.HttpServletRequest request) {
         String input = req == null || req.input() == null ? "" : req.input().strip();
         if (input.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "input 为空");
@@ -656,7 +663,9 @@ public class AgentController {
            运行时负责打断上一轮、把本轮排进会话议程、按序发布发言并在结束时推 done / error——
            「人的新话打断上一轮」、推流出口与全部调度都收在协调器里（见 RoundtableDiscussionRuntime）。
            控制器只做两件事：构造事件、订阅会话事件流。 */
-        runtime.submitUserMessage(sessionId, input, req.modelId(), req.speakerStrategy(), runId);
+        try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(request))){
+            runtime.submitUserMessage(sessionId, input, req.modelId(), req.speakerStrategy(), runId);
+        }
         return emitter;
     }
 
@@ -675,14 +684,15 @@ public class AgentController {
     private AgentDtos.AgentView toPeer(AgentRow row) {
         return new AgentDtos.AgentView(row.id(), row.name(), row.builtin(),
                 peers.declaredTools(row), peers.declaredTerminals(row), row.modelId(), row.sort(),
-                row.note(), row.avatar(), row.role(), row.roleColor());
+                row.note(), row.avatar(), row.role(), row.roleColor(),
+                cc.ginpika.minis.ai.core.BuiltinAgents.CODING.equals(row.id())?"CODING":"CHAT");
     }
 
     private AgentDtos.ToolOption toTool(AiTool tool) {
         /* 默认订阅 = 只读检索那一批：与 readOnlyToolsOf(CHAT) 同一判定（本清单已限「CHAT 面 + 可被 agent 调用」，
            于是「非写」即「默认就给」），页面据此把默认项显示成已勾选 */
         return new AgentDtos.ToolOption(tool.name(), tool.description(), tool.writes(),
-                !tool.writes(), tool.domain().key(), tool.domain().label());
+                tool.risk()==cc.ginpika.minis.ai.core.tool.ToolRisk.READ, tool.domain().key(), tool.domain().label());
     }
 
     // ---------- 逐 Agent 后台的映射与快照 ----------
@@ -745,7 +755,13 @@ public class AgentController {
            前台会话任务（origin 为空，正文在会话里）没有执行上下文，execId 留空 → 行不可点 */
         Long execId = r.origin() == null ? null : r.id();
         return new HeartbeatDtos.TaskView(r.id(), r.parentId(), r.kind(), r.status(), r.title(),
-                r.sessionId(), r.agentId(), execId, r.createdAt(), r.updatedAt());
+                r.sessionId(), r.agentId(), "coding".equals(r.origin())?null:execId, r.createdAt(), r.updatedAt(),
+                "coding".equals(r.origin())?r.payload():null);
+    }
+
+    private static String codingOwner(jakarta.servlet.http.HttpServletRequest request){
+        Object actor=request.getAttribute(cc.ginpika.minis.web.sso.SsoInterceptor.ATTR);
+        return actor instanceof cc.ginpika.minis.web.sso.SsoUser user && cc.ginpika.minis.coding.CodingFacade.allowsActorAt(user.getId(),request.getRemoteAddr())?user.getId():null;
     }
 
     private static HeartbeatDtos.EditView toEdit(ExecStore.EditRow r) {

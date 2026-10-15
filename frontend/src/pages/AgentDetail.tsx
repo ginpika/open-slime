@@ -23,6 +23,7 @@
  * <p>头像走库存储：选了图先在前端裁成方图并压到 256px，转成 data URL 再随成员一起存。
  */
 
+import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
@@ -50,16 +51,20 @@ import PageBoundary from '../components/PageBoundary'
 import PeerAvatar from '../components/PeerAvatar'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
+import { DraftNotice } from '../components/DraftNotice'
+import { resetWindowStates, useDraftState, useRememberedState } from '../components/windowState'
 import AgentBackground, { SUB_TABS, type SubView } from './AgentBackground'
 import PromptsPanel from './PromptsPanel'
 import TtsPanel from '../components/TtsPanel'
+import { CODING_AGENT_ID } from '../api/agentRuntime'
+import AgentTasks from './coding/AgentTasks'
 
 /** 路径末段用 new 表示「新建成员」（成员 id 是 uuid，不会撞） */
 const NEW_ID = 'new'
 
 /** 右栏 tab：提示词（最优先配置，放最左）/ 能力 / 后台各子页（心跳·常驻职责·行动日志·RAG 召回）/
  *  图谱人格锚点。各块都不短，切换显示而不是竖着堆成一整条长栏 */
-type RightTab = 'cap' | SubView | 'anchor' | 'prompt' | 'tts'
+type RightTab = 'cap' | SubView | 'anchor' | 'prompt' | 'tts' | 'coding'
 
 const RIGHT_TABS: { key: RightTab; label: string }[] = [
   { key: 'prompt', label: '提示词 & 上下文工程' },
@@ -398,6 +403,7 @@ function PeerAnchorPanel({
 export default function AgentDetail({ peerId }: { peerId: string }) {
   const kit = usePageKit()
   const isNew = peerId === NEW_ID
+  const codingAgent = peerId === CODING_AGENT_ID
   const [peer, setPeer] = useState<MaPeer | null>(null)
   const [loading, setLoading] = useState(true)
   const [modelOptions, setModelOptions] = useState<Option[]>([])
@@ -408,11 +414,12 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
   const [workspaceOptions, setWorkspaceOptions] = useState<TerminalTarget[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
 
-  const [draft, setDraft] = useState<Draft | null>(null)
-  const [savingProfile, setSavingProfile] = useState(false)
+  const [draft, setDraft, draftState] = useDraftState<Draft | null>(`agent:${peerId}:profile`, null)
+  const initializeDraft = draftState.initialize
+  const [savingProfile, setSavingProfile] = useRememberedState(`agent:${peerId}:saving`, false)
   /** 右栏当前显示哪一块：已有成员缺省停在「提示词」（最先要配的身份设定，放最左）；
    *  新建成员还没有 peer，提示词无从配起，先落在「能力」把资料与工具配上 */
-  const [tab, setTab] = useState<RightTab>(isNew ? 'cap' : 'prompt')
+  const [tab, setTab] = useRememberedState<RightTab>(`agent:${peerId}:tab`, isNew ? 'cap' : codingAgent ? 'coding' : 'prompt')
   /** 「可用工具」当前停在哪个业务领域 Tab（null = 默认选中第一个领域） */
   const [toolDomain, setToolDomain] = useState<string | null>(null)
   /**
@@ -473,7 +480,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
   /* 草稿初始化：新建给空表；编辑等这位成员到手后填一次 */
   useEffect(() => {
     if (isNew) {
-      setDraft({
+      initializeDraft({
         name: '',
         modelId: '',
         note: '',
@@ -487,7 +494,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
     }
     if (!peer || loadedIdRef.current === peer.id) return
     loadedIdRef.current = peer.id
-    setDraft({
+    initializeDraft({
       name: peer.name,
       modelId: peer.modelId ?? '',
       note: peer.note ?? '',
@@ -497,7 +504,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
       tools: peer.tools ?? [],
       terminals: peer.terminals ?? [],
     })
-  }, [peer, isNew])
+  }, [peer, isNew, initializeDraft])
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -545,7 +552,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
   const toolOn = (t: MaToolOption) => t.defaultGranted || (draft?.tools ?? []).includes(t.name)
 
   const saveProfile = async () => {
-    if (!draft) return
+    if (!draft || savingProfile) return
     const clean = draft.name.trim()
     if (!clean) {
       notify('先给成员起个名字（它会用在 @ 里）', 'err')
@@ -566,6 +573,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
           tools: draft.tools,
           terminals: draft.terminals,
         })
+        draftState.accept({ ...draft, name: clean }, draft)
         notify(`「${clean}」的资料已保存`, 'ok')
         await reloadPeer()
       } else {
@@ -580,6 +588,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
           terminals: draft.terminals,
         })
         /* 建好了就换到它自己的内部页（换掉地址而非 push，免得后退又回到新建态） */
+        draftState.accept(null, draft)
         window.location.assign(`#/multi-agent/${encodeURIComponent(created.id)}`)
       }
     } catch (e) {
@@ -594,6 +603,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
     if (!window.confirm(`把「${peer.name}」移出圆桌？`)) return
     try {
       await deleteMaPeer(peer.id)
+      resetWindowStates(`agent:${peer.id}:`, `prompt:${peer.id}:`, `prompts:${peer.id}:`)
       window.location.assign('#/multi-agent')
     } catch (e) {
       notify(errMsg(e), 'err')
@@ -629,16 +639,9 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
         /* 返回上级给一条明确的回路（原先的「取消」按钮由它取代）；保存挂页头最右端，
            与导航同处一行，不占正文也不悬空 */
         <span className="flex items-center gap-2.5">
+          {codingAgent && <a href="#/coding" className={miniBtn}>编程工作台 ↗</a>}
           <a href="#/multi-agent" className={miniBtn} title="返回多智能体成员列表">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-              <path
-                d="M15 6l-6 6 6 6"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <AppIcon name="chevron-left" className="h-3.5 w-3.5" />
             返回上级
           </a>
           <button
@@ -652,6 +655,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
         </span>
       }
     >
+      <DraftNotice dirty={draftState.dirty} onDiscard={draftState.discard} disabled={savingProfile} />
       <PageBoundary>
         <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
           {/* 左：资料 */}
@@ -762,7 +766,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
               tab 选中 = 主行动钮（黄色实底印章），未选中走安静钮 */}
           <Card pad="none" className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3.5 pb-2.5 pt-3">
-              {RIGHT_TABS.map((t) => (
+              {(codingAgent ? [{ key: 'coding' as const, label: '编码项目与任务' }, ...RIGHT_TABS] : RIGHT_TABS).map((t) => (
                 <button
                   key={t.key}
                   type="button"
@@ -777,13 +781,13 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
             </div>
 
             <div className="p-5">
+            {codingAgent && tab === 'coding' && <AgentTasks />}
             {/* 能力：逐成员各配一份——额外可用工具（按业务领域分 Tab）+ 可访问的工作空间（绑了才给终端工具） */}
             {tab === 'tts' && (peer ? <TtsPanel agentId={peer.id} /> : <kit.Empty>请先保存 Agent，再配置语音档案。</kit.Empty>)}
             {tab === 'cap' && (
               <div className="flex flex-col gap-5">
                 <p className="text-sm leading-relaxed text-muted">
-                  在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，
-                  且只能访问绑定的这几台。
+                  {codingAgent ? '编码任务通过 coding_task 接入同一工作台，任务工作空间由项目选择。下面的工作空间绑定只控制圆桌中直接调用终端工具的范围。' : '在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
                 </p>
 
                 <div>
@@ -861,7 +865,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
                             checked={toolOn(t)}
                             locked={t.defaultGranted}
                             title={t.name}
-                            badge={t.defaultGranted ? '默认' : t.writes ? '写库' : undefined}
+                            badge={t.defaultGranted ? '默认' : t.name === 'coding_task' ? '编程' : t.writes ? '写库' : undefined}
                             mono
                             description={t.description}
                             onToggle={() => togglePick('tools', t.name)}

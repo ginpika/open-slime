@@ -232,7 +232,7 @@ function ThemeTab({
 
 /* ---------------------------------------------------------------- 全局页 */
 
-function GlobalTab({ overridden }: { overridden: boolean }) {
+export function GlobalTab({ overridden }: { overridden: boolean }) {
   const st = useThemeState()
   const { seed } = st.override
   const base = rawSeed(st.themeId, st.scheme)
@@ -273,7 +273,7 @@ function GlobalTab({ overridden }: { overridden: boolean }) {
 
       <div className="mt-4">
         <span className="ui-label">Font</span>
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <div className="theme-font-options mt-1.5 flex flex-wrap gap-1.5">
           {FONT_PRESETS.map((f) => {
             const active = (st.override.fontSans ?? FONT_STACKS.sans) === f.value
             return (
@@ -303,7 +303,7 @@ function GlobalTab({ overridden }: { overridden: boolean }) {
 
       <div className="mt-4">
         <span className="ui-label">Heading</span>
-        <div className="mt-1.5 flex items-center gap-1.5">
+        <div className="theme-heading-options mt-1.5 flex items-center gap-1.5">
           {(['default', 'normal', 'italic'] as const).map((v) => {
             const active = (st.override.headingStyle ?? 'default') === v
             const label = v === 'default' ? '跟随主题' : v === 'normal' ? '常规' : '斜体'

@@ -173,6 +173,10 @@ public class DocumentStore {
             throw new IllegalStateException("文章 markdown 文件缺失: " + url);
         }
         String sourceRef = url != null ? url : "doc:" + docId;
+        if ("snapshot".equals(source)) {
+            List<String> ids = jdbc.queryForList("SELECT id FROM web_snapshot WHERE doc_id=?",String.class,docId);
+            if (!ids.isEmpty()) sourceRef = "snapshot:" + ids.getFirst();
+        }
         return new CreatedDoc(docId, title, rechunk(docId, title, content, source, sourceRef));
     }
 
@@ -182,11 +186,24 @@ public class DocumentStore {
      */
     public String fullText(long docId) {
         List<java.util.Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT url FROM documents WHERE id = ?", docId);
+                "SELECT url,source FROM documents WHERE id = ?", docId);
         if (rows.isEmpty()) {
             return null;
         }
         String url = (String) rows.get(0).get("url");
+        if ("snapshot".equals(rows.getFirst().get("source"))) {
+            var snapshots = jdbc.queryForList("SELECT id,url,title,source_html FROM web_snapshot WHERE doc_id=?",docId);
+            if (!snapshots.isEmpty()) {
+                var snapshot = snapshots.getFirst();
+                StringBuilder original = new StringBuilder("# " + snapshot.get("title") + "\n来源：" + snapshot.get("url")
+                        + "\n本地快照：#/snapshots/" + snapshot.get("id") + "\n\n");
+                for (var paragraph : org.jsoup.Jsoup.parse((String)snapshot.get("source_html")).select("[id]")) {
+                    if (paragraph.id().matches("p[0-9]+")) original.append('[').append(paragraph.id()).append("] ")
+                            .append(paragraph.wholeText()).append("\n\n");
+                }
+                return original.toString();
+            }
+        }
         if (url != null) {
             return markdown(url);
         }

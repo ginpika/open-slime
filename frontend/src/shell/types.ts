@@ -24,6 +24,8 @@ export type ShellProps = {
   activePath: string
   /** 页面自管滚动（图谱 / 圆桌 / 工作空间）：外壳不再套滚动容器与内边距 */
   fullBleed: boolean
+  /** 桌面沉浸模式：顶底栏让位给 DesktopFrame，工具由 App 移到窗口标题栏 */
+  hideChrome?: boolean
   /** 主题面板节点（行为共享，位置由 kit 决定） */
   tools: ReactNode
   /** 用户菜单插槽（位置与弹出方向由 kit 决定） */

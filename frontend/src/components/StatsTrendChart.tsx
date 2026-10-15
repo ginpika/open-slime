@@ -12,6 +12,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { useThemeState } from '../theme/store'
+import { readableText } from '../theme/color'
 
 /**
  * 统计页的按日趋势折线图（ECharts line 系列）：输入 / 输出 token 两条曲线。
@@ -30,6 +31,7 @@ type Props = {
   labels: string[]
   prompt: number[]
   completion: number[]
+  unknown?: number[]
 }
 
 /** 纵轴刻度：过万折算为「万」，避免长数字挤占绘图区 */
@@ -37,7 +39,7 @@ function axisLabel(v: number): string {
   return v >= 10000 ? `${(v / 10000).toFixed(v >= 100000 ? 0 : 1)}万` : String(v)
 }
 
-export default function StatsTrendChart({ labels, prompt, completion }: Props) {
+export default function StatsTrendChart({ labels, prompt, completion, unknown }: Props) {
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
   const vars = useThemeState().vars
@@ -52,11 +54,13 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
       accent: vars['--c-accent'] ?? '#4b74ff',
       hint: vars['--c-hint'] ?? '#8aa0ff',
     }
+    const inputColor = readableText(c.hint, c.bg)
+    const outputColor = readableText(c.accent, c.bg)
     /** 一条序列：细线 + 极淡填充，颜色由调用方给 */
     const series = (name: string, color: string, data: number[]): LineSeriesOption => ({
       name,
       type: 'line',
-      smooth: true,
+      smooth: false,
       symbol: 'none',
       lineStyle: { color, width: 2 },
       itemStyle: { color },
@@ -70,7 +74,7 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
         trigger: 'axis',
         backgroundColor: c.bg,
         borderColor: c.line,
-        textStyle: { color: c.fg, fontSize: 13 },
+        textStyle: { color: c.fg, fontSize: 14 },
         valueFormatter: (v) => Number(v).toLocaleString('zh-CN'),
       },
       legend: {
@@ -79,7 +83,7 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
         icon: 'roundRect',
         itemWidth: 10,
         itemHeight: 3,
-        textStyle: { color: c.muted, fontSize: 12 },
+        textStyle: { color: c.fg, fontSize: 12 },
       },
       xAxis: {
         type: 'category',
@@ -87,18 +91,19 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
         data: labels,
         axisLine: { lineStyle: { color: c.line } },
         axisTick: { show: false },
-        axisLabel: { color: c.faint, fontSize: 12, hideOverlap: true },
+        axisLabel: { color: c.fg, fontSize: 12, hideOverlap: true },
       },
       yAxis: {
         type: 'value',
         axisLine: { show: false },
         axisTick: { show: false },
         splitLine: { lineStyle: { color: c.line, opacity: 0.6 } },
-        axisLabel: { color: c.faint, fontSize: 12, formatter: axisLabel },
+        axisLabel: { color: c.fg, fontSize: 12, formatter: axisLabel },
       },
-      series: [series('输入', c.hint, prompt), series('输出', c.accent, completion)],
+      series: [{ ...series('输入', inputColor, prompt), lineStyle: { color: inputColor, type: 'dashed' as const, width: 2 } }, series('输出', outputColor, completion),
+        ...(unknown?.some(n => n > 0) ? [{ ...series('未拆分', c.muted, unknown), lineStyle: { color: c.muted, type: 'dashed' as const, width: 2 } }] : [])],
     }
-  }, [labels, prompt, completion, vars])
+  }, [labels, prompt, completion, unknown, vars])
 
   useEffect(() => {
     const box = boxRef.current
@@ -115,8 +120,8 @@ export default function StatsTrendChart({ labels, prompt, completion }: Props) {
   }, [])
 
   useEffect(() => {
-    chartRef.current?.setOption(option)
+    chartRef.current?.setOption(option, { notMerge: true })
   }, [option])
 
-  return <div ref={boxRef} className="h-full w-full" />
+  return <div ref={boxRef} className="h-full w-full" aria-hidden="true" />
 }

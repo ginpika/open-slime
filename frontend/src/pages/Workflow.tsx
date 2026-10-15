@@ -1,3 +1,4 @@
+import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
@@ -902,16 +903,7 @@ function MenuBtn({
 /** 绿色对勾：这条任务已完成 */
 function GreenCheck() {
   return (
-    <svg viewBox="0 0 16 16" className="h-3 w-3" aria-hidden="true">
-      <path
-        d="M3 8.4 6.2 11.6 13 4.7"
-        fill="none"
-        stroke={EDGE}
-        strokeWidth="2.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="check" className="h-3 w-3" style={{ color: EDGE }} />
   )
 }
 

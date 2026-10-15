@@ -204,6 +204,14 @@ public class TerminalService {
      *
      * @return 拒绝理由；放行返回 null
      */
+    public String commandRejection(String targetId,String command) {
+        var target=store.targetById(targetId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"工作空间不存在"));
+        if(!target.enabled()){return "工作空间未启用";}
+        return guard(target,command);
+    }
+    public ExecTarget.ExecOptions executionOptions(String targetId) {
+        return options(store.targetById(targetId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"工作空间不存在")));
+    }
     private String guard(TerminalStore.TargetRow target, String command) {
         List<String> deny = read(target.denyPatterns());
         for (String rule : deny) {

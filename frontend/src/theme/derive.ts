@@ -8,7 +8,7 @@
  *
  * 输出是扁平的 `Vars`（键即 CSS 变量名），由 applyVars 一次性写入 :root。
  */
-import { hexToHsl, hslToHex, isDark, mix, pickText } from './color'
+import { hexToHsl, hslToHex, isDark, mix, normalizeHex, pickText, readableText } from './color'
 import {
   ENDFIELD_RHODES,
   ENDFIELD_RHODES_SCHEME,
@@ -17,7 +17,8 @@ import {
   SKELETON,
 } from './layers'
 import { SEEDS } from './palette'
-import type { EndfieldConfig, OverrideState, Scheme, ThemeId, ThemeSeed, Vars } from './types'
+import { ASTROLABE_DEFAULT_CONFIG, ASTROLABE_PALETTES, astrolabeConfigVars } from './astrolabe'
+import type { AstrolabeConfig, EndfieldConfig, OverrideState, Scheme, ThemeId, ThemeSeed, Vars } from './types'
 
 /**
  * 分类色板（canvas 实体专用）：从点缀色色相出发旋转 90°，
@@ -49,12 +50,13 @@ export function resolveTheme(
   scheme: Scheme,
   override: OverrideState = { seed: {} },
   endfield: EndfieldConfig = { palette: 'default', window: 'default' },
+  astrolabe: AstrolabeConfig = ASTROLABE_DEFAULT_CONFIG,
 ): Vars {
   /* ---------------- 1. 色种子（主题 → 用户 delta 覆盖） ---------------- */
   /* 优先级：手动覆盖点缀色 > 罗德岛档预设变体 > 主题默认 */
   const rhodes = themeId === 'endfield' && endfield.palette === 'rhodes'
   const workbench = themeId === 'endfield' && endfield.window === 'workbench'
-  const base0 = SEEDS[themeId][scheme]
+  const base0 = themeId === 'astrolabe' ? ASTROLABE_PALETTES[astrolabe.palette][scheme] : SEEDS[themeId][scheme]
   const seed: ThemeSeed = {
     primary: override.seed.primary ?? base0.primary,
     secondary: base0.secondary,
@@ -77,7 +79,7 @@ export function resolveTheme(
     /* 灰阶（五级：fg > fg-2 > muted > faint > dim，方向向底色衰减） */
     '--c-fg-2': mix(bg, primary, 0.8),
     '--c-muted': mix(bg, primary, 0.6),
-    '--c-faint': mix(bg, primary, 0.42),
+    '--c-faint': mix(bg, primary, themeId === 'astrolabe' ? 0.65 : 0.42),
     '--c-dim': mix(bg, primary, 0.3),
 
     /* 线条 */
@@ -93,7 +95,7 @@ export function resolveTheme(
     '--c-accent-fg': pickText(accent),
     '--c-accent-hover': mix(accent, bg, 0.15),
     '--c-accent-soft': mix(bg, accent, 0.12),
-    '--c-hint': mix(bg, accent, 0.6),
+    '--c-hint': themeId === 'astrolabe' ? mix(bg, primary, 0.65) : mix(bg, accent, 0.6),
     '--c-mark': mix(bg, accent, 0.15),
 
     /* 分类色板（图谱实体） */
@@ -142,6 +144,7 @@ export function resolveTheme(
       : {}),
     /* 工作台档：FloatWindow 窗口令牌族（哨兵式——存在即换装） */
     ...(workbench ? ENDFIELD_WINDOW_WORKBENCH : {}),
+    ...(themeId === 'astrolabe' ? astrolabeConfigVars(astrolabe, scheme) : {}),
   }
 
   /* ---------------- 4. 用户覆盖层（最高优先级） ---------------- */
@@ -151,7 +154,21 @@ export function resolveTheme(
   /* 合并顺序契约（勿重排）：layerVars 在 colorVars 之后，因此层的
      overrides[scheme] 可覆写派生色（--c-*）；layerVars 内部则按
      shape→depth→surface→typo→motion→btn→分档覆盖 的顺序后者胜 */
-  return { ...SKELETON, ...colorVars, ...layerVars }
+  const vars = { ...SKELETON, ...colorVars, ...layerVars }
+  // These are useful text roles, not decoration. Apply the floor after scheme overrides.
+  for (const role of ['--c-muted', '--c-faint', '--c-dim', '--c-hint', '--c-on-surface-variant']) {
+    const color = normalizeHex(vars[role])
+    const minimum = role === '--c-muted' || role === '--c-on-surface-variant' ? 6 : role === '--c-faint' ? 4.8 : 4.5
+    if (color) vars[role] = readableText(color, bg, minimum)
+  }
+  if (workbench) {
+    for (const role of ['muted', 'faint', 'dim']) {
+      const key = `--ui-win-c-${role}`
+      const color = normalizeHex(vars[key])
+      if (color) vars[key] = readableText(color, vars['--ui-win-c-bg'], role === 'muted' ? 6 : role === 'faint' ? 4.8 : 4.5)
+    }
+  }
+  return vars
 }
 
 /**

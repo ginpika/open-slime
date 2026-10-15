@@ -53,6 +53,14 @@ public class OpenAiChatClient {
     public record Completion(String content, String reasoningContent, String rawResponse) {
     }
 
+    /** Typed request failures let callers retry transient failures without repeating invalid requests. */
+    public static final class ChatFailure extends IllegalStateException {
+        private final int status;
+        public ChatFailure(int status,String detail,Throwable cause){super("chat 调用失败: "+detail,cause);this.status=status;}
+        public int status(){return status;}
+        public boolean retryable(){return status==0 || status==408 || status==429 || status>=500 && status<=599;}
+    }
+
     private static final Logger log = LoggerFactory.getLogger(OpenAiChatClient.class);
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
@@ -124,7 +132,16 @@ public class OpenAiChatClient {
     }
 
     /** chatRaw 的返回：message 节点 + 重组的等价响应体 */
-    public record RawResult(JsonNode message, String rawResponse) {
+    public record RawResult(JsonNode message, String rawResponse, String finishReason) {
+        private static final ObjectMapper ENVELOPE_JSON = new ObjectMapper();
+        public RawResult(JsonNode message, String rawResponse) {
+            this(message, rawResponse, parseFinishReason(rawResponse));
+        }
+        private static String parseFinishReason(String raw) {
+            if (raw == null || raw.isBlank()) return null;
+            try { return ENVELOPE_JSON.readTree(raw).path("choices").path(0).path("finish_reason").asText(null); }
+            catch (IOException ignored) { return null; }
+        }
     }
 
     /**
@@ -134,6 +151,16 @@ public class OpenAiChatClient {
     @FunctionalInterface
     public interface DeltaListener {
         void onDelta(String reasoning, String content);
+    }
+
+    /** A per-run cancellation handle; also cancels a request before its first response chunk. */
+    public static final class CallControl {
+        private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.atomic.AtomicReference<okhttp3.Call> active = new java.util.concurrent.atomic.AtomicReference<>();
+        public void cancel() { cancelled.set(true); var call = active.get(); if (call != null) { call.cancel(); } }
+        public boolean cancelled() { return cancelled.get(); }
+        private void attach(okhttp3.Call call) { active.set(call); if (cancelled.get()) { call.cancel(); } }
+        private void release(okhttp3.Call call) { active.compareAndSet(call, null); }
     }
 
     /** 低层补全（默认聊天模型）：调用方自组请求体 */
@@ -166,6 +193,11 @@ public class OpenAiChatClient {
      */
     public RawResult chatRaw(ModelTarget target, ObjectNode body, DeltaListener listener,
                              String source) {
+        return chatRaw(target, body, listener, source, null);
+    }
+
+    public RawResult chatRaw(ModelTarget target, ObjectNode body, DeltaListener listener,
+                             String source, CallControl control) {
         if (!target.configured()) {
             throw new IllegalStateException("LLM 未配置：请在设置页添加模型，或在 .env 填写 "
                     + "LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL");
@@ -175,6 +207,9 @@ public class OpenAiChatClient {
         /* 要求流末尾补一个 usage 尾包（choices 为空），否则多数供应商不下发用量 */
         body.putObject("stream_options").put("include_usage", true);
         StreamRateLogger rate = new StreamRateLogger(target.model());
+        StreamMeter meter = new StreamMeter();
+        boolean attempted = false;
+        boolean succeeded = false;
         try {
             Request request = new Request.Builder()
                     .url(join(target.baseUrl(), "chat/completions"))
@@ -182,35 +217,57 @@ public class OpenAiChatClient {
                     .header("Authorization", "Bearer " + target.apiKey())
                     .build();
             rate.start();
-            try (Response response = client.newCall(request).execute()) {
+            okhttp3.Call call = client.newCall(request);
+            if (control != null) { control.attach(call); }
+            attempted = true;
+            try (Response response = call.execute()) {
                 if (!response.isSuccessful()) {
                     String respBody = response.body() == null ? "" : response.body().string();
-                    throw new IOException("HTTP " + response.code() + " " + abbreviate(respBody));
+                    throw new ChatFailure(response.code(),"HTTP " + response.code() + " " + abbreviate(respBody),null);
                 }
-                StreamOutcome outcome = readStream(response, rate, listener);
-                recordUsage(source, target.model(), body, outcome);
+                StreamOutcome outcome = readStream(response, rate, listener, meter);
+                meter.usage = outcome.usage();
+                succeeded = true;
                 return outcome.raw();
+            } finally {
+                if (control != null) { control.release(call); }
             }
+        } catch (ChatFailure error) {
+            log.warn("chat 调用失败：model={} baseUrl={} error={}",target.model(),target.baseUrl(),error.getMessage());
+            throw error;
         } catch (IOException e) {
             log.warn("chat 调用失败：model={} baseUrl={} error={}",
                     target.model(), target.baseUrl(), e.getMessage(), e);
-            throw new IllegalStateException("chat 调用失败: " + e.getMessage(), e);
+            throw new ChatFailure(0,e.getMessage(),e);
         } finally {
+            if (attempted) recordUsage(source, target, body, meter, succeeded,
+                    control != null && control.cancelled());
             rate.finish();
         }
     }
 
     /** 落库本次用量：供应商回传 usage 用真实值，否则按请求/输出文本估算（estimated=true） */
-    private void recordUsage(String source, String model, ObjectNode requestBody,
-                             StreamOutcome outcome) {
-        TokenUsageService.Usage usage = outcome.usage();
+    private void recordUsage(String source, ModelTarget target, ObjectNode requestBody,
+                             StreamMeter meter, boolean succeeded, boolean cancelled) {
+        TokenUsageService.Usage usage = meter.usage;
         if (usage == null) {
-            long prompt = estimateText(requestBody.path("messages"))
-                    + estimateText(requestBody.path("tools"));
+            long prompt = succeeded || meter.received ? estimateText(requestBody.path("messages"))
+                    + estimateText(requestBody.path("tools")) : 0;
             usage = TokenUsageService.Usage.estimated(prompt,
-                    estimateText(outcome.raw().message()));
+                    TokenUsageService.estimateTokens(meter.text.toString()));
         }
-        tokenUsage.record(source, model, usage);
+        String status = succeeded ? "success" : cancelled || meter.received ? "interrupted" : "failed";
+        tokenUsage.record(source, target, succeeded ? usage : usage.partial(), status);
+    }
+
+    private static final class StreamMeter {
+        TokenUsageService.Usage usage;
+        boolean received;
+        final StringBuilder text = new StringBuilder();
+        void observe(JsonNode node) {
+            if (node.isTextual()) text.append(node.asText());
+            else for (JsonNode child : node) observe(child);
+        }
     }
 
     /** 递归累加节点内所有文本的估算 token 数（messages / tools / 聚合后的 message） */
@@ -233,7 +290,7 @@ public class OpenAiChatClient {
     }
 
     /** 逐行消费 SSE 流，聚合 delta 为 message 节点；listener 非空时把每段 delta 实时透出 */
-    private StreamOutcome readStream(Response response, StreamRateLogger rate, DeltaListener listener)
+    private StreamOutcome readStream(Response response, StreamRateLogger rate, DeltaListener listener, StreamMeter meter)
             throws IOException {
         ResponseBody respBody = response.body();
         if (respBody == null) {
@@ -246,6 +303,7 @@ public class OpenAiChatClient {
            它逐字符推进，标记被 SSE 拆成任意片段也能正确拼接；块内字符一律不进入正文。 */
         DsmlToolCallParser dsml = new DsmlToolCallParser(objectMapper);
         boolean anyDelta = false;
+        boolean completed = false;
         /* 真实用量（usage 尾包；部分供应商只在最后一包给全量，故取最后一个） */
         TokenUsageService.Usage usage = null;
         /* 结束原因（stop/length/tool_calls…）：排查「content 为空」是正常收尾还是被截断 */
@@ -262,23 +320,27 @@ public class OpenAiChatClient {
                     continue;
                 }
                 if ("[DONE]".equals(payload)) {
+                    completed=true;
                     break;
                 }
                 JsonNode root = objectMapper.readTree(payload);
                 TokenUsageService.Usage parsed = parseUsage(root.path("usage"));
                 if (parsed != null) {
                     usage = parsed;
+                    meter.usage = parsed;
                 }
                 JsonNode choice = root.path("choices").path(0);
+                JsonNode fr = choice.get("finish_reason");
+                if (fr != null && !fr.isNull() && !fr.asText().isEmpty()) {
+                    finishReason = fr.asText();completed=true;
+                }
                 JsonNode delta = choice.path("delta");
                 if (delta.isMissingNode()) {
                     continue; // 如 usage-only 尾包
                 }
-                JsonNode fr = choice.get("finish_reason");
-                if (fr != null && !fr.isNull() && !fr.asText().isEmpty()) {
-                    finishReason = fr.asText();
-                }
                 anyDelta = true;
+                meter.received = true;
+                meter.observe(delta);
                 boolean got = false;
                 /* 正文先过解析器：它只放行「人话」，工具调用标记被扣下（不推给页面、不进正文） */
                 String shown = dsml.feed(delta.path("content").asText(null));
@@ -306,6 +368,7 @@ public class OpenAiChatClient {
         if (!anyDelta) {
             throw new IOException("流式响应无 delta 数据");
         }
+        if(!completed){throw new IOException("流式响应在完成前断开；未接收完整模型结果");}
         /* 收尾：把解析器扣下的调用（含跨 chunk 拼好的标记）交出来 */
         DsmlToolCallParser.Result tail = dsml.finish();
         if (!tail.visible().isEmpty()) {
@@ -344,20 +407,16 @@ public class OpenAiChatClient {
         if (finishReason != null) {
             rawChoice.put("finish_reason", finishReason);
         }
-        return new StreamOutcome(new RawResult(message, raw.toString()), usage);
+        if (usage != null) {
+            raw.putObject("usage").put("prompt_tokens",usage.promptTokens())
+                    .put("completion_tokens",usage.completionTokens()).put("total_tokens",usage.totalTokens());
+        }
+        return new StreamOutcome(new RawResult(message, raw.toString(), finishReason), usage);
     }
 
-    /**
-     * 解析 usage 尾包：需至少回传 prompt_tokens / completion_tokens 之一才采信，
-     * 只有 total_tokens 的畸形响应（无法拆分输入输出）返回 null 走估算兜底。
-     */
+    /** 解析 usage 尾包，保留实测/部分实测及缓存、推理明细；缺失字段不视为真实的零。 */
     private static TokenUsageService.Usage parseUsage(JsonNode usage) {
-        if (!usage.isObject()
-                || (!usage.has("prompt_tokens") && !usage.has("completion_tokens"))) {
-            return null;
-        }
-        return TokenUsageService.Usage.real(usage.path("prompt_tokens").asLong(),
-                usage.path("completion_tokens").asLong(), usage.path("total_tokens").asLong());
+        return UsageParser.parse(usage, false);
     }
 
     /** 按下标合并流式 tool_calls delta（id/name 覆盖、arguments 追加），返回是否有内容 */

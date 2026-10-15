@@ -1,4 +1,7 @@
+import { AppIcon } from '../components/AppIcon'
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { DraftNotice } from '../components/DraftNotice'
+import { useDraftState, useRememberedState } from '../components/windowState'
 import {
   analyzeDocument,
   commitChunkTriples,
@@ -104,10 +107,7 @@ const inputCls =
 /** Spinner 圆环（加载中动画） */
 function Spinner({ className = 'h-4 w-4' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={`animate-spin ${className}`}>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.2" />
-      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-    </svg>
+    <AppIcon name="loading" className={`animate-spin ${className}`} />
   )
 }
 
@@ -143,23 +143,25 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
     return `<document>\n<title>${ctx.docTitle}</title>\n<docType>${ctx.docType ?? 'UNKNOWN'}</docType>\n<abstract>${ctx.contextualizing}</abstract>\n</document>\n\n<chunk>\n${ctx.chunk.content}\n</chunk>`
   }, [ctx])
 
-  const [extracting, setExtracting] = useState(false)
-  const [rows, setRows] = useState<Row[]>([])
+  const [extracting, setExtracting] = useRememberedState(`extract:${ctx.chunk.id}:extracting`, false)
+  const [rows, setRows, rowsState] = useDraftState<Row[]>(`extract:${ctx.chunk.id}:rows`, [])
+  const initializeRows = rowsState.initialize
+  const readRows = rowsState.read
   /** 实体查看弹窗（点击卡片实体打开） */
   const [inspect, setInspect] = useState<EntityInspect | null>(null)
   /** 弹窗内重命名草稿 */
   const [rename, setRename] = useState('')
-  const [committing, setCommitting] = useState(false)
-  const [committed, setCommitted] = useState<{
+  const [committing, setCommitting] = useRememberedState(`extract:${ctx.chunk.id}:committing`, false)
+  const [committed, setCommitted] = useRememberedState<{
     nodes: number
     edges: number
     duplicates: number
     props: number
-  } | null>(null)
+  } | null>(`extract:${ctx.chunk.id}:committed`, null)
   /** 轻提示（message box）：提交成功 / 提取·评估·提交失败，替代页内文案与横幅 */
   const [toast, setToast] = useState<{ kind: ToastKind; text: ReactNode } | null>(null)
   /** 历史回显：该 chunk 已提交过的提取记录（createdAt=提交时间；三元组只读展示） */
-  const [history, setHistory] = useState<{ createdAt: number } | null>(null)
+  const [history, setHistory] = useRememberedState<{ createdAt: number } | null>(`extract:${ctx.chunk.id}:history`, null)
   /** 历史回显时序守卫：点击「重新提取」后，在途的回显结果作废 */
   const historyEpoch = useRef(0)
 
@@ -172,8 +174,8 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
         return disambiguateTriples(rec.triples)
           .catch(() => [] as TripleEval[])
           .then((evals) => {
-            if (epoch !== historyEpoch.current) return
-            setRows(
+            if (epoch !== historyEpoch.current || readRows().dirty) return
+            initializeRows(
               rec.triples.map((t, i) => ({
                 key: i,
                 triple: t,
@@ -193,7 +195,8 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
           window.location.assign(loginUrl)
         }
       })
-  }, [ctx.chunk.id])
+    return () => { historyEpoch.current++ }
+  }, [ctx.chunk.id, initializeRows, readRows, setHistory])
 
   /** 单条三元组重新评估（编辑/改名后） */
   const evaluateRow = (key: number, triple: Triple) => {
@@ -227,7 +230,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
 
   /** 知识提取：组合串 → LLM 抽三元组 → 逐条消歧评估（历史回显态下即「重新提取」，覆盖旧回显） */
   const extract = async () => {
-    if (extracting) return
+    if (extracting || committing) return
     historyEpoch.current++
     setExtracting(true)
     setToast(null)
@@ -330,7 +333,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
 
   /** 提交勾选的三元组（propsOff 中被忽略的属性不随提交写入） */
   const commit = async () => {
-    if (committing || committed) return
+    if (committing || committed || rows.some(row => row.evaluating)) return
     const picked = rows
       .filter((r) => r.checked)
       .map((r) => {
@@ -346,6 +349,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
     try {
       const r = await commitChunkTriples(ctx.chunk.id, picked)
       setCommitted({ nodes: r.nodes, edges: r.edges, duplicates: r.duplicates, props: r.props })
+      rowsState.accept(rows, rows)
       setToast({
         kind: 'success',
         text: (
@@ -370,13 +374,8 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
     }
   }
 
-  /** 返回选择：已解析出且未提交的三元组会随返回丢弃，需先确认；否则直接返回 */
+  /** 返回选择不会丢弃当前 Chunk 的草稿；再次进入时继续编辑。 */
   const back = () => {
-    if (rows.length > 0 && !committed && !history) {
-      if (!window.confirm('已解析出的三元组尚未提交，返回将丢弃这些结果。确定返回？')) {
-        return
-      }
-    }
     onBack()
   }
 
@@ -384,10 +383,11 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
 
   return (
     <div className="flex flex-col gap-5">
+      <DraftNotice dirty={rowsState.dirty} onDiscard={rowsState.discard} disabled={extracting || committing || rows.some(row => row.evaluating)} />
       {/* 主区域：左（父文档摘要 + Chunk 原文，标题栏最右为提取按钮）右（提取到的三元组） */}
-      <div className="flex items-stretch gap-5">
+      <div className="extract-columns">
         {/* 左：上下文区 */}
-        <div className="flex min-w-165 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-col">
               <h2 className="ui-heading text-base">「{ctx.docTitle}」· chunk #{ctx.chunk.id}</h2>
@@ -439,7 +439,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
                 <TripleCard
                   key={row.key}
                   row={row}
-                  committed={!!committed || !!history}
+                  committed={committing || !!committed || !!history}
                   onCheck={(key, checked) =>
                     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, checked } : r)))
                   }
@@ -472,7 +472,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
               <button
                 type="button"
                 onClick={() => void commit()}
-                disabled={committing || checkedCount === 0}
+                disabled={committing || rows.some(row => row.evaluating) || checkedCount === 0}
                 className={`${btnPrimary('rounded-md')} gap-2`}
               >
                 {committing && <Spinner className="h-3.5 w-3.5" />}

@@ -128,11 +128,11 @@ public class ToolManager {
         return tools.stream().anyMatch(t -> t.parallelizable() && t.name().equals(name));
     }
 
-    /** 只读检索类工具（写库与管工具的都不在内）：子代理默认拿到的就是这一套窄工具集 */
+    /** Default read-only capability: task/command side effects are excluded even when they do not write knowledge. */
     public ArrayNode readOnlyToolsOf(ToolSurface surface) {
         ArrayNode out = om.createArrayNode();
         for (AiTool tool : tools) {
-            if (tool.surfaces().contains(surface) && !tool.writes() && tool.agentsMayCall()) {
+            if (tool.surfaces().contains(surface) && tool.risk() == ToolRisk.READ && tool.agentsMayCall()) {
                 out.add(tool.schema(om));
             }
         }

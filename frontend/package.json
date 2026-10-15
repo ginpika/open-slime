@@ -8,13 +8,20 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "icons:desktop": "node ../scripts/sync-desktop-icons.mjs",
     "test:memory": "node tests/run-memory-tests.mjs",
-    "test:chat": "node --test tests/settled-chat.test.cjs"
+    "test:chat": "node --test tests/settled-chat.test.cjs",
+    "test:web": "node --test tests/readable-url.test.mjs tests/browser-wheel.test.mjs",
+    "test:coding": "node --test tests/coding-page.test.mjs",
+    "test:stats": "node --test tests/stats.test.mjs tests/stats-api.test.mjs",
+    "test:stats:browser": "node tests/stats-browser-check.mjs"
   },
   "dependencies": {
+    "@lobehub/icons-static-svg": "^1.95.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@tanstack/react-virtual": "^3.14.14",
     "echarts": "^6.1.0",
+    "lucide-react": "^1.57.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

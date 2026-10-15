@@ -19,18 +19,21 @@ type Props = {
   segments: EditorSegment[]
   /** 某部分文本被编辑（实时回调，无需失焦提交） */
   onChangeText: (id: string, text: string) => void
+  readOnly?: boolean
 }
 
 /** 单个部分：预览态（hover 提示 + 点击进入编辑）/ 编辑态（textarea） */
 function SegmentBlock({
   seg,
   editing,
+  readOnly,
   onEnterEdit,
   onExitEdit,
   onChangeText,
 }: {
   seg: EditorSegment
   editing: boolean
+  readOnly: boolean
   onEnterEdit: () => void
   onExitEdit: () => void
   onChangeText: (text: string) => void
@@ -50,16 +53,16 @@ function SegmentBlock({
       className={`group relative rounded-sm border transition ${
         editing
           ? 'border-line-strong bg-bg'
-          : 'cursor-text border-line/70 bg-bg/60 hover:border-line-strong hover:bg-bg'
+          : readOnly ? 'border-line/70 bg-bg/60' : 'cursor-text border-line/70 bg-bg/60 hover:border-line-strong hover:bg-bg'
       }`}
     >
       {/* hover 悬浮提示（仅预览态）：部分名称 + 操作引导 */}
-      {!editing && (
+      {!editing && !readOnly && (
         <span className="pointer-events-none absolute -top-2.5 left-2 z-20 hidden rounded-sm border border-line bg-bg px-1.5 py-0.5 text-2xs font-medium text-faint shadow-sm group-hover:block">
           {seg.label} · 点击编辑
         </span>
       )}
-      {editing ? (
+      {editing && !readOnly ? (
         <textarea
           ref={taRef}
           className="scrollbar-slim block w-full resize-none bg-transparent px-2.5 py-2 text-sm leading-relaxed text-fg outline-none"
@@ -74,7 +77,13 @@ function SegmentBlock({
         />
       ) : (
         <p
-          onClick={onEnterEdit}
+          onClick={readOnly ? undefined : onEnterEdit}
+          role={readOnly ? undefined : 'button'}
+          tabIndex={readOnly ? undefined : 0}
+          aria-label={readOnly ? undefined : `编辑${seg.label}`}
+          onKeyDown={event => {
+            if (!readOnly && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onEnterEdit() }
+          }}
           className={`whitespace-pre-wrap break-words px-2.5 py-2 text-sm leading-relaxed ${
             seg.text ? 'text-fg' : 'text-faint'
           }`}
@@ -86,7 +95,7 @@ function SegmentBlock({
   )
 }
 
-export default function SegmentEditor({ segments, onChangeText }: Props) {
+export default function SegmentEditor({ segments, onChangeText, readOnly = false }: Props) {
   /** 当前编辑中的部分 id（null = 整体预览态） */
   const [editingId, setEditingId] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -112,7 +121,8 @@ export default function SegmentEditor({ segments, onChangeText }: Props) {
         <SegmentBlock
           key={seg.id}
           seg={seg}
-          editing={editingId === seg.id}
+          editing={editingId === seg.id && !readOnly}
+          readOnly={readOnly}
           onEnterEdit={() => setEditingId(seg.id)}
           onExitEdit={() => setEditingId(null)}
           onChangeText={(text) => onChangeText(seg.id, text)}

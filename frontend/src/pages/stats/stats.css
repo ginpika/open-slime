@@ -1,0 +1,68 @@
+/* 用量页的独立字号与布局，不改动其他页面的 PageKit。 */
+.usage-page { min-width:0; --usage-small:12px; font-size:14px; line-height:1.6; }
+.usage-page h1.ui-heading { font-size:28px; line-height:1.4; overflow-wrap:anywhere; }
+.usage-page h2.ui-heading { font-size:18px; line-height:1.5; }
+.usage-page :is(.ui-label,.astro-eyebrow,.text-2xs) { font-size:12px; }
+.usage-intro { font-size:16px; color:var(--c-muted); }
+.usage-actions,.usage-filters,.usage-custom-range { display:flex; align-items:flex-end; flex-wrap:wrap; gap:12px; }
+.usage-page .ui-btn { --ui-btn-fs:14px; min-height:38px; white-space:normal; }
+.usage-page .usage-secondary,.usage-page small { color:var(--c-muted); font-size:var(--usage-small); line-height:1.6; }
+.usage-filters { padding:16px; border:1px solid var(--c-line); border-radius:var(--ui-r-md); background:var(--c-surface-container-low); }
+.usage-ranges { display:flex; flex-wrap:wrap; gap:6px; align-self:flex-end; }
+.usage-ranges button { font-size:14px; padding:7px 12px; min-height:38px; border:1px solid var(--c-line); border-radius:var(--ui-r-btn,6px); }
+.usage-ranges button[aria-pressed=true] { background:var(--c-accent); color:var(--c-accent-fg); border-color:var(--c-accent); }
+.usage-field { display:flex; flex-direction:column; gap:6px; min-width:0; font-size:14px; }
+.usage-field > span { font-weight:600; }
+.usage-field :is(input,select) { border:1px solid var(--c-line); padding:7px 10px; min-height:38px; border-radius:var(--ui-r-md); background:var(--c-bg); color:var(--c-fg); font:inherit; width:100%; min-width:0; }
+.usage-filter-model { flex:1 1 260px; max-width:560px; }
+.usage-custom-range { padding:0 4px; }
+.usage-custom-range .usage-error { flex-basis:100%; }
+.usage-snapshot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 20px; color:var(--c-muted); font-size:var(--usage-small); overflow-wrap:anywhere; }
+.usage-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; }
+.usage-metric { padding:20px; border:1px solid var(--c-line); border-radius:var(--ui-r-card,12px); background:var(--c-surface-container-low); min-width:0; }
+.usage-metric h2 { font-size:18px; font-weight:600; margin-bottom:12px; }
+.usage-metric__value { display:block; font-size:clamp(24px,2.3vw,32px); line-height:1.4; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; margin-bottom:12px; }
+.usage-metric__value > strong { display:block; }
+.usage-metric__value > strong > span { font-size:16px; font-weight:500; }
+.usage-metric--cost { border-top:3px solid var(--c-accent); }
+.usage-metric--cost .usage-metric__value { color:var(--c-fg); }
+.usage-metric p { font-size:var(--usage-small); color:var(--c-muted); margin-top:4px; }
+.usage-notice { border-left:3px solid var(--c-accent); padding:12px 16px; background:var(--c-surface-container-low); font-size:14px; }
+.usage-notice p + p { margin-top:8px; }
+.usage-link { color:var(--c-fg); text-decoration:underline; text-underline-offset:3px; font-size:14px; text-align:left; overflow-wrap:anywhere; min-height:32px; }
+.usage-page :is(button,input,select,summary,[tabindex]):focus-visible { outline:2px solid var(--c-accent); outline-offset:3px; }
+.usage-chart { height:280px; min-width:0; }
+.usage-page details > summary { cursor:pointer; font-size:14px; padding:12px 0; font-weight:600; }
+.usage-table-wrap { width:100%; overflow-x:auto; margin-top:12px; border:1px solid var(--c-line); border-radius:var(--ui-r-md); }
+.usage-table { width:100%; border-collapse:collapse; font-size:14px; line-height:1.6; }
+.usage-table :is(th,td) { text-align:left; padding:12px 14px; border-bottom:1px solid var(--c-line); vertical-align:top; min-width:90px; font-variant-numeric:tabular-nums; }
+.usage-table td { white-space:nowrap; }
+.usage-table thead th { background:var(--c-surface-container-low); font-weight:600; white-space:nowrap; }
+.usage-table tbody th { font-weight:500; min-width:180px; max-width:340px; overflow-wrap:anywhere; }
+.usage-table small { display:block; white-space:normal; overflow-wrap:anywhere; }
+.usage-table td > .usage-link { display:block; }
+.usage-table tbody tr:last-child > * { border-bottom:0; }
+.usage-call-records { max-height:min(400px,55dvh); overflow:auto; overscroll-behavior:contain; }
+.usage-call-records .usage-table { border-collapse:separate; border-spacing:0; }
+.usage-call-records thead th { position:sticky; top:0; z-index:1; }
+.usage-pricing-panel { border:1px solid var(--c-line); border-radius:var(--ui-r-card,12px); padding:8px 20px; scroll-margin-top:20px; }
+.usage-pricing-panel > summary { font-size:18px !important; }
+.usage-price { padding:4px 0 16px; display:flex; flex-direction:column; gap:16px; }
+.usage-price__fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-bottom:16px; }
+.usage-price__fields { min-width:0; border:0; padding:0; }
+.usage-field--wide { grid-column:span 2; }
+.usage-error { color:var(--c-danger); font-size:14px; margin-top:8px; }
+@media (max-width:700px) {
+  .usage-page { font-size:16px; --usage-small:13px; }
+  .usage-page h1.ui-heading { font-size:26px; }
+  .usage-page .astro-page__head { flex-wrap:wrap; align-items:flex-start; }
+  .usage-metrics,.usage-price__fields { grid-template-columns:minmax(0,1fr); }
+  .usage-field--wide { grid-column:auto; }
+  .usage-field,.usage-page .ui-btn,.usage-ranges button,.usage-link,.usage-page details > summary,.usage-notice,.usage-table,.usage-error { font-size:16px; }
+  .usage-table :is(th,td) { padding:10px; }
+  .usage-table-wrap::before { content:'左右滑动查看全部列'; display:block; position:sticky; left:0; padding:8px 10px; font-size:13px; color:var(--c-muted); }
+  .usage-call-records::before { display:none; }
+  .usage-price__fields input { min-height:44px; }
+  .usage-filter-model { max-width:none; flex-basis:100%; }
+}
+

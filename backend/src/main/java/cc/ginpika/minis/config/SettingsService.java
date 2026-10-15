@@ -123,7 +123,7 @@ public class SettingsService {
         store.insertModel(new ModelRow(UUID.randomUUID().toString(), req.name().strip(),
                 req.baseUrl().strip(), req.apiKey().strip(), req.model().strip(),
                 resolveContextWindow(req.baseUrl().strip(), req.apiKey().strip(),
-                        req.model().strip(), req.contextWindow())));
+                        req.model().strip(), req.contextWindow()),req.maxOutputTokens()));
         return view();
     }
 
@@ -134,7 +134,7 @@ public class SettingsService {
         store.updateModel(new ModelRow(id, req.name().strip(), req.baseUrl().strip(),
                 req.apiKey().strip(), req.model().strip(),
                 resolveContextWindow(req.baseUrl().strip(), req.apiKey().strip(),
-                        req.model().strip(), req.contextWindow())));
+                        req.model().strip(), req.contextWindow()),req.maxOutputTokens()));
         return view();
     }
 
@@ -184,7 +184,7 @@ public class SettingsService {
                 req.apiKey(), req.model());
         long start = System.nanoTime();
         try {
-            float[] vec = withinTestLimit(() -> embedding.embed(target, TEST_EMBED_TEXT))
+            float[] vec = withinTestLimit(() -> embedding.embed(target, TEST_EMBED_TEXT, TokenUsageService.SOURCE_MODEL_TEST))
                     .orElseThrow(() -> new IllegalStateException("未配置 Embedding 端点"));
             return new SettingsDtos.TestView(true, elapsedMs(start), "向量维度 " + vec.length, null);
         } catch (Exception e) {
@@ -205,7 +205,7 @@ public class SettingsService {
         long start = System.nanoTime();
         try {
             double[] scores = withinTestLimit(
-                    () -> rerank.score(target, TEST_RERANK_QUERY, TEST_RERANK_DOCS))
+                    () -> rerank.score(target, TEST_RERANK_QUERY, TEST_RERANK_DOCS, TokenUsageService.SOURCE_MODEL_TEST))
                     .orElseThrow(() -> new IllegalStateException(
                             "响应缺少 results 或 relevance_score"));
             int top = 0;
@@ -396,12 +396,23 @@ public class SettingsService {
 
     /** 解析聊天模型：modelId 缺省 → 已保存默认 → 内置 env 项 */
     public ModelTarget resolveChatModel(String modelId) {
+        return resolveModelById(chatModelId(modelId));
+    }
+
+    /** Resolve the selected identifier so long-running tasks can persist their model choice. */
+    public String chatModelId(String modelId) {
         String id = normalize(modelId);
         if (id == null) {
             SettingRow setting = store.setting().orElse(null);
             id = normalize(setting == null ? null : setting.defaultModelId());
         }
-        return resolveModelById(id);
+        return id == null ? ENV_ID : id;
+    }
+
+    /** Output capability cannot be inferred from the context window. Null uses provider defaults. */
+    public Integer chatOutputTokens(String modelId){
+        String id=chatModelId(modelId);
+        return ENV_ID.equals(id)?null:store.model(id).map(ModelRow::maxOutputTokens).filter(value->value>0).orElse(null);
     }
 
     /** 解析 Embedding 端点：mode=llm 复用某模型端点的 base-url/api-key，mode=custom 用独立端点 */
@@ -531,7 +542,7 @@ public class SettingsService {
 
     private static SettingsDtos.ModelView toModelView(ModelRow m) {
         return new SettingsDtos.ModelView(m.id(), m.name(), m.baseUrl(), m.apiKey(), m.model(),
-                m.contextWindow(), false);
+                m.contextWindow(), false,m.maxOutputTokens());
     }
 
     /** 默认项校验：必须存在于候选 id 中，否则回退首个内置项（env） */
@@ -551,6 +562,9 @@ public class SettingsService {
                 || isBlank(req.model())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "模型配置需填写 名称/base-url/api-key/model");
+        }
+        if(req.maxOutputTokens()!=null && (req.maxOutputTokens()<1 || req.maxOutputTokens()>1_000_000)){
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"单次输出上限须为 1 至 1000000 的 token 数，或留空跟随模型服务");
         }
     }
 

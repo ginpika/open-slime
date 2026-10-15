@@ -102,6 +102,19 @@ export function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
+/** Keep a text tone's hue while raising its contrast on the actual base color. */
+export function readableText(preferred: string, bg: string, minimum = 4.5): string {
+  if (contrast(preferred, bg) >= minimum) return preferred
+  const target = pickText(bg)
+  let low = 0, high = 1
+  for (let i = 0; i < 16; i++) {
+    const t = (low + high) / 2
+    if (contrast(mix(preferred, target, t), bg) >= minimum) high = t
+    else low = t
+  }
+  return mix(preferred, target, high)
+}
+
 /** 在色上选取可读文字色（白 / 纯黑中对比度更高者；深色底→白字，浅色底→纯黑字） */
 export function pickText(on: string): string {
   const dark = contrast(on, '#000000')

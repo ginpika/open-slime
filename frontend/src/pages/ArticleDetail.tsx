@@ -81,7 +81,9 @@ const MD = {
 export default function ArticleDetailPage({ url }: { url: string }) {
   const kit = usePageKit()
   /** 侧边栏档：目录改挂右侧（隐藏式圆点），避免与左侧栏重叠 */
-  const sidebar = useThemeState().mono.sidebar
+  const theme = useThemeState()
+  const sidebar = theme.themeId === 'old' && theme.mono.sidebar
+  const observatory = theme.themeId === 'astrolabe'
   const [doc, setDoc] = useState<ArticleDetail | null>(null)
   const [loading, setLoading] = useState(true)
   /** 加载失败/文章缺失（err 有值时以错误 message box 提示，页内仅保留返回入口） */
@@ -179,7 +181,7 @@ export default function ArticleDetailPage({ url }: { url: string }) {
         </>
       }
     >
-      {toc.length > 0 && (
+      {!observatory && toc.length > 0 && (
         <aside
           className={
             sidebar
@@ -192,17 +194,22 @@ export default function ArticleDetailPage({ url }: { url: string }) {
           <TocRail items={toc} />
         </aside>
       )}
+      <div className={observatory ? `astro-reading-layout${toc.length ? ' astro-reading-layout--toc' : ''}` : undefined}>
+      {observatory && toc.length > 0 && <aside className="astro-reading-toc"><TocRail items={toc} expanded label="文档目录" scroller={() => articleRef.current?.closest('main') ?? null} /></aside>}
+      <div className="space-y-6 min-w-0">
       {doc.summary && (
         <p className="border-l border-line pl-3 text-sm leading-relaxed text-muted">
           {doc.summary}
         </p>
       )}
       {/* Markdown 正文：内容优先，不套面板 */}
-      <article ref={articleRef}>
+      <article ref={articleRef} className={observatory ? 'astro-reading-body' : undefined}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>
           {body}
         </ReactMarkdown>
       </article>
+      </div>
+      </div>
     </kit.Page>
   )
 }

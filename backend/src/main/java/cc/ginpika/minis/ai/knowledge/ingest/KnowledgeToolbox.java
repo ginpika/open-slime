@@ -124,6 +124,7 @@ public class KnowledgeToolbox {
     private final MemoryProps memoryProps;
     /* RAG 召回留痕：三路召回工具调用记一行（查询 + 回给模型的原始数据），供潜意识页回看效果 */
     private final RagRecallRecorder ragRecalls;
+    private final cc.ginpika.minis.ai.knowledge.web.WebToolbox web;
 
     public KnowledgeToolbox(FastSearchService fast, GraphStore graph, GraphPathFinder pathFinder,
                             ChunkStore chunkStore, DocumentStore documents, EmbeddingClient embedding,
@@ -132,7 +133,8 @@ public class KnowledgeToolbox {
                             MemoryEmbeddingWriter memoryVectors, RagRecallRecorder ragRecalls,
                             MemoryItemStore memoryItemStore, MemoryItemEmbeddingWriter memoryItemVectors,
                             MemoryPublisher memoryPublisher, WorkingSetService workingSet,
-                            MemoryEditService memoryEdit, MemoryProps memoryProps) {
+                            MemoryEditService memoryEdit, MemoryProps memoryProps,
+                            cc.ginpika.minis.ai.knowledge.web.WebToolbox web) {
         this.fast = fast;
         this.graph = graph;
         this.pathFinder = pathFinder;
@@ -150,6 +152,7 @@ public class KnowledgeToolbox {
         this.workingSet = workingSet;
         this.memoryEdit = memoryEdit;
         this.memoryProps = memoryProps;
+        this.web = web;
     }
 
     /** 执行一次 OpenAI 风格的工具调用节点；source 标明来自哪条流（chat / multiagent / heartbeat / plan / agent） */
@@ -162,6 +165,9 @@ public class KnowledgeToolbox {
     /** 执行一次工具调用，返回给模型的 tool 消息内容（按工具名分发）；三路召回工具顺手留痕 */
     public ToolResult run(String name, String argsJson, String source) {
         JsonNode args = LlmJson.readTree(argsJson);
+        if (cc.ginpika.minis.ai.knowledge.web.WebToolbox.handles(name)) {
+            return new ToolResult(name, argsJson, web.run(name, args), tools.isWriteTool(name));
+        }
         String content = switch (name) {
             case SearchVectorChunksTool.NAME -> ragTool(args);
             case SearchGraphEntitiesTool.NAME -> graphSearchTool(args);

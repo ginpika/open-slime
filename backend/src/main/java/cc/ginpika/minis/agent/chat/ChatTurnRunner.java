@@ -153,13 +153,15 @@ public class ChatTurnRunner implements ChatExecution {
 
     private ChatDtos.ChatReply runChat(ChatExecution exec, String hubId, String input,
                                        String modelId, String promptId, ChatStream sink) {
+        HubRow row = exec.resolveOrCreate(hubId);
+        String requestedModel=modelId;
+        if(exec==this && (modelId==null || modelId.isBlank())){modelId=chatContext.modelIdFor(row.agentId(),modelId);}
         ModelTarget target = settings.resolveChatModel(modelId);
         if (!target.configured()) {
             throw new IllegalStateException(
                     "LLM 未配置：请在设置页添加模型，或在 .env 填写 "
                             + "LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL");
         }
-        HubRow row = exec.resolveOrCreate(hubId);
         /* 在途锁（STEP 4）：同一会话同一时刻只允许一次生成。重复触发（双击发送 / 两个标签页同时发）
            在这里被后端挡住，不再单靠前端 sendingRef；被拒的这次不落库、不动历史。
            圆桌那条流自管节拍（singleFlight=false），不受此锁约束——保持旧行为零变化 */
@@ -169,7 +171,7 @@ public class ChatTurnRunner implements ChatExecution {
                     "该会话正在生成中，请等它答完或先点停止。");
         }
         try {
-            return runChatInner(exec, row, target, input, modelId, promptId, sink);
+            return runChatInner(exec, row, target, input, modelId, requestedModel, promptId, sink);
         } finally {
             if (exec.singleFlight()) {
                 inflight.remove(row.id());
@@ -182,13 +184,13 @@ public class ChatTurnRunner implements ChatExecution {
     }
 
     private ChatDtos.ChatReply runChatInner(ChatExecution exec, HubRow row, ModelTarget target,
-                                            String input, String modelId, String promptId,
+                                            String input, String modelId, String requestedModel, String promptId,
                                             ChatStream sink) {
         /* 流式请求登记停止标志（非流式不参与停止）：requestStop 按会话 id 置位，
             生成线程在增量与轮次边界检测；finally 里注销，避免残留标志误停下一次发送 */
         AtomicBoolean stopFlag = sink == null ? null : registerStop(row.id());
         /* 记住本次使用的模型/提示词（会话级「…」菜单配置），下次进入该会话自动回显 */
-        exec.rememberConfig(row, modelId, promptId);
+        exec.rememberConfig(row, requestedModel, promptId);
         /* 本次提问的工具往返上限：会话级「…」菜单配置（缺省 30），超限后撤掉 tools 强制出最终回答 */
         int maxRounds = Math.max(ChatSessionService.MIN_MAX_ROUNDS, row.maxRounds());
 

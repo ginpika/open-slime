@@ -1,13 +1,17 @@
-export type SelectOption = { value: string; label: string }
+import type { ReactNode } from 'react'
+
+export type SelectOption = { value: string; label: string; disabled?: boolean; icon?: ReactNode }
 export function filterSelectOptions(options: SelectOption[], query: string) {
   const needle = query.trim().toLocaleLowerCase()
   return options.filter(o => !needle || `${o.label} ${o.value}`.toLocaleLowerCase().includes(needle))
 }
 export function nextSelectValue(options: SelectOption[], value: string, key: string) {
+  options = options.filter(option => !option.disabled)
   if (!options.length) return ''
   if (key === 'Home') return options[0].value
   if (key === 'End') return options[options.length - 1].value
-  const index = Math.max(0, options.findIndex(o => o.value === value))
+  const index = options.findIndex(o => o.value === value)
+  if (index < 0) return key === 'ArrowUp' ? options[options.length - 1].value : options[0].value
   return options[(index + (key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].value
 }
 export function selectPosition(rect: { left: number; width: number; top: number; bottom: number }, viewport: { width: number; height: number }) {

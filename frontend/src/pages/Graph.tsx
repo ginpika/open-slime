@@ -1,3 +1,4 @@
+import { AppIcon } from '../components/AppIcon'
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   graphAnchors,
@@ -500,15 +501,7 @@ export default function Graph() {
           title="列出所有锚点：在画布中渲染系统中全部锚点"
           className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-sm font-semibold text-muted transition hover:border-line-strong hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
-            <path
-              d="M12 2v3M12 19v3M2 12h3M19 12h3"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-          </svg>
+          <AppIcon name="center" className="h-3.5 w-3.5" />
           全部锚点
         </button>
       </div>
@@ -522,9 +515,7 @@ export default function Graph() {
           title="新增实体"
           className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-sm font-semibold text-muted transition hover:border-line-strong hover:text-fg"
         >
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
+          <AppIcon name="plus" className="h-3.5 w-3.5" />
           新增实体
         </button>
 

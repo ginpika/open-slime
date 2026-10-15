@@ -63,12 +63,12 @@ public class ChatController {
     }
 
     @PostMapping("/api/chat")
-    public ChatDtos.ChatReply chat(@RequestBody ChatDtos.ChatRequest req) {
+    public ChatDtos.ChatReply chat(@RequestBody ChatDtos.ChatRequest req, jakarta.servlet.http.HttpServletRequest http) {
         String input = req.input() == null ? "" : req.input().trim();
         if (input.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "input 为空");
         }
-        try {
+        try (var actor = cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(http))) {
             return turns.chat(blank(req.sessionId()) ? null : req.sessionId(), input,
                     req.modelId(), req.promptId());
         } catch (IllegalStateException e) {
@@ -85,7 +85,8 @@ public class ChatController {
      * 不再中断生成，结果照常落库、在途状态也让后来者能续看（见下面的续传流）。
      */
     @PostMapping(value = "/api/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chatStream(@RequestBody ChatDtos.ChatRequest req) {
+    public SseEmitter chatStream(@RequestBody ChatDtos.ChatRequest req, jakarta.servlet.http.HttpServletRequest http) {
+        String owner = codingOwner(http);
         String input = req.input() == null ? "" : req.input().trim();
         if (input.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "input 为空");
@@ -95,7 +96,7 @@ public class ChatController {
         streamExecutor.execute(() -> {
             /* 本次生成实际落入的会话 id：由 meta 事件给出（New Chat 时由后端新建），收尾按它落定在途状态 */
             String[] liveSid = {null};
-            try {
+            try (var actor = cc.ginpika.minis.ai.core.UserScope.bind(owner)) {
                 ChatDtos.ChatReply reply = turns.chatStream(
                         blank(req.sessionId()) ? null : req.sessionId(), input,
                         req.modelId(), req.promptId(), new ChatStream() {
@@ -311,6 +312,11 @@ public class ChatController {
     @ExceptionHandler(IOException.class)
     public void clientGone(IOException e) {
         log.debug("会话流客户端已断开，写失败按断开收尾：{}", e.getMessage());
+    }
+
+    private static String codingOwner(jakarta.servlet.http.HttpServletRequest request) {
+        Object actor=request.getAttribute(cc.ginpika.minis.web.sso.SsoInterceptor.ATTR);
+        return actor instanceof cc.ginpika.minis.web.sso.SsoUser user && cc.ginpika.minis.coding.CodingFacade.allowsActorAt(user.getId(),request.getRemoteAddr()) ? user.getId() : null;
     }
 
     private static boolean blank(String s) {

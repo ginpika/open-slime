@@ -29,6 +29,10 @@ public class ChatToolDispatcher {
     private final TerminalService terminal;
     private final KnowledgeToolbox toolbox;
     private final ProjectWorkflowService projectWorkflows;
+    private cc.ginpika.minis.coding.CodingFacade coding;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setCoding(@org.springframework.context.annotation.Lazy cc.ginpika.minis.coding.CodingFacade coding) { this.coding=coding; }
     private static final Set<String> PLAN_TOOLS = Set.of(
             DelegatePlanTool.NAME, CreatePlanTool.NAME, UpdatePlanTool.NAME, DeletePlanTool.NAME);
 
@@ -61,6 +65,14 @@ public class ChatToolDispatcher {
                 call.path("function").path("arguments").asText(""));
         if (invalid != null) {
             return invalid;
+        }
+        if (cc.ginpika.minis.coding.integration.CodingTaskTool.NAME.equals(name)) {
+            String owner=cc.ginpika.minis.ai.core.UserScope.get();
+            if(owner==null || owner.isBlank() || coding==null){return "当前执行缺少已认证用户身份，请从编程工作台发起任务。";}
+            try {
+                JsonNode args=om.readTree(call.path("function").path("arguments").asText("{}"));
+                return coding.assistantTool(owner,args,"chat:"+hubId+":"+call.path("id").asText(),hubId);
+            } catch(Exception error){return "编程任务操作失败："+error.getMessage();}
         }
         if (ManageProjectTool.NAME.equals(name)) {
             try {

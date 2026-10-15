@@ -1002,28 +1002,20 @@
 
         <nav class="rail-menu" aria-label="菜单">
           <button class="rail-btn" type="button" data-view="launch" title="启动" aria-label="启动">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM10 8.5l6 3.5-6 3.5z" />
-            </svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#launch" /></svg>
           </button>
           <button class="rail-btn" type="button" data-view="user" title="用户" aria-label="用户">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c0-3.6 3.4-5.8 7.5-5.8s7.5 2.2 7.5 5.8" />
-            </svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#user" /></svg>
           </button>
           <!-- 邮件：hostid 自带邮件服务；没接入 hostid 时不露出（见 renderMailEntry） -->
           <button class="rail-btn" type="button" data-view="mail" title="邮件" aria-label="邮件" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5zM3 7l9 6 9-6" />
-            </svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#mail" /></svg>
           </button>
         </nav>
 
         <div class="rail-foot">
           <button class="rail-btn" type="button" data-view="about" title="关于" aria-label="关于">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 10.5v6M12 7.5h.01" />
-            </svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#about" /></svg>
           </button>
         </div>
       </aside>
@@ -1043,15 +1035,13 @@
             <span class="chip-name" id="chip-name">本地用户</span>
           </button>
           <button class="wbtn" type="button" id="win-min" title="最小化" aria-label="最小化">
-            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8" /></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#minimize" /></svg>
           </button>
           <button class="wbtn" type="button" id="win-max" title="最大化" aria-label="最大化">
-            <svg viewBox="0 0 12 12" aria-hidden="true" id="win-max-icon">
-              <rect x="2.5" y="2.5" width="7" height="7" rx="1" />
-            </svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" id="win-max-icon"><use href="lucide.svg#maximize" /></svg>
           </button>
           <button class="wbtn" type="button" id="win-close" title="关闭" aria-label="关闭">
-            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#close" /></svg>
           </button>
         </div>
 
@@ -1256,11 +1246,9 @@
 
       const winMaxIcon = document.getElementById('win-max-icon')
 
-      /** 最大化状态 → 图标：最大化画单方框，还原画双叠方框 */
+      /** 最大化状态 → 切换本地 Lucide sprite 的最大化 / 还原图标 */
       function paintMaxIcon(maximized) {
-        winMaxIcon.innerHTML = maximized
-          ? '<rect x="2.5" y="4.5" width="6" height="6" rx="1" /><path d="M4.5 4.5V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H9" />'
-          : '<rect x="2.5" y="2.5" width="7" height="7" rx="1" />'
+        winMaxIcon.querySelector('use').setAttribute('href', maximized ? 'lucide.svg#restore' : 'lucide.svg#maximize')
         winMaxIcon.parentElement.title = maximized ? '还原' : '最大化'
         winMaxIcon.parentElement.setAttribute('aria-label', maximized ? '还原' : '最大化')
       }
@@ -1618,7 +1606,7 @@
           del.className = 'badge-del'
           del.title = '删除这条记录'
           del.setAttribute('aria-label', '删除 ' + url)
-          del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+          del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#close" /></svg>'
           del.addEventListener('click', () => {
             saveHosts(loadHosts().filter((h) => h !== url))
           })

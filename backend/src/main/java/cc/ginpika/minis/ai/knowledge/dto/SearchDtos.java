@@ -16,7 +16,7 @@ public final class SearchDtos {
     public record SearchResponse(String query, List<Hit> hits, Graph graph, Web web) {
     }
 
-    /** kind: entity=图谱锚点实体；doc=文档（chunk 命中按父文档聚合）；url 为文档跳转地址（文章 slug，内部文档 null）；
+    /** kind: entity=图谱锚点实体；doc=文档；snapshot=网页快照（sourceRef 是 snapshot:UUID，跳本地详情）；url 为文章 slug；
      *  status: kind=chunk（RAG 模式）时为该块状态 unanalyzed|enabled|disabled，其余为 null */
     public record Hit(String kind, Long chunkId, String entityId, String title,
                       String snippet, String source, String sourceRef, String url,

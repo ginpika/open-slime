@@ -4,9 +4,10 @@
  */
 import { isDesktopShell } from '../api/desktop'
 import type { ThemeId, Scheme, ThemeSeed } from './types'
+import { ASTROLABE_PALETTES } from './astrolabe'
 
 /** 已实现主题的全量清单（顺序即主题面板的展示顺序） */
-const ALL_THEME_IDS: ThemeId[] = ['old', 'endfield', 'bluearchive']
+const ALL_THEME_IDS: ThemeId[] = ['old', 'endfield', 'astrolabe', 'bluearchive']
 
 /** 桌面壳里暂不适配的主题：这两套外壳还没在无边框窗口里调过，先整体下架 */
 const DESKTOP_UNSUPPORTED: readonly ThemeId[] = ['endfield', 'bluearchive']
@@ -23,6 +24,7 @@ export const DEFAULT_THEME_ID: ThemeId = 'old'
 
 /** 主题 → 两档种子 */
 export const SEEDS: Record<ThemeId, Record<Scheme, ThemeSeed>> = {
+  astrolabe: ASTROLABE_PALETTES.brass,
   /* -------------------------------------------------------- Tailwind Mono
    * 原 Old（现默认）：近纯黑墨 + 中性灰线 + 无彩点缀。极简、无阴影。 */
   old: {

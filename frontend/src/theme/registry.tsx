@@ -24,6 +24,9 @@ import type { ComponentType } from 'react'
 import { blueArchiveKit } from '../kit/bluearchive'
 import { endfieldKit } from '../kit/endfield'
 import { flatKit } from '../kit/flat'
+import { astrolabeKit } from '../kit/astrolabe'
+import { AstrolabeShell } from '../shell/AstrolabeShell'
+import { AstrolabeThemePanel } from './AstrolabeThemePanel'
 import type { PageKit } from '../kit/types'
 import { BlueArchiveShell } from '../shell/BlueArchiveShell'
 import { EndfieldShell } from '../shell/EndfieldShell'
@@ -59,6 +62,7 @@ export type ThemeEntry = {
 
 /** 主题 id → 组件。Record<ThemeId> 保证穷尽：漏登记一个主题即编译报错 */
 export const THEMES: Record<ThemeId, ThemeEntry> = {
+  astrolabe: { kit: astrolabeKit, shell: AstrolabeShell, panel: AstrolabeThemePanel },
   old: { kit: flatKit, shell: FlatThemeShell, panel: MonoThemePanel },
   endfield: { kit: endfieldKit, shell: EndfieldShell, panel: EndfieldThemePanel },
   bluearchive: { kit: blueArchiveKit, shell: BlueArchiveShell, panel: DefaultThemePanel },

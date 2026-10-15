@@ -10,12 +10,14 @@ public final class SettingsDtos {
      *  contextWindow=上下文窗口（token 数）；保存时留空会尝试从模型 API 获取，空值仅见于历史数据、
      *  前端按默认值兜底 */
     public record ModelView(String id, String name, String baseUrl, String apiKey, String model,
-                            Integer contextWindow, boolean builtin) {
+                            Integer contextWindow, boolean builtin,Integer maxOutputTokens) {
+        public ModelView(String id,String name,String baseUrl,String apiKey,String model,Integer contextWindow,boolean builtin){this(id,name,baseUrl,apiKey,model,contextWindow,builtin,null);}
     }
 
     /** contextWindow 留空（null/非正数）→ 后端从模型 API 尽力获取，取不到用默认值 */
     public record ModelRequest(String name, String baseUrl, String apiKey, String model,
-                               Integer contextWindow) {
+                               Integer contextWindow,Integer maxOutputTokens) {
+        public ModelRequest(String name,String baseUrl,String apiKey,String model,Integer contextWindow){this(name,baseUrl,apiKey,model,contextWindow,null);}
     }
 
     /** 按 baseUrl + apiKey + model 单独试取上下文窗口（设置页编辑模型时自动回填用） */

@@ -19,6 +19,7 @@
  * 页面也因此自成一套——左侧选会话，右侧是这张圆桌。
  */
 
+import { AppIcon } from '../components/AppIcon'
 import {
   memo,
   useCallback,
@@ -66,6 +67,9 @@ import {
 } from '../components/roundtableLive'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
+import { SideDrawer } from '../components/SideDrawer'
+import { useMediaQuery } from '../components/useMediaQuery'
+import { resetWindowStates, useDraftState, useRememberedState } from '../components/windowState'
 
 /** 「不显示思维链」偏好的本地存储 key：离开圆桌再回来不用重设 */
 const HIDE_COT_KEY = 'minis.roundtable.hide-cot'
@@ -303,11 +307,11 @@ function RoundtableBoard({
 }) {
   const kit = usePageKit()
   const [sessions, setSessions] = useState<MaSession[]>([])
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useRememberedState<string | null>('roundtable:session', null)
   const [messages, setMessages] = useState<MaMessage[]>([])
   const [topics, setTopics] = useState<MaTopic[]>([])
   const [modelId, setModelId] = useState('')
-  const [input, setInput] = useState('')
+  const [input, setInput, inputState] = useDraftState(`roundtable:${sessionId ?? 'new'}:input`, '')
   /**
    * 这张桌子当前那一轮发言的运行时（跑没跑、谁在说、说到哪）：状态在应用级模块仓里，
    * 组件只是订阅者——本页卸载（切会话 / 切 tab / 切路由）不会中断它，回来接着看（见 roundtableLive）。
@@ -331,6 +335,8 @@ function RoundtableBoard({
   const [contextView, setContextView] = useState<{ title: string; text: string } | null>(null)
   /** 新建会话的选人弹窗开着没 */
   const [pickerOpen, setPickerOpen] = useState(false)
+  const smallScreen = useMediaQuery('(max-width: 900px)')
+  const [directoryOpen, setDirectoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 会话的消息列表 ajax 回读到位时置位：等下一次提交（layout effect）把视图落到底 */
   const pendingBottomRef = useRef(false)
@@ -385,7 +391,7 @@ function RoundtableBoard({
       const list = await listMaSessions()
       setSessions(list)
       setSessionId((current) => {
-        if (current) return current
+        if (current && list.some(s => s.id === current)) return current
         /* 还没选中任何一条：优先落在「正在发言」的那张桌子上——离开再回来要接上的正是它；
            没有在跑的，就打开最近一次（列表本来就是按最近排序的） */
         const live = getRunningSessionIds().find((id) => list.some((s) => s.id === id))
@@ -394,7 +400,7 @@ function RoundtableBoard({
     } catch (e) {
       notify(errMsg(e), 'err')
     }
-  }, [notify])
+  }, [notify, setSessionId])
 
   const reloadSession = useCallback(
     async (id: string, pinBottom = false) => {
@@ -538,7 +544,8 @@ function RoundtableBoard({
   const removeSession = async (id: string) => {
     try {
       await deleteMaSession(id)
-      setSessionId(null)
+      resetWindowStates(`roundtable:${id}:`)
+      setSessionId(current => current === id ? null : current)
       await reloadSessions()
     } catch (e) {
       notify(errMsg(e), 'err')
@@ -578,7 +585,7 @@ function RoundtableBoard({
       notify('圆桌上还没有人，先去「多智能体」页加几位成员', 'err')
       return
     }
-    setInput('')
+    inputState.accept('')
     setMention(null)
     startRoundtable({
       sessionId,
@@ -586,7 +593,10 @@ function RoundtableBoard({
       modelId: modelId || undefined,
       speakerStrategy,
       /* 草稿态（还没有会话）时后端会建一个：把它切过去，左侧列表随本轮收尾一起刷新 */
-      onSession: (id) => setSessionId(id),
+      onSession: (id) => {
+        if (!sessionId) inputState.moveTo(`roundtable:${id}:input`)
+        setSessionId(id)
+      },
     })
   }
 
@@ -736,18 +746,12 @@ function RoundtableBoard({
     scrollToBottom()
   }, [messages, live, optimisticUser, scrollToBottom])
 
-  return (
-    /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌。
-       容器交给 Card：描边环 / 面板底随主题（内部还是左目录 + 右圆桌的横排章法）。
-       两个弹层是 fixed 定位，放在 Card 外——切角主题会裁剪内部超出容器的绘制 */
-    <>
-    <Card pad="none" className="ui-card--row flex min-h-0 flex-1">
-      {/* 左：目录。会话列表自己滚，底下的配置与在座钉住不动 */}
+  const directory = (
       <aside className="flex min-h-0 w-[164px] shrink-0 flex-col gap-2 border-r border-line p-3 lg:w-[220px]">
         <button
           type="button"
           className={`${btnOutline('rounded-lg')} shrink-0`}
-          onClick={() => setPickerOpen(true)}
+          onClick={() => { setDirectoryOpen(false); setPickerOpen(true) }}
         >
           + 新会话
         </button>
@@ -771,7 +775,7 @@ function RoundtableBoard({
               <button
                 type="button"
                 className="min-w-0 flex-1 text-left"
-                onClick={() => setSessionId(s.id)}
+                onClick={() => { setSessionId(s.id); setDirectoryOpen(false) }}
               >
                 {/* 这一行要说的不是「这个会话叫什么」，而是「和谁在说」：头像 + 人数 */}
                 <span className="flex items-center gap-1">
@@ -806,7 +810,7 @@ function RoundtableBoard({
               </button>
               <button
                 type="button"
-                className="shrink-0 text-xs text-hint opacity-0 transition group-hover:opacity-100 hover:text-danger"
+                className="roundtable-session-delete shrink-0 text-xs text-hint opacity-100 transition md:opacity-0 md:group-hover:opacity-100 group-focus-within:opacity-100 hover:text-danger focus-visible:opacity-100"
                 onClick={() => void removeSession(s.id)}
               >
                 删除
@@ -834,9 +838,21 @@ function RoundtableBoard({
           </div>
         )}
       </aside>
+  )
+
+  return (
+    /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌。
+       容器交给 Card：描边环 / 面板底随主题（内部还是左目录 + 右圆桌的横排章法）。
+       两个弹层是 fixed 定位，放在 Card 外——切角主题会裁剪内部超出容器的绘制 */
+    <>
+    <SideDrawer open={smallScreen && directoryOpen} title="会话与成员" onClose={() => setDirectoryOpen(false)}>{directory}</SideDrawer>
+    <Card pad="none" className="ui-card--row flex min-h-0 flex-1">
+      {/* 左：目录。会话列表自己滚，底下的配置与在座钉住不动 */}
+      {!smallScreen && directory}
 
       {/* 右：这一张圆桌 */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {smallScreen && <div className="roundtable-mobile-bar"><button type="button" className={btnOutline()} aria-expanded={directoryOpen} onClick={() => setDirectoryOpen(true)}>会话与成员</button><span>{seated.length} 位在座</span></div>}
         {/* 话题状态条：内容全部挂在当前话题上——还没开谈时整条不出现，别留一条空横栏 */}
         {current && (
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2.5">
@@ -937,15 +953,7 @@ function RoundtableBoard({
                 aria-label="回到最新"
                 className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-black text-white shadow-lg transition hover:bg-black/80"
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path
-                    d="M12 5v14m0 0-6-6m6 6 6-6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <AppIcon name="arrow-down" className="h-4 w-4" />
               </button>
             </div>
           )}
@@ -1046,9 +1054,7 @@ function RoundtableBoard({
                 aria-label="中断全部发言"
                 className="ui-btn ui-btn--outline h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
               >
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </svg>
+                <AppIcon name="stop" className="h-3.5 w-3.5" />
               </button>
             )}
             {/* 发送：永远可用——讨论进行中也能随时插话补充（那会打断当前发言并排进新一轮） */}
@@ -1059,15 +1065,7 @@ function RoundtableBoard({
               aria-label="发送"
               className="ui-btn ui-btn--primary h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
             >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M21 3 10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8 21 3z"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <AppIcon name="send" className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -1156,20 +1154,7 @@ const CotBlock = memo(function CotBlock({
         aria-expanded={open}
         className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs text-hint transition hover:text-muted"
       >
-        <svg
-          className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M9 5l7 7-7 7"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <AppIcon name="chevron-right" className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
         <span className="min-w-0 flex-1 truncate text-left">{label}</span>
       </button>
       {open && (
@@ -1360,11 +1345,7 @@ function DisplayMenu({
         onClick={() => setOpen((v) => !v)}
         className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-muted transition hover:bg-fg/10 hover:text-fg"
       >
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <circle cx="5" cy="12" r="1.7" />
-          <circle cx="12" cy="12" r="1.7" />
-          <circle cx="19" cy="12" r="1.7" />
-        </svg>
+        <AppIcon name="more" className="h-4 w-4" />
       </button>
 
       {open && (

@@ -66,10 +66,16 @@ public class EmbeddingClient {
     }
 
     public Optional<float[]> embed(ModelTarget target, String text) {
+        return embed(target, text, TokenUsageService.SOURCE_EMBEDDING);
+    }
+
+    public Optional<float[]> embed(ModelTarget target, String text, String source) {
         if (!target.configured()) {
             log.debug("embedding 未配置，跳过向量化");
             return Optional.empty();
         }
+        boolean attempted = false, succeeded = false;
+        TokenUsageService.Usage usage = null;
         try {
             Request request = new Request.Builder()
                     .url(join(target.baseUrl(), "embeddings"))
@@ -78,39 +84,35 @@ public class EmbeddingClient {
                             JSON))
                     .header("Authorization", "Bearer " + target.apiKey())
                     .build();
+            attempted = true;
             try (Response response = client.newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
                     throw new IOException("embedding HTTP " + response.code());
                 }
                 JsonNode root = objectMapper.readTree(response.body().string());
+                usage = UsageParser.parse(root.path("usage"), true);
                 JsonNode data = root.path("data");
                 if (!data.isArray() || data.isEmpty()) {
                     throw new IOException("embedding 响应无 data 数组: " + root.toString());
                 }
                 JsonNode arr = data.get(0).path("embedding");
+                if (!arr.isArray() || arr.isEmpty()) throw new IOException("embedding 响应缺少向量");
                 float[] vec = new float[arr.size()];
                 for (int i = 0; i < arr.size(); i++) {
                     vec[i] = (float) arr.get(i).asDouble();
                 }
-                recordUsage(target.model(), root.path("usage"), text);
+                succeeded = true;
                 return Optional.of(vec);
             }
         } catch (IOException e) {
             throw new IllegalStateException("embedding 调用失败: " + e.getMessage(), e);
+        } finally {
+            if (attempted) {
+                if (usage == null) usage = TokenUsageService.Usage.estimated(
+                        succeeded ? TokenUsageService.estimateTokens(text) : 0, 0);
+                tokenUsage.record(source, target, succeeded ? usage : usage.partial(), succeeded ? "success" : "failed");
+            }
         }
-    }
-
-    /** 用量留痕：供应商回传 usage 用真实值（embedding 无输出 token），否则按输入文本估算 */
-    private void recordUsage(String model, JsonNode usage, String text) {
-        TokenUsageService.Usage u = null;
-        if (usage.isObject() && (usage.has("prompt_tokens") || usage.has("total_tokens"))) {
-            u = TokenUsageService.Usage.real(usage.path("prompt_tokens").asLong(), 0,
-                    usage.path("total_tokens").asLong());
-        }
-        if (u == null) {
-            u = TokenUsageService.Usage.estimated(TokenUsageService.estimateTokens(text), 0);
-        }
-        tokenUsage.record(TokenUsageService.SOURCE_EMBEDDING, model, u);
     }
 
     private static String join(String base, String path) {

@@ -1,0 +1,26 @@
+/* Palette tokens work on the observatory rail and the desktop's fixed dark chrome. */
+.astro-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  color: var(--astro-brass, #d6b779);
+}
+.astro-logo__orbit-back {
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.astro-logo__orbit-back { opacity: .65; }
+.astro-logo__body,
+.astro-logo__star,
+.astro-logo__satellite { fill: currentColor; }
+
+/* A theme-specific exception to the launcher's shared white brand tile. */
+[data-theme='astrolabe'] .df__brand {
+  color: var(--astro-brass);
+  background: var(--astro-ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--astro-brass) 32%, transparent);
+}
+.df__brand .astro-logo { width: 56px; height: 56px; }

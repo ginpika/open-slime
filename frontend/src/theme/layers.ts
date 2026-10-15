@@ -10,6 +10,7 @@
  *    字号谱系是全局常量（见 TYPE_SCALE），任何主题都不改它。
  */
 import type { BackdropKind, ThemeId, Vars } from './types'
+import { astrolabeLayers } from './astrolabe'
 
 /* ------------------------------------------------------------ 全局常量 */
 
@@ -346,6 +347,7 @@ export type LayerBundle = {
 }
 
 export const LAYERS: Record<ThemeId, LayerBundle> = {
+  astrolabe: astrolabeLayers,
   old: { shape: oldShape, depth: oldDepth, surface: oldSurface, typo: oldTypo, motion: oldMotion },
 
   endfield: {
@@ -479,6 +481,12 @@ export const ENDFIELD_WINDOW_WORKBENCH: Vars = {
 /* --------------------------------------------------- 主题元信息（面板用） */
 
 export const THEME_META: Record<ThemeId, { label: string; labelEn: string; desc: string; backdrop: BackdropKind }> = {
+  astrolabe: {
+    label: '星图',
+    labelEn: 'ASTROLABE',
+    desc: '私人天文研究室。暖象牙纸、深墨绿与旧黄铜；轨道几何、书籍排印和安静的层次。浅色为日间阅览，深色为夜间观测。',
+    backdrop: 'none',
+  },
   old: {
     label: 'Tailwind Mono',
     labelEn: 'TAILWIND MONO',

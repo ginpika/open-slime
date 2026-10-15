@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { loginUrlOf, logout, me, type SsoUser } from './api/client'
 import { isDesktopShell, backToLauncher, openDesktopHome } from './api/desktop'
 import Home from './pages/Home'
+import Knowledge from './pages/Knowledge'
 import Search from './pages/Search'
 import Graph from './pages/Graph'
 import Articles from './pages/Articles'
 import ArticleDetailPage from './pages/ArticleDetail'
 import Import from './pages/Import'
+import Snapshots from './pages/Snapshots'
 import Analyze from './pages/Analyze'
 import MultiAgent from './pages/MultiAgent'
 import MemoryPanel from './pages/MemoryPanel'
@@ -14,6 +16,7 @@ import AgentDetail from './pages/AgentDetail'
 import Roundtable from './pages/Roundtable'
 import Workflow from './pages/Workflow'
 import Workspace from './pages/Workspace'
+import Coding from './pages/Coding'
 import Settings from './pages/Settings'
 import Stats from './pages/Stats'
 import About from './pages/About'
@@ -24,21 +27,15 @@ import { AppShell } from './shell'
 import { DesktopFrame } from './shell/DesktopFrame'
 import { ShellIcon } from './shell/icons'
 import { activePathOf } from './shell/nav'
+import { isKnownRoute, routeFromHash } from './shell/routes'
 import { btnOutline } from './components/ui'
 import ChatNotifier from './components/ChatNotifier'
 
-function routeFromHash(): string {
-  const h = window.location.hash.replace(/^#/, '')
-  if (!h) return '/'
-  const p = h.startsWith('/') ? h : `/${h}`
-  return p.split('?')[0]
-}
-
 function useHashRoute(): string {
-  const [route, setRoute] = useState(routeFromHash)
+  const [route, setRoute] = useState(() => routeFromHash(window.location.hash))
   useEffect(() => {
     const onChange = () => {
-      setRoute(routeFromHash())
+      setRoute(routeFromHash(window.location.hash))
       window.scrollTo(0, 0)
     }
     window.addEventListener('hashchange', onChange)
@@ -209,12 +206,13 @@ function UserMenu({
 }
 
 /** 页面自管滚动、外壳不再套容器的路由 */
-const FULL_BLEED = ['/graph', '/roundtable', '/workflow']
+const FULL_BLEED = ['/graph', '/roundtable', '/workflow', '/coding']
 
 function App() {
   const route = useHashRoute()
   /* /article/{url}：文档详情路由，url 为 slug（可含 URL 编码） */
   const articleMatch = /^\/article\/(.+)$/.exec(route)
+  const snapshotMatch = /^\/snapshots\/([^/]+)$/.exec(route)
   /* /multi-agent/{id}：智能体内部页，id 为成员 uuid（末段 new = 新建） */
   const agentMatch = /^\/multi-agent\/(.+)$/.exec(route)
   const [user, setUser] = useState<SsoUser | null>(null)
@@ -264,6 +262,7 @@ function App() {
           <PageSlot route="home" props={{ connErr }} fallback={<Home connErr={connErr} />} />
         </div>
       )}
+      {route === '/knowledge' && <div data-page="knowledge"><Knowledge /></div>}
       {route === '/search' && (
         <div data-page="search" className="h-full">
           <PageSlot route="search" props={{}} fallback={<Search />} />
@@ -292,6 +291,9 @@ function App() {
         <div data-page="import">
           <PageSlot route="import" props={{}} fallback={<Import />} />
         </div>
+      )}
+      {(route === '/snapshots' || snapshotMatch) && (
+        <div data-page="snapshots"><Snapshots key={snapshotMatch?.[1] ?? 'new'} id={snapshotMatch?.[1]} /></div>
       )}
       {route === '/analyze' && (
         <div data-page="analyze">
@@ -323,7 +325,7 @@ function App() {
           <PageSlot
             route="agent"
             props={{ id: decodeURIComponent(agentMatch[1]) }}
-            fallback={<AgentDetail peerId={decodeURIComponent(agentMatch[1])} />}
+            fallback={<AgentDetail key={agentMatch[1]} peerId={decodeURIComponent(agentMatch[1])} />}
           />
         </div>
       )}
@@ -347,6 +349,7 @@ function App() {
           <PageSlot route="workspace" props={{}} fallback={<Workspace />} />
         </div>
       )}
+      {route === '/coding' && <div data-page="coding" className="h-full min-h-0"><Coding /></div>}
       {route === '/stats' && (
         <div data-page="stats">
           <PageSlot route="stats" props={{}} fallback={<Stats />} />
@@ -357,25 +360,7 @@ function App() {
           <PageSlot route="about" props={{}} fallback={<About />} />
         </div>
       )}
-      {![
-        '/',
-        '/search',
-        '/graph',
-        '/articles',
-        '/import',
-        '/analyze',
-        '/subconscious',
-        '/multi-agent',
-        '/memory',
-        '/roundtable',
-        '/workflow',
-        '/workspace',
-        '/settings',
-        '/stats',
-        '/about',
-      ].includes(route) &&
-        !articleMatch &&
-        !agentMatch && <p className="pt-24 text-base text-faint">404 —— 没有这个页面。</p>}
+      {!isKnownRoute(route) && <p className="pt-24 text-base text-faint">404 —— 没有这个页面。</p>}
     </>
   )
 
@@ -386,8 +371,8 @@ function App() {
   const desktop = isDesktopShell()
   /* 桌面端沉浸排布（默认开启，可在主题菜单里关闭）：隐藏外壳的 header/footer，
      主题按钮随之从 header 挪到窗口标题栏、身份胶囊左侧。关闭时一切照旧。 */
-  const mono = useThemeState().mono
-  const hideChrome = desktop && mono.hideChrome
+  const appearance = useThemeState()
+  const hideChrome = desktop && (appearance.themeId === 'astrolabe' ? appearance.astrolabe.hideChrome : appearance.mono.hideChrome)
   const themePanel = (
     <ThemePanel
       open={themeOpen}
@@ -428,6 +413,7 @@ function App() {
       route={route}
       activePath={activePathOf(route)}
       fullBleed={FULL_BLEED.includes(route)}
+      hideChrome={hideChrome}
       tools={hideChrome ? null : themePanel}
       userSlot={desktop ? () => null : (slot) => renderUser(slot)}
       mainRef={mainRef}

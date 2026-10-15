@@ -6,6 +6,7 @@
  */
 import type { ReactNode } from 'react'
 import { Control } from '../components/ui'
+import { isDesktopShell } from '../api/desktop'
 import { useThemeState } from '../theme/store'
 import type {
   BadgeProps,
@@ -25,9 +26,8 @@ import type {
 } from './types'
 
 function Page({ title, en, meta, children }: PageProps) {
-  /* 侧边栏档：外壳顶部工具条已展示当前页标题（label + en），整块页眉一律不再出现——
-     连 meta 与页眉下方那条横格线一起去掉（此前只藏了标题文字，横线还在，看着像"没藏干净"） */
-  const sidebar = useThemeState().mono.sidebar
+  /* The shell can own the title; page actions remain available in every layout. */
+  const sidebar = useThemeState().mono.sidebar && !isDesktopShell()
   return (
     <section className="flex flex-col gap-5 pt-6">
       {!sidebar && (
@@ -39,6 +39,7 @@ function Page({ title, en, meta, children }: PageProps) {
           {meta}
         </header>
       )}
+      {sidebar && meta && <div className="page-actions">{meta}</div>}
       {children}
     </section>
   )

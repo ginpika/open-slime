@@ -10,6 +10,7 @@
  * 阴影/光晕，排印层负责字重与斜体，动效层负责时长与缓动。组件本身不含任何
  * 主题判断分支。
  */
+import { AppIcon } from './AppIcon'
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 
 /** 常用圆角档位：pill 胶囊 / panel 面板内控件 / card 卡片级。
@@ -98,17 +99,6 @@ export function Control({
 
 export function IconPalette({ className = '' }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-      <circle cx="13.5" cy="6.5" r="0.5" fill="currentColor" />
-      <circle cx="17.5" cy="10.5" r="0.5" fill="currentColor" />
-      <circle cx="6.5" cy="12.5" r="0.5" fill="currentColor" />
-      <circle cx="8.5" cy="7.5" r="0.5" fill="currentColor" />
-    </svg>
+    <AppIcon name="palette" className={className} />
   )
 }

@@ -9,6 +9,7 @@
  * <p>视觉交给 PageKit 与主题原语：标题区用 kit.Page，面板用 Card（描边环 + 面板底），
  * 按钮用 ui-btn 变体（primary / outline / quiet / icon），标签用 kit.Badge，层次随主题令牌自适应。
  */
+import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useState } from 'react'
 import { BRAND } from '../branding'
 import {
@@ -78,97 +79,43 @@ function targetWhere(t: TerminalTarget): string {
 
 function IconFolder() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M3 7.5A2 2 0 0 1 5 5.5h3.6a2 2 0 0 1 1.6.8l.9 1.2H19a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="folder" className="h-4 w-4" />
   )
 }
 
 function IconFile() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-      />
-      <path d="M14 3v5h5" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-    </svg>
+    <AppIcon name="file" className="h-4 w-4" />
   )
 }
 
 function IconLink() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-      />
-      <path
-        d="M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-      />
-    </svg>
+    <AppIcon name="link" className="h-4 w-4" />
   )
 }
 
 function IconDownload() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M12 4v10m0 0 3.5-3.5M12 14l-3.5-3.5M5 18h14"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="download" className="h-4 w-4" />
   )
 }
 
 function IconUp() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M12 19V6m0 0-5 5m5-5 5 5"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="arrow-up" className="h-4 w-4" />
   )
 }
 
 function IconRefresh() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-4 w-4">
-      <path
-        d="M20 11a8 8 0 1 0-2.3 6M20 5v6h-6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="refresh" className="h-4 w-4" />
   )
 }
 
 function IconChevron() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-      <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
+    <AppIcon name="chevron-right" className="h-3.5 w-3.5" />
   )
 }
 
@@ -641,6 +588,7 @@ function FileBrowser({
         >
           <IconRefresh />
         </button>
+        <a className="ui-btn ui-btn--quiet text-xs" href={`#/coding?workspace=${encodeURIComponent(workspace.id)}&directory=${encodeURIComponent(path)}`}>编程 ↗</a>
       </div>
 
       {/* 目录项 */}
@@ -720,14 +668,7 @@ function FileBrowser({
               }}
               className={btnIcon('rounded-sm')}
             >
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-                <path
-                  d="M6 6l12 12M18 6L6 18"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <AppIcon name="close" className="h-3.5 w-3.5" />
             </button>
           </div>
           <div className="border-t border-line px-3.5 py-3">
@@ -765,7 +706,7 @@ export default function Workspace() {
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
   const [dlg, setDlg] = useState<{ editing: TerminalTarget | null } | null>(null)
   const [probing, setProbing] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState('')
+  const [selectedId, setSelectedId] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('target') || '')
 
   const [runTargetId, setRunTargetId] = useState('')
   const [runCmd, setRunCmd] = useState('')

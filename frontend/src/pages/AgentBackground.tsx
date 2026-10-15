@@ -350,7 +350,7 @@ const TASK_KIND_LABELS: Record<string, string> = {
   session: '会话',
   subagent: '子代理',
   plan: '职责',
-  code: 'IDE',
+  code: '编码',
 }
 
 /** 一条行动日志：状态、id、种类、标题、父子链、耗时、时刻；点开看该次执行全过程，中断的子代理可重跑 */
@@ -375,9 +375,7 @@ function TaskLine({
       <StatusDot status={task.status} />
       <span className="mono shrink-0 text-2xs text-dim">#{task.id}</span>
       <kit.Badge>{TASK_KIND_LABELS[task.kind] ?? task.kind}</kit.Badge>
-      <span className="max-w-[240px] truncate text-sm font-medium text-fg">
-        {task.title ?? '（未命名）'}
-      </span>
+      {task.codingRunId ? <a href={`#/coding?run=${encodeURIComponent(task.codingRunId)}`} className="max-w-[240px] truncate text-sm font-medium text-fg underline underline-offset-4">{task.title ?? '编码任务'} ↗</a> : <span className="max-w-[240px] truncate text-sm font-medium text-fg">{task.title ?? '（未命名）'}</span>}
       {task.parentId != null && (
         <span className="mono shrink-0 text-2xs text-dim">↳ 由 #{task.parentId} 派出</span>
       )}

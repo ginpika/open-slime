@@ -11,7 +11,7 @@
  */
 import type { FC, ReactNode } from 'react'
 
-export type KitId = 'flat' | 'endfield' | 'bluearchive'
+export type KitId = 'flat' | 'endfield' | 'bluearchive' | 'astrolabe'
 
 /* ------------------------------------------------------------ 页面骨架 */
 

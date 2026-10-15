@@ -216,8 +216,8 @@ public class AgentDirectory {
 
     /** 移出圆桌：连它自己那套「对话」提示词（版本 / 绑定 / 顺序）一并清掉；内置 Agent 不可删除 */
     public int delete(String id) {
-        if (isBuiltin(id)) {
-            throw new IllegalArgumentException("内置 Agent 不可删除（它承载首页对话与心跳调度）");
+        if (store.peer(id).map(AgentRow::builtin).orElse(false) || isBuiltin(id)) {
+            throw new IllegalArgumentException("内置 Agent 不可删除");
         }
         peerPrompts.deleteAll(id);
         return store.delete(id);

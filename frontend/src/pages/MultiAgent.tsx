@@ -16,6 +16,7 @@
  * 在 Endfield 下是带发光角标的切角仪表块、在 BlueArchive 下是糖果卡窄栏流。
  */
 
+import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, getSettings, listMaPeers, type MaPeer } from '../api/client'
 import PageBoundary from '../components/PageBoundary'
@@ -23,6 +24,7 @@ import PeerAvatar from '../components/PeerAvatar'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
 import SystemPanel from './SystemPanel'
+import { isCodingAgent, sortAgentPeers } from '../api/agentRuntime'
 
 type Option = { value: string; label: string }
 
@@ -68,7 +70,7 @@ function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: 
   const kit = usePageKit()
   return (
     <>
-      <kit.Toolbar left="圆桌上坐着的人：名字、头像、模型与各自的提示词。点开一张卡片进它的内部页。" />
+      <kit.Toolbar left="统一管理智能体的模型、提示词与能力。内置编码 Agent 与编程工作台共用项目和任务。" />
 
       <PageBoundary>
         {/*
@@ -79,9 +81,7 @@ function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: 
         */}
         <div className={`${kit.panelGrid} lg:grid-cols-3`}>
           <kit.Tile href={agentHref('new')} dashed>
-            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
+            <AppIcon name="plus" className="h-5 w-5" />
             新建成员
           </kit.Tile>
 
@@ -99,7 +99,7 @@ function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: 
                     <p className="ui-heading truncate text-md">{p.name}</p>
                     {p.builtin && <kit.Badge>内置</kit.Badge>}
                   </div>
-                  <p className="mt-1 truncate text-2xs text-hint">提示词 · 每位成员独立一套</p>
+                  <p className="mt-1 truncate text-2xs text-hint">{isCodingAgent(p) ? '编码工作台 · 项目与任务共用' : '提示词 · 每位成员独立一套'}</p>
                   <p className="mt-0.5 truncate text-2xs text-hint">
                     模型 · {labelOf(modelOptions, p.modelId ?? '')}
                   </p>
@@ -135,7 +135,7 @@ export default function MultiAgent({
 
   const reloadPeers = useCallback(async () => {
     try {
-      setPeers(await listMaPeers())
+      setPeers(sortAgentPeers(await listMaPeers()))
     } catch (e) {
       setToast(errMsg(e))
     }

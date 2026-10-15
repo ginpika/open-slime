@@ -1,0 +1,83 @@
+/* ASTROLABE — a private observatory. Scoped to leave every existing theme intact. */
+.astro-shell { display:flex; height:100dvh; min-width:0; overflow:hidden; background:var(--c-bg); color:var(--c-fg); }
+body[data-df] .astro-shell { height:100%; }
+.astro-rail { width:236px; flex-shrink:0; display:flex; flex-direction:column; padding:16px 20px 18px; color:var(--astro-rail-fg); background:var(--astro-ink); position:relative; }
+.astro-brand { display:flex; flex-shrink:0; justify-content:center; align-items:center; min-height:60px; padding:2px 0; text-decoration:none; }
+.astro-brand__mark { width:56px; height:56px; flex-shrink:0; }
+.astro-rail__rule { height:1px; flex-shrink:0; margin:12px 0; background:color-mix(in srgb, var(--astro-brass) 25%, transparent); }
+.astro-nav { min-height:0; flex:1; overflow-y:auto; margin:0 -6px; padding:0 6px; }
+.astro-nav__group { margin-bottom:15px; }
+.astro-nav__group > p { display:flex; justify-content:space-between; padding:0 12px; margin:0 0 6px; color:var(--astro-rail-muted); font-size:12px; }
+.astro-nav a { display:flex; gap:12px; align-items:center; min-height:37px; padding:8px 12px; margin:2px 0; border-radius:7px; color:var(--astro-rail-fg); font-size:14px; transition:background .2s,color .2s; }
+.astro-nav a > svg { width:17px; height:17px; opacity:.65; }
+.astro-nav a > span { flex:1; }
+.astro-nav a > i { font-style:normal; opacity:0; font-size:16px; }
+.astro-nav a:hover { background:rgb(255 255 255 / .06); }
+.astro-nav a[aria-current='page'] { background:var(--astro-nav-fill,#e8dfc9); color:var(--astro-nav-fg,#183a30); box-shadow:0 2px 8px rgb(0 0 0 / .06); }
+.astro-nav a[aria-current='page'] > i { opacity:1; }
+.astro-rail__end { border-top:1px solid rgb(214 183 121 / .2); padding-top:16px; margin-top:12px; }
+.astro-rail__caption { display:block; color:var(--astro-rail-muted); font-family:var(--astro-display); font-size:13px; letter-spacing:.15em; margin-bottom:12px; }
+.astro-workarea { min-width:0; min-height:0; flex:1; display:flex; flex-direction:column; position:relative; isolation:isolate; }
+.astro-topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:68px; padding:12px 36px; border-bottom:1px solid var(--c-line); position:relative; z-index:40; }
+.astro-breadcrumb { min-width:0; font-size:.875rem; line-height:1.5; }
+.astro-breadcrumb ol { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin:0; padding:0; list-style:none; }
+.astro-breadcrumb li { display:flex; align-items:baseline; gap:12px; min-width:0; }
+.astro-breadcrumb a { color:var(--c-fg); text-decoration:underline; text-decoration-color:var(--c-line-strong); text-underline-offset:4px; border-radius:2px; }
+.astro-breadcrumb a:hover { text-decoration-color:currentColor; }
+.astro-breadcrumb [aria-current='page'] { font-weight:600; }
+.astro-breadcrumb__separator { color:var(--c-muted); }
+.astro-topbar__tools { display:flex; flex-shrink:0; align-items:center; gap:16px; }.astro-edition { font-size:12px; color:var(--c-faint); letter-spacing:.07em; }.astro-edition i { margin:0 8px; font-style:normal; color:var(--c-accent); }
+@media (max-width:760px) { .astro-breadcrumb { font-size:1rem; }.astro-breadcrumb ol { column-gap:8px; }.astro-breadcrumb li { gap:8px; }.astro-topbar__tools { gap:8px; } }
+.astro-main { flex:1; min-height:0; overflow-y:auto; position:relative; z-index:1; }.astro-main--bleed { overflow:hidden; display:flex; flex-direction:column; }
+.astro-main--bleed > * { flex:1; min-height:0; }
+.astro-content { max-width:1320px; margin:0 auto; padding:0 36px 28px; }
+/* Home measures main.clientHeight for its two screens; do not add a third footer gap. */
+.astro-content--home { padding-bottom:0; }
+/* Workspace owns two inner scrollers. Forward a definite height through the shell wrapper. */
+@media (min-width:1024px) {
+  .astro-content--workspace { display:flex; flex-direction:column; height:100%; }
+  .astro-content--workspace > [data-page='workspace'] { flex:1; min-height:0; }
+}
+.astro-footer { display:flex; align-items:center; justify-content:space-between; gap:20px; border-top:1px solid var(--c-line); padding:10px 36px; font-size:10px; color:var(--c-faint); letter-spacing:.12em; }.astro-footer i { font-style:normal; color:var(--c-accent); margin:0 10px; }
+.astro-page { display:flex; min-height:0; flex-direction:column; gap:var(--astro-page-gap,26px); padding-top:var(--astro-page-top,32px); }
+.astro-page__head { display:flex; flex-shrink:0; align-items:flex-end; justify-content:space-between; gap:20px; border-bottom:1px solid var(--c-line); padding-bottom:24px; }
+.astro-eyebrow { color:var(--c-faint); font-size:12px; font-weight:500; letter-spacing:.13em; line-height:1.6; }.astro-eyebrow > span { color:var(--c-accent); }
+.astro-page__head h1 { margin:8px 0 0; font-size:32px; line-height:1.35; }.astro-page__head h1 > span { color:var(--c-accent); padding-left:4px; }
+.astro-page__meta { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.astro-panel > .ui-card__in > header { display:flex; align-items:center; gap:10px; padding:18px 22px; border-bottom:1px solid var(--c-line); }
+.astro-panel h2 { font-size:18px; line-height:1.45; }.astro-panel__meta { margin-left:auto; font-size:12px; color:var(--c-faint); }.astro-panel__body { padding:var(--astro-panel-pad,22px); flex:1; min-width:0; }
+.astro-diamond { width:6px; height:6px; background:var(--c-accent); transform:rotate(45deg); flex-shrink:0; }
+.astro-stats { display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--c-line); border-radius:14px; background:var(--ui-card-fill); overflow:hidden; }
+.astro-stat { flex:1; min-width:156px; padding:22px 26px; border-right:1px solid var(--c-line); }.astro-stat:last-child { border-right:0; }
+.astro-stat__value { font-family:var(--astro-display); font-size:32px; font-weight:400; font-variant-numeric:tabular-nums; line-height:1.15; margin-top:12px; }.astro-stat__value--hero { font-size:36px; }.astro-stat__value > span { font-family:var(--ui-font-sans); font-size:12px; color:var(--c-muted); margin-left:7px; }.astro-stat--accent .astro-stat__value { color:var(--c-accent); }.astro-stat--muted .astro-stat__value { color:var(--c-muted); }.astro-stat__hint { margin-top:10px; color:var(--c-faint); font-size:12px; }
+.astro-meter { height:3px; background:var(--c-line); margin-top:12px; overflow:hidden; border-radius:4px; }.astro-meter > i { display:block; height:100%; background:var(--c-accent); border-radius:inherit; }
+.astro-range { display:flex; width:fit-content; flex-wrap:wrap; gap:4px; padding:4px; border:1px solid var(--c-line); border-radius:9px; background:var(--c-bg); }.astro-range button { padding:7px 14px; border-radius:6px; color:var(--c-muted); font-size:14px; transition:background .2s; }.astro-range button:hover { background:var(--c-accent-soft); }.astro-range button[aria-pressed='true'] { background:var(--c-fg); color:var(--c-bg); }
+.astro-bar { padding:8px 0; }.astro-bar > div:first-child { display:flex; gap:10px; align-items:baseline; font-size:14px; }.astro-bar__index { color:var(--c-accent); font-family:var(--ui-font-mono); font-size:12px; }.astro-bar strong { margin-left:auto; font-weight:500; font-variant-numeric:tabular-nums; }.astro-bar small { color:var(--c-faint); font-size:12px; }
+.astro-badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; line-height:1.5; padding:3px 9px; border:1px solid var(--c-line); border-radius:5px; background:var(--c-bg); color:var(--c-muted); white-space:nowrap; }.astro-badge--accent { color:var(--c-accent); border-color:var(--c-accent); background:var(--c-accent-soft); }.astro-badge--ok { color:var(--c-ok); background:var(--c-ok-soft); }.astro-badge--warn { color:var(--c-warn); background:var(--c-warn-soft); }.astro-badge--danger { color:var(--c-danger); background:var(--c-danger-soft); }
+.astro-note { display:flex; gap:12px; align-items:flex-start; padding:16px 20px; font-size:14px; line-height:1.7; border-left:2px solid var(--c-accent); background:var(--c-accent-soft); border-radius:0 8px 8px 0; }.astro-note > span { color:var(--c-accent); font-size:19px; }.astro-note--warn { border-color:var(--c-warn); background:var(--c-warn-soft); }
+.astro-empty { border:1px dashed var(--c-line-strong); border-radius:10px; padding:32px 20px; text-align:center; color:var(--c-faint); font-size:14px; line-height:1.7; }.astro-empty > span { display:block; margin-bottom:12px; color:var(--c-accent); font-size:26px; }
+.astro-field { display:block; }.astro-field > span { display:block; font-size:14px; font-weight:500; margin-bottom:8px; }.astro-field > small { display:block; margin-top:6px; font-size:12px; color:var(--c-faint); }
+.astro-steps { display:flex; flex-wrap:wrap; gap:16px 28px; }.astro-steps li { display:flex; align-items:center; gap:10px; font-size:14px; color:var(--c-faint); }.astro-steps li > span { display:grid; place-items:center; width:30px; height:30px; border-radius:50%; border:1px solid var(--c-line-strong); font-size:12px; font-family:var(--ui-font-mono); }.astro-steps li[data-state='current'] { color:var(--c-fg); }.astro-steps li[data-state='current'] > span { background:var(--c-fg); color:var(--c-bg); border-color:var(--c-fg); }.astro-steps li[data-state='done'] > span { border-color:var(--c-accent); color:var(--c-accent); }
+/* PageKit className is an extension point (Workspace requests py-2). Keep row defaults
+   in the components layer so caller utilities can still set density and layout. */
+@layer components {
+  .astro-row { display:flex; align-items:center; width:100%; gap:12px; padding:var(--astro-row-py,14px) 12px; border-bottom:1px solid var(--c-line); text-align:left; transition:background .2s; }
+}
+.astro-row:last-child { border-bottom:0; }a.astro-row:hover,button.astro-row:hover { background:var(--c-accent-soft); }.astro-row:disabled { opacity:.4; }
+.astro-tile { text-align:left; }.astro-tile--dashed { background:transparent; border:1px dashed var(--c-line-strong); box-shadow:none; }.astro-tile--dashed > .ui-card__in { background:transparent; min-height:108px; align-items:center; justify-content:center; }
+.astro-toolbar { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; font-size:14px; }.astro-toolbar > div:first-child { min-width:0; }.astro-toolbar > div:last-child { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+[data-theme='astrolabe'] .ui-label { font-size:12px; }
+[data-theme='astrolabe'] :is(button,a,input,textarea,select):focus-visible { outline:2px solid var(--c-accent); outline-offset:3px; }
+[data-theme='astrolabe'] :is(input,textarea,select)::placeholder { color:var(--c-faint); }
+/* Home has its own behavior. Theme-only composition retains its search/chat controls. */
+.astro-home { position:relative; isolation:isolate; }
+.astro-home__engraving { width:min(390px,60vw); height:auto; position:absolute; top:50%; left:50%; transform:translate(-50%,-56%); z-index:-1; color:var(--c-accent); opacity:.17; pointer-events:none; }
+.astro-home__intro { padding:16px 0 24px; }.astro-home__overline { font-size:12px; text-align:center; letter-spacing:.24em; color:var(--c-accent); margin-bottom:22px; }.astro-home__title { text-align:center; font-family:var(--astro-display); font-weight:400; font-size:clamp(32px,4vw,52px); line-height:1.4; letter-spacing:.04em; }.astro-home__title em { font-style:normal; color:var(--c-accent); }.astro-home__subtitle { text-align:center; margin-top:16px; font-size:14px; color:var(--c-muted); letter-spacing:.05em; }.astro-home__caption { font-family:var(--astro-display); font-style:italic; text-align:center; font-size:15px; letter-spacing:.035em; color:var(--c-faint); margin-top:10px; }
+[data-theme='astrolabe'] .ba-home-inputbar { background:var(--ui-card-fill); border-radius:12px; padding:8px 8px 8px 20px; box-shadow:0 8px 32px rgb(12 36 25 / .065); }
+[data-theme='astrolabe'] .ba-home-inputbar-btn { border-radius:8px; font-size:14px; background:var(--c-fg); color:var(--c-bg); }
+[data-theme='astrolabe'][data-scheme='dark'] .ba-home-inputbar-btn { background:var(--c-accent); color:var(--c-accent-fg); }
+.astro-home__links { display:flex; justify-content:center; flex-wrap:wrap; gap:12px; margin-top:30px; }.astro-home__links a { display:flex; align-items:center; gap:12px; padding:12px 18px; border:1px solid var(--c-line); border-radius:8px; background:var(--ui-card-fill); font-size:14px; transition:border-color .2s,transform .2s; }.astro-home__links a > span { color:var(--c-accent); }.astro-home__links a:hover { border-color:var(--c-accent); transform:translateY(-2px); }
+@media (max-height:820px) { .astro-rail { padding-top:12px; }.astro-rail__rule { margin:10px 0; }.astro-nav__group { margin-bottom:9px; }.astro-nav a { min-height:33px; padding-top:6px; padding-bottom:6px; } }
+@media (max-width:1100px) { .astro-rail { width:206px; padding-right:14px; padding-left:14px; }.astro-edition { display:none; }.astro-content { padding-right:24px; padding-left:24px; }.astro-topbar { padding-right:24px; padding-left:24px; } }
+@media (max-width:760px) { .astro-shell { flex-direction:column; }.astro-rail { width:100%; padding:10px 16px 0; }.astro-brand { min-height:44px; padding:0; }.astro-brand__mark { width:36px; height:36px; }.astro-rail__rule,.astro-rail__end { display:none; }.astro-nav { display:flex; flex:none; overflow-x:auto; overflow-y:hidden; gap:4px; padding:8px 0; margin:0; }.astro-nav__group { display:contents; }.astro-nav__group > p { display:none; }.astro-nav a { flex-shrink:0; margin:0; gap:7px; padding:8px 10px; }.astro-nav a > i { display:none; }.astro-topbar { min-height:52px; padding:8px 18px; }.astro-content { padding:0 18px 24px; }.astro-footer { padding:10px 18px; }.astro-footer > span:last-child { display:none; }.astro-page { padding-top:24px; gap:20px; }.astro-page__head { flex-wrap:wrap; }.astro-page__head h1 { font-size:28px; }.astro-panel__body { padding:16px; }.astro-panel > .ui-card__in > header { padding:16px; }.astro-stat { padding:18px; min-width:140px; }.astro-home__title { font-size:32px; }.astro-home__overline { letter-spacing:.13em; }.astro-home__subtitle { max-width:300px; margin:12px auto 0; line-height:1.7; }.astro-home__links { gap:8px; }.astro-home__links a { padding:10px 12px; } }
+@media (prefers-reduced-motion:reduce) { [data-theme='astrolabe'] *,[data-theme='astrolabe'] *::before,[data-theme='astrolabe'] *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }

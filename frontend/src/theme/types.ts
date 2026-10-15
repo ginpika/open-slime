@@ -16,7 +16,7 @@
 export type Vars = Record<string, string>
 
 /** 3 套主题 */
-export type ThemeId = 'old' | 'endfield' | 'bluearchive'
+export type ThemeId = 'old' | 'endfield' | 'bluearchive' | 'astrolabe'
 
 /** 明暗档位（每套主题都自带完整的两档） */
 export type Scheme = 'light' | 'dark'
@@ -73,6 +73,17 @@ export type EndfieldConfig = {
   window: EndfieldWindowStyle
 }
 
+/** 星图观测台：独立配置，切换主题时保留。 */
+export type AstrolabeConfig = {
+  palette: 'brass' | 'copper' | 'glacier'
+  material: 'paper' | 'glass'
+  atmosphere: 'none' | 'orbits' | 'aurora'
+  motion: boolean
+  density: 'comfortable' | 'compact'
+  reading: 'serif' | 'sans'
+  hideChrome: boolean
+}
+
 /** 一套主题的完整清单 */
 export type ThemeManifest = {
   id: ThemeId
@@ -111,6 +122,7 @@ export type ThemeState = {
   endfield: EndfieldConfig
   /** Tailwind Mono 主题配置（仅 old 主题消费；旧持久化数据缺失时逐字段兜底） */
   mono: MonoConfig
+  astrolabe: AstrolabeConfig
   /** 最近一次解析出的完整令牌快照（供 index.html 防闪烁脚本与 canvas 读取） */
   vars: Vars
 }
@@ -159,6 +171,6 @@ export const ROUTE_LABELS: Record<OverrideRoute, string> = {
   workflow: '执行态',
   workspace: '工作空间',
   settings: '设置',
-  stats: '统计',
+  stats: '用量 & 统计',
   about: '关于',
 }

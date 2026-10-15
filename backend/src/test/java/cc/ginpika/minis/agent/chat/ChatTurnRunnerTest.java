@@ -51,6 +51,21 @@ class ChatTurnRunnerTest {
         });
     }
 
+    @Test void defaultChatModelFollowsAgentConfigWithoutMakingItASessionOverride(){
+        when(context.modelIdFor("agent",null)).thenReturn("agent-model");
+        ModelTarget target=new ModelTarget("http://fixture","key","agent-model");
+        when(settings.resolveChatModel("agent-model")).thenReturn(target);
+        when(runtime.run(any())).thenReturn(new AgentRuntime.Result("answer","raw",AgentRuntime.End.ANSWERED,0));
+        assertEquals("answer",runner.chat("s","question",null,null).message());
+        verify(context).requestBody(eq(row),eq(target),isNull(),anyInt());
+        verify(sessions).updateConfig(eq("s"),isNull(),isNull(),isNull(),isNull(),isNull(),isNull(),isNull());
+    }
+    @Test void explicitChatModelOverridesAgentDefault(){
+        when(settings.resolveChatModel("explicit")).thenReturn(new ModelTarget("http://fixture","key","explicit"));
+        when(runtime.run(any())).thenReturn(new AgentRuntime.Result("answer","raw",AgentRuntime.End.ANSWERED,0));
+        assertEquals("answer",runner.chat("s","question","explicit",null).message());
+        verify(context,never()).modelIdFor(any(),any());
+    }
     @Test void successKeepsTaskScopeAndRunsCompletionAfterReply() {
         when(runtime.run(any())).thenAnswer(inv -> {
             assertEquals("agent", AgentScope.get());

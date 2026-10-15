@@ -1,3 +1,4 @@
+import { AppIcon } from '../components/AppIcon'
 import { useEffect, useState, type FormEvent } from 'react'
 import { loginUrlOf, search, type SearchResponse } from '../api/client'
 import ResultCard from '../components/ResultCard'
@@ -23,15 +24,7 @@ function ragFromHash(): boolean {
 
 function SearchIcon() {
   return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="2" />
-      <path
-        d="M15.4 15.4 L21 21"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
-    </svg>
+    <AppIcon name="search" className="h-4 w-4" />
   )
 }
 

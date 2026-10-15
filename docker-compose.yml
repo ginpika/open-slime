@@ -13,6 +13,10 @@ services:
     image: slime-backend:latest
     container_name: slime-backend
     restart: unless-stopped
+    init: true
+    shm_size: '256mb'
+    security_opt:
+      - seccomp=./backend/browser-seccomp.json
     # 后端参数全部来自 backend/.env（LLM_API_KEY / SSO 等；真实环境变量优先于该文件）
     env_file:
       - ./backend/.env

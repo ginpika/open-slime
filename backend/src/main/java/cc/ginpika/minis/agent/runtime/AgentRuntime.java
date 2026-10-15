@@ -182,107 +182,47 @@ public class AgentRuntime {
     }
 
     private Result runScoped(Spec spec) {
-        ArrayNode msgs = (ArrayNode) spec.body().get("messages");
-        int maxRounds = Math.max(0, spec.maxRounds());
-        Listener listener = spec.listener();
-        RunState state = spec.runState();
-
-        for (int round = 0; round <= maxRounds; round++) {
-            if (liveMemory != null) { liveMemory.refresh(msgs); }
-            if (listener != null) {
-                listener.round(round);
+        var hooks = new cc.ginpika.minis.ai.runtime.ModelLoop.Hooks() {
+            @Override public void beforeRound(int round, ObjectNode body) {
+                if (liveMemory != null) { liveMemory.refresh((ArrayNode) body.get("messages")); }
+                if (spec.listener() != null) { spec.listener().round(round); }
             }
-            /* 最后一轮撤掉 tools，强制模型给出最终回答。副本必须<b>此刻</b>才拷——
-               前几轮追加的 assistant(tool_calls) 与工具结果都在 messages 里，末轮同样要看得到，
-               否则模型只能凭一个孤零零的提问作答（丢掉全部检索证据） */
-            ObjectNode body = round < maxRounds ? spec.body() : withoutTools(spec.body());
-            OpenAiChatClient.RawResult raw;
-            try {
-                raw = client.chatRaw(spec.target(), body,
-                        listener == null ? null : listener.deltaListener(round), spec.source());
-            } catch (RuntimeException e) {
-                /* 失败也要留痕：出站请求体是排障的第一手材料（chatRaw 发起前已把 model/stream 就地补进 body） */
-                state.llmCalls.add(new ChatDtos.LlmCall(round, body.toString(), null, round < maxRounds));
-                if (listener != null) {
-                    listener.rejected(round, body, e);
-                }
-                throw e;
+            @Override public OpenAiChatClient.DeltaListener deltas(int round) {
+                return spec.listener() == null ? null : spec.listener().deltaListener(round);
             }
-            state.lastRawResponse = raw.rawResponse();
-            /* 留痕这一轮真实发出的请求体与收到的响应体：body 已被 chatRaw 就地补全 model/stream/
-               stream_options，序列化成快照——后续轮次对该对象的追加不会改到已留的这份 */
-            state.llmCalls.add(new ChatDtos.LlmCall(round, body.toString(),
-                    raw.rawResponse(), round < maxRounds));
-            JsonNode message = raw.message();
-
-            /* 累计本轮思维链（工具轮的思考也留痕，供链式回放），并落为一段 reasoning 分段 */
-            JsonNode reasoning = message.get("reasoning_content");
-            if (reasoning != null && !reasoning.asText().isBlank()) {
-                String text = reasoning.asText();
-                if (state.reasoningChain.length() > 0) {
-                    state.reasoningChain.append(ChatTrace.REASONING_SEPARATOR);
-                }
+            @Override public void response(int round, ObjectNode body, OpenAiChatClient.RawResult raw, boolean tools) {
+                spec.runState().lastRawResponse = raw.rawResponse();
+                spec.runState().llmCalls.add(new ChatDtos.LlmCall(round, body.toString(), raw.rawResponse(), tools));
+            }
+            @Override public void rejected(int round, ObjectNode body, RuntimeException error, boolean tools) {
+                spec.runState().llmCalls.add(new ChatDtos.LlmCall(round, body.toString(), null, tools));
+                if (spec.listener() != null) { spec.listener().rejected(round, body, error); }
+            }
+            @Override public void reasoning(int round, String text) {
+                var state = spec.runState();
+                if (!state.reasoningChain.isEmpty()) { state.reasoningChain.append(ChatTrace.REASONING_SEPARATOR); }
                 state.reasoningChain.append(text);
                 state.trace.add(new ChatDtos.TraceSegment(ChatTrace.SEG_REASONING, text, null, null, round));
             }
-
-            JsonNode toolCalls = message.path("tool_calls");
-            if (!toolCalls.isArray() || toolCalls.isEmpty()) {
-                String content = message.path("content").asText(null);
-                if (content == null || content.isBlank()) {
-                    /* 兜底：部分推理模型/端点在正文为空时把整段回答放进了 reasoning_content
-                     * （deepseek-flash 实测：content=null、reasoning_content 为完整回答），
-                     * 此时以本轮思考内容作为回答，避免整轮失败丢弃已生成的内容 */
-                    String fallback = message.path("reasoning_content").asText("");
-                    if (fallback.isBlank()) {
-                        return new Result(null, null, End.EMPTY_CONTENT, round);
-                    }
-                    if (listener != null) {
-                        listener.fallbackToReasoning(round, fallback.length(), state.lastRawResponse);
-                    }
-                    content = fallback;
-                }
-                return new Result(content, raw.rawResponse(), End.ANSWERED, round);
-            }
-
-            /* 模型请求调用工具：assistant 消息（含 tool_calls）与按 tool_call_id 配对的 tool 结果
-               都续进 messages 与 runState.toolRounds，供跨请求按原生协议原样回放 */
-            JsonNode assistantRound = ChatProtocol.withReasoningForToolCalls(message.deepCopy());
-            msgs.add(assistantRound);
-            state.toolRounds.add(assistantRound);
-            List<JsonNode> calls = new ArrayList<>();
-            toolCalls.forEach(calls::add);
-            for (JsonNode call : calls) {
+            @Override public void requested(int round, JsonNode call) {
                 String name = call.path("function").path("name").asText("");
-                state.trace.add(new ChatDtos.TraceSegment(ChatTrace.SEG_TOOL, null, name,
-                        call.path("function").path("arguments").asText(""), round));
-                if (listener != null) {
-                    listener.tool(name, call.path("function").path("arguments").asText(""));
-                }
+                String args = call.path("function").path("arguments").asText("");
+                spec.runState().trace.add(new ChatDtos.TraceSegment(ChatTrace.SEG_TOOL, null, name, args, round));
+                if (spec.listener() != null) { spec.listener().tool(name, args); }
             }
-            List<String> contents = ToolBatch.run(calls, spec.dispatch()::parallelizable,
-                    call -> {
-                        if (liveMemory != null) { liveMemory.refresh(msgs); }
-                        return spec.dispatch().run(call);
-                    });
-            for (int i = 0; i < calls.size(); i++) {
-                ObjectNode toolMsg = msgs.addObject()
-                        .put("role", "tool")
-                        .put("tool_call_id", calls.get(i).path("id").asText(""))
-                        .put("content", contents.get(i));
-                state.toolRounds.add(toolMsg);
+            @Override public void message(JsonNode message) { spec.runState().toolRounds.add(message); }
+            @Override public void progress() { if (spec.listener() != null) { spec.listener().progress(); } }
+            @Override public void fallback(int round, String text, String raw) {
+                if (spec.listener() != null) { spec.listener().fallbackToReasoning(round, text.length(), raw); }
             }
-            if (listener != null) {
-                listener.progress();
-            }
-        }
-        return new Result(null, null, End.ROUNDS_EXHAUSTED, maxRounds);
-    }
-
-    /** 请求体的去 tools 副本（末轮用）：此刻才拷，带上已经追加的工具往返 */
-    private static ObjectNode withoutTools(ObjectNode body) {
-        ObjectNode copy = body.deepCopy();
-        copy.remove("tools");
-        return copy;
+        };
+        var result = new cc.ginpika.minis.ai.runtime.ModelLoop(client).run(
+                new cc.ginpika.minis.ai.runtime.ModelLoop.Spec(spec.target(), spec.source(), spec.body(),
+                        spec.maxRounds(), true,
+                        calls -> ToolBatch.run(calls, spec.dispatch()::parallelizable, call -> {
+                            if (liveMemory != null) { liveMemory.refresh((ArrayNode) spec.body().get("messages")); }
+                            return spec.dispatch().run(call);
+                        }), hooks, null));
+        return new Result(result.content(), result.rawResponse(), End.valueOf(result.end().name()), result.round());
     }
 }

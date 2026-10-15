@@ -44,8 +44,9 @@ public class RoundtableAgenda {
      * <p><b>立即返回</b>：不等待它跑完，也不因为该会话已有推进在跑而阻塞——后到的那次排在队尾。
      */
     public void submit(String sessionId, Runnable work) {
+        String owner=cc.ginpika.minis.ai.core.UserScope.get();
         queues.computeIfAbsent(sessionId, k -> new SerialExecutor(workers)).execute(() -> {
-            try {
+            try (var actor=cc.ginpika.minis.ai.core.UserScope.bind(owner)) {
                 work.run();
             } catch (RuntimeException e) {
                 /* 一次推进崩了：记一行，队列照常往下走（见 SerialExecutor 的 finally）。

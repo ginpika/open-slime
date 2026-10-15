@@ -24,6 +24,7 @@ public enum ToolDomain {
 
     /** 终端：在工作空间上执行命令、查看可用环境 */
     TERMINAL("terminal", "终端"),
+    CODING("coding", "编程"),
 
     /** IDE · 文件：工作区文件树与读写（STEP 5 预留） */
     FS("fs", "文件"),

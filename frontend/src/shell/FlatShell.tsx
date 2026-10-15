@@ -14,7 +14,7 @@ import { BRAND } from '../branding'
 import { isDesktopShell } from '../api/desktop'
 import { useThemeState } from '../theme/store'
 import { ShellIcon } from './icons'
-import { NAV, NAV_GROUPS, activePathOf } from './nav'
+import { NAV, NAV_GROUPS, activePathOf, pageNavOf } from './nav'
 import type { ShellProps } from './types'
 
 export type FlatVariant = 'minimal' | 'sidebar'
@@ -26,7 +26,7 @@ export function FlatThemeShell(props: ShellProps) {
   return (
     <FlatShell
       {...props}
-      variant={mono.sidebar ? 'sidebar' : 'minimal'}
+      variant={!isDesktopShell() && mono.sidebar ? 'sidebar' : 'minimal'}
       /* 桌面端沉浸排布：收起顶底栏（主题按钮由 App 移到窗口标题栏） */
       hideChrome={isDesktopShell() && mono.hideChrome}
     />
@@ -45,6 +45,7 @@ export function FlatShell({
   children,
 }: ShellProps & { variant: FlatVariant; hideChrome: boolean }) {
   const active = activePath || activePathOf(route)
+  const pageNav = pageNavOf(route)
 
   /* --------------------------------------- Tailwind Mono · 默认顶部横排 */
   if (variant === 'minimal') {
@@ -53,7 +54,7 @@ export function FlatShell({
         {!hideChrome && (
           <header className="relative z-30 shrink-0 border-b border-line">
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-6 py-4">
-              <nav className="scrollbar-hide flex items-center gap-5 overflow-x-auto">
+              <nav className="scrollbar-hide flex min-w-0 flex-1 items-center gap-5 overflow-x-auto">
                 {NAV.map((n) => {
                   const on = n.path === active
                   return (
@@ -63,8 +64,8 @@ export function FlatShell({
                       aria-current={on ? 'page' : undefined}
                       className={
                         on
-                          ? 'text-sm font-semibold text-fg underline decoration-fg underline-offset-8'
-                          : 'text-sm font-medium text-faint underline-offset-8 transition hover:text-fg'
+                          ? 'shrink-0 whitespace-nowrap text-sm font-semibold text-fg underline decoration-fg underline-offset-8'
+                          : 'shrink-0 whitespace-nowrap text-sm font-medium text-faint underline-offset-8 transition hover:text-fg'
                       }
                     >
                       {n.label}
@@ -107,9 +108,9 @@ export function FlatShell({
   /* ------------------------------------------- Tailwind Mono · 侧边栏档 */
   if (variant === 'sidebar') {
     return (
-      <div className="flex h-screen overflow-hidden bg-bg text-fg">
+      <div className={`flex h-screen overflow-hidden bg-bg text-fg${route === '/coding' ? ' flex-col md:flex-row' : ''}`}>
         {/* 侧栏：品牌 + 分组导航 */}
-        <aside className="flex w-60 shrink-0 flex-col border-r border-line">
+        <aside className={`${route === '/coding' ? 'hidden md:flex' : 'flex'} w-60 shrink-0 flex-col border-r border-line`}>
           <div className="flex items-center gap-2.5 px-4 py-4">
             <img
               src="/icon-64x64.png"
@@ -165,15 +166,17 @@ export function FlatShell({
         </aside>
 
         {/* 右列：工具条 + 内容 */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {route === '/coding' && !hideChrome && <nav aria-label="主导航" className="scrollbar-hide flex shrink-0 items-center gap-4 overflow-x-auto border-b border-line px-4 py-3 md:hidden">{NAV.map(item => <a key={item.path} href={`#${item.path}`} aria-current={active === item.path ? 'page' : undefined} className={`shrink-0 whitespace-nowrap text-xs ${active === item.path ? 'font-semibold text-fg' : 'text-muted'}`}>{item.label}</a>)}</nav>}
           {!hideChrome && (
             <header className="relative z-30 flex shrink-0 items-center gap-3 border-b border-line px-6 py-2.5">
               <span className="text-sm font-semibold">
-                {NAV.find((n) => n.path === active)?.label ?? '首页'}
+                {pageNav?.label ?? '首页'}
               </span>
-              <span className="ui-label">{NAV.find((n) => n.path === active)?.en}</span>
+              <span className="ui-label">{pageNav?.en}</span>
               <span className="flex-1" />
               {tools}
+              {route === '/coding' && <div className="md:hidden">{userSlot({ placement: 'down', withName: false })}</div>}
             </header>
           )}
           <main

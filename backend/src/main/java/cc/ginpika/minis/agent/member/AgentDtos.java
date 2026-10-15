@@ -21,7 +21,7 @@ public final class AgentDtos {
     /** 一个成员：头像 + builtin 标记 + 额外工具 + 绑定工作空间 + 模型 + 次序（提示词在它自己的 {@code /prompts} 接口里） */
     public record AgentView(String id, String name, boolean builtin, List<String> tools,
                            List<String> terminals, String modelId, int sort, String note,
-                           String avatar, String role, String roleColor) {
+                           String avatar, String role, String roleColor, String executionKind) {
     }
 
     /** 新建 / 改写成员的请求体（改时只动非 null 字段；avatar 传空串 = 移除头像） */

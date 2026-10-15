@@ -14,7 +14,7 @@ spring:
   sql:
     init:
       mode: always
-      schema-locations: classpath:schema.sql
+      schema-locations: classpath:schema.sql,classpath:coding/schema.sql
 
 logging:
   file:
@@ -23,6 +23,28 @@ logging:
     cc.ginpika.minis: INFO
 
 minis:
+  coding:
+    enabled: ${MINIS_CODING_ENABLED:true}
+    data-dir: ${MINIS_CODING_DIR:}
+    docker-host-data-dir: ${MINIS_CODING_HOST_DIR:}
+    docker-image: ${MINIS_CODING_IMAGE:maven:3.9-eclipse-temurin-21}
+    allow-local-execution: ${MINIS_CODING_LOCAL_EXECUTION:false}
+    max-rounds: ${MINIS_CODING_MAX_ROUNDS:60}
+    max-run-minutes: ${MINIS_CODING_MAX_MINUTES:30}
+    max-estimated-tokens: ${MINIS_CODING_MAX_TOKENS:0} # 0：不限制累计 token；正数：每次运行的累计额度
+    max-response-tokens: ${MINIS_CODING_RESPONSE_TOKENS:0}
+    response-reserve-tokens: ${MINIS_CODING_RESPONSE_RESERVE:32768}
+    max-output-continuations: ${MINIS_CODING_OUTPUT_CONTINUATIONS:3}
+    max-model-retries: ${MINIS_CODING_MODEL_RETRIES:3}
+    max-concurrent-subagents: ${MINIS_CODING_SUBAGENTS:2}
+    max-subagent-rounds: ${MINIS_CODING_SUBAGENT_ROUNDS:30}
+  web:
+    executable-path: ${MINIS_WEB_EXECUTABLE_PATH:}   # 空值：Windows 自动使用 Chrome / Edge，其他平台使用已安装 Chromium
+    headless: ${MINIS_WEB_HEADLESS:true}
+    locale: ${MINIS_WEB_LOCALE:zh-CN}
+    timezone: ${MINIS_WEB_TIMEZONE:Asia/Shanghai}
+    allow-fake-ip: ${MINIS_WEB_ALLOW_FAKE_IP:false}   # 仅在代理使用 198.18.0.0/15 Fake-IP DNS 时开启（域名限定）
+    proxy-server: ${MINIS_WEB_PROXY_SERVER:}         # 可选，如 http://127.0.0.1:7890；不存凭证
   public-base: ${MINIS_PUBLIC_BASE:http://localhost:18081}
   article-dir: ${MINIS_ARTICLE_DIR:../data/article}   # markdown 文章目录（相对 maven 工作目录）
   # 桌面壳（Tauri）：壳以 MINIS_DESKTOP=1 拉起后端并注入一次性令牌，此时 /api/** 需带

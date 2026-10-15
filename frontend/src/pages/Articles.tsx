@@ -5,9 +5,10 @@
  * 于是同一页在 flat / Endfield / BlueArchive 下分别是「表格感 / 仪表感 / 卡片流」。
  */
 
+import { AppIcon } from '../components/AppIcon'
 import { useEffect, useState } from 'react'
 import { articles, loginUrlOf, type ArticlePage } from '../api/client'
-import Toast from '../components/Toast'
+import { LoadState } from '../components/LoadState'
 import { usePageKit } from '../kit'
 
 const SIZE = 10
@@ -35,15 +36,7 @@ function pageItems(current: number, total: number): (number | 'dots')[] {
 
 function Chevron({ dir }: { dir: 'left' | 'right' }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
-      <path
-        d={dir === 'left' ? 'M15 18l-6-6 6-6' : 'M9 6l6 6-6 6'}
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name={dir === 'left' ? 'chevron-left' : 'chevron-right'} className="h-3.5 w-3.5" />
   )
 }
 
@@ -56,15 +49,17 @@ export default function Articles() {
   const [page, setPage] = useState(1)
   const [data, setData] = useState<ArticlePage | null>(null)
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
+  const [loadedPage, setLoadedPage] = useState<number | null>(null)
 
   useEffect(() => {
     let alive = true
     setLoading(true)
-    setToast(null)
+    setError(null)
     articles(page, SIZE)
       .then((d) => {
-        if (alive) setData(d)
+        if (alive) { setData(d); setLoadedPage(page) }
       })
       .catch((e: unknown) => {
         if (!alive) return
@@ -73,7 +68,7 @@ export default function Articles() {
           window.location.assign(loginUrl)
           return
         }
-        setToast(`加载失败：${e instanceof Error ? e.message : String(e)}`)
+        setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -81,7 +76,7 @@ export default function Articles() {
     return () => {
       alive = false
     }
-  }, [page])
+  }, [page, retry])
 
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / SIZE))
@@ -90,14 +85,13 @@ export default function Articles() {
     <kit.Page
       title="文档"
       en="ARTICLES"
-      meta={<span className="text-sm text-muted">共 {total} 篇</span>}
+      meta={<span className="text-sm text-muted">{data ? `共 ${total} 篇` : '目录尚未读取'}</span>}
     >
-      <Toast kind="error" message={toast} onClose={() => setToast(null)} />
+      <LoadState loading={loading} error={error} hasData={!!data} label="文档目录" onRetry={() => setRetry(v => v + 1)} stale={`下方保留第 ${loadedPage} 页的上次读取结果，尚未更新。`} />
 
       {data && data.items.length === 0 && (
         <kit.Empty>
-          还没有文档 —— 通过 POST /api/admin/articles 发布（markdown 原文存 data/article，索引进
-          documents 表）。
+          还没有文档。<a href="#/import" className="text-accent underline underline-offset-4">导入第一篇文档 →</a>
         </kit.Empty>
       )}
 

@@ -13,6 +13,7 @@
  *  · 按钮 = ui-btn 原语（endfieldBtn 登记簿令牌自动生效：黄主 / 黑次 / 红险）
  *  · 进场 = mech-in（steps 硬切分段展开，消费动效层 mech 令牌）
  */
+import { AppIcon } from '../components/AppIcon'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import FloatWindow from '../components/FloatWindow'
@@ -96,16 +97,7 @@ export function EndfieldThemePanel({
                     borderRadius: 'var(--ui-r-control)',
                   }}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3.5 w-3.5">
-                    <path
-                      d="M3 7h8.5M17.5 7H21M3 17h3.5M12.5 17H21"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                    <circle cx="14.5" cy="7" r="2.5" stroke="currentColor" strokeWidth="2" />
-                    <circle cx="8" cy="17" r="2.5" stroke="currentColor" strokeWidth="2" />
-                  </svg>
+                  <AppIcon name="sliders" className="h-3.5 w-3.5" />
                 </button>
               </header>
 

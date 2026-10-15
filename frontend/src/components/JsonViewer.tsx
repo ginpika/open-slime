@@ -13,6 +13,7 @@
  * 交互：行点击折叠（正在选中文字时不触发，避免选字即收起），顶部可一键展开 / 折叠
  * 全部、复制原始 JSON。原始请求体与真实发出去的那一份完全一致（见后端 requestBody）。
  */
+import { AppIcon } from './AppIcon'
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import { miniBtn } from './ui'
 import {
@@ -89,20 +90,7 @@ function toggleOnRow(toggle: () => void) {
 /** 折叠三角（纯装饰，点击由所在行统一接管） */
 function Caret({ open }: { open: boolean }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      className={`mt-[2px] h-3 w-3 shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
-    >
-      <path
-        d="M9 6l6 6-6 6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="chevron-right" className={`mt-[2px] h-3 w-3 shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
   )
 }
 

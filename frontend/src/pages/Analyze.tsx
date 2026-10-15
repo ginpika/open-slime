@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { AppIcon } from '../components/AppIcon'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -21,6 +22,8 @@ import Toast from '../components/Toast'
 import ExtractStep, { type ExtractCtx } from './ExtractStep'
 import EnhanceStep, { type EnhanceCtx } from './EnhanceStep'
 import { usePageKit } from '../kit'
+import { LoadState } from '../components/LoadState'
+import { resetWindowStates, useRememberedState } from '../components/windowState'
 
 /**
  * 文档分析页：三步工作流 —— 选择 Chunk → 知识提取 → Chunk 增强。
@@ -92,20 +95,7 @@ function ChunkStatusBadge({ status }: { status: ChunkItem['status'] }) {
 /** 展开指示箭头（展开时旋转 90°） */
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      className={`h-3.5 w-3.5 shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`}
-    >
-      <path
-        d="M9 6l6 6-6 6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="chevron-right" className={`h-3.5 w-3.5 shrink-0 text-faint transition-transform ${open ? 'rotate-90' : ''}`} />
   )
 }
 
@@ -209,7 +199,7 @@ function ChunkTable({
   }
   return (
     <div className="scrollbar-slim overflow-x-auto">
-      <table className="w-full table-fixed text-left text-sm">
+      <table className="w-full min-w-[980px] table-fixed text-left text-sm">
         <colgroup>
           <col className="w-14" />
           <col className="w-36" />
@@ -388,20 +378,7 @@ function SummaryWindow({ state, onClose }: { state: SummaryState; onClose: () =>
     <FloatWindow title={`全文概述 · ${state.doc.title}`} onClose={onClose}>
       {state.loading ? (
         <div className="flex flex-col items-center gap-3 px-2 py-10 text-faint">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-            className="h-6 w-6 animate-spin text-muted"
-          >
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.2" />
-            <path
-              d="M21 12a9 9 0 0 0-9-9"
-              stroke="currentColor"
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-          </svg>
+          <AppIcon name="loading" className="h-6 w-6 animate-spin text-muted" />
           <p className="text-sm">正在通过大模型总结全文 …</p>
         </div>
       ) : (
@@ -413,21 +390,26 @@ function SummaryWindow({ state, onClose }: { state: SummaryState; onClose: () =>
 
 export default function Analyze() {
   const kit = usePageKit()
-  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [step, setStep] = useRememberedState<1 | 2 | 3>('analyze:step', 1)
   /** 步骤 2 上下文（选中 chunk + 父文档标题/概述） */
-  const [extractCtx, setExtractCtx] = useState<ExtractCtx | null>(null)
+  const [extractCtx, setExtractCtx] = useRememberedState<ExtractCtx | null>('analyze:extract-context', null)
   /** 步骤 3 上下文（同步骤 2 结构：选中 chunk + 父文档标题/概述） */
-  const [enhanceCtx, setEnhanceCtx] = useState<EnhanceCtx | null>(null)
+  const [enhanceCtx, setEnhanceCtx] = useRememberedState<EnhanceCtx | null>('analyze:enhance-context', null)
   /** 全文概述生成中的文档 id（进入步骤 2/3 前的缺失概述补生成） */
   const [summaryPending, setSummaryPending] = useState<number | null>(null)
 
   // 步骤 1：文档与 chunk 数据
   const [docs, setDocs] = useState<DocItem[] | null>(null)
+  const [docsLoading, setDocsLoading] = useState(true)
+  const [docsError, setDocsError] = useState<string | null>(null)
+  const docsRequest = useRef(0)
+  const requestedDoc = useRef(Number(new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('doc')))
   /** 展开的文档行（折叠面板；同一时间仅一行展开） */
   const [openDocs, setOpenDocs] = useState<Record<number, boolean>>({})
   /** chunk 惰性加载缓存（docId → chunks；父子关系 doc→chunk 的前端镜像） */
   const [chunksCache, setChunksCache] = useState<Record<number, ChunkItem[]>>({})
-  const [loadingDoc, setLoadingDoc] = useState<number | null>(null)
+  const [loadingDocs, setLoadingDocs] = useState<Record<number, boolean>>({})
+  const [chunkErrors, setChunkErrors] = useState<Record<number, string | null>>({})
   /** 错误轻提示（message box，替代页内错误文案：列表/分块/概述/chunk 操作失败） */
   const [toast, setToast] = useState<string | null>(null)
   /** 状态切换中的 chunk id */
@@ -440,26 +422,45 @@ export default function Analyze() {
   const [summaryWin, setSummaryWin] = useState<SummaryState | null>(null)
 
   const loadDocs = useCallback(async () => {
+    const request = ++docsRequest.current
+    setDocsLoading(true)
+    setDocsError(null)
     try {
-      setDocs(await listDocs())
+      const next = await listDocs()
+      if (request === docsRequest.current) {
+        setDocs(next)
+        const id = requestedDoc.current
+        if (id > 0 && next.some(doc => doc.id === id)) {
+          requestedDoc.current = 0
+          setStep(1)
+          setOpenDocs({ [id]: true })
+          const rows = await listDocChunks(id)
+          if (request === docsRequest.current) setChunksCache(prev => ({ ...prev, [id]: rows }))
+        }
+      }
     } catch (e: unknown) {
+      if (request !== docsRequest.current) return
       const loginUrl = loginUrlOf(e)
       if (loginUrl) {
         window.location.assign(loginUrl)
         return
       }
-      setToast(`文档列表加载失败：${e instanceof Error ? e.message : String(e)}`)
+      setDocsError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (request === docsRequest.current) setDocsLoading(false)
     }
   }, [])
 
   useEffect(() => {
     void loadDocs()
+    return () => { docsRequest.current++ }
   }, [loadDocs])
 
   /** 展开文档行时惰性拉取其 chunk（未缓存才请求） */
   const fetchChunks = (docId: number) => {
-    if (loadingDoc === docId) return
-    setLoadingDoc(docId)
+    if (loadingDocs[docId]) return
+    setLoadingDocs(prev => ({ ...prev, [docId]: true }))
+    setChunkErrors(prev => ({ ...prev, [docId]: null }))
     listDocChunks(docId)
       .then((cs) => setChunksCache((prev) => ({ ...prev, [docId]: cs })))
       .catch((e: unknown) => {
@@ -468,9 +469,9 @@ export default function Analyze() {
           window.location.assign(loginUrl)
           return
         }
-        setToast(`chunk 加载失败：${e instanceof Error ? e.message : String(e)}`)
+        setChunkErrors(prev => ({ ...prev, [docId]: e instanceof Error ? e.message : String(e) }))
       })
-      .finally(() => setLoadingDoc(null))
+      .finally(() => setLoadingDocs(prev => ({ ...prev, [docId]: false })))
   }
 
   const toggleDoc = (doc: DocItem) => {
@@ -512,6 +513,9 @@ export default function Analyze() {
     }
     try {
       await deleteChunk(chunk.id)
+      resetWindowStates(`extract:${chunk.id}:`, `enhance:${chunk.id}:`)
+      if (extractCtx?.chunk.id === chunk.id) setExtractCtx(null)
+      if (enhanceCtx?.chunk.id === chunk.id) setEnhanceCtx(null)
       setInspect((cur) => (cur?.id === chunk.id ? null : cur))
       setChunksCache((prev) => ({
         ...prev,
@@ -541,6 +545,14 @@ export default function Analyze() {
     setRechunkBusy(doc.id)
     try {
       await rechunkDoc(doc.id)
+      const obsolete = [
+        ...(chunksCache[doc.id] ?? []),
+        ...(extractCtx?.chunk.docId === doc.id ? [extractCtx.chunk] : []),
+        ...(enhanceCtx?.chunk.docId === doc.id ? [enhanceCtx.chunk] : []),
+      ]
+      for (const chunk of obsolete) resetWindowStates(`extract:${chunk.id}:`, `enhance:${chunk.id}:`)
+      if (extractCtx?.chunk.docId === doc.id) setExtractCtx(null)
+      if (enhanceCtx?.chunk.docId === doc.id) setEnhanceCtx(null)
       setChunksCache((prev) => {
         const next = { ...prev }
         delete next[doc.id]
@@ -681,6 +693,7 @@ export default function Analyze() {
       {/* 步骤 1：选择 Chunk */}
       {step === 1 && (
         <div className="flex flex-col gap-4">
+          <LoadState loading={docsLoading} error={docsError} hasData={docs !== null} onRetry={() => void loadDocs()} label="文档列表" />
           <kit.Toolbar
             left="文档发布后按 markdown 标题与段落自动分块（约 500~800 字，最长 1200），超长段落由 AI 语义切分，chunk 初始状态为「未分析」。"
             right={
@@ -692,20 +705,7 @@ export default function Analyze() {
 
           {summaryPending !== null && (
             <p className="flex items-center gap-2 text-sm text-muted">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-                className="h-3.5 w-3.5 animate-spin"
-              >
-                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.2" />
-                <path
-                  d="M21 12a9 9 0 0 0-9-9"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <AppIcon name="loading" className="h-3.5 w-3.5 animate-spin" />
               正在通过大模型生成全文概述，完成后进入下一步 …
             </p>
           )}
@@ -736,15 +736,14 @@ export default function Analyze() {
                         <Fragment key={doc.id}>
                           <tr
                             onClick={() => toggleDoc(doc)}
-                            aria-expanded={isOpen}
                             className="cursor-pointer transition hover:bg-accent-soft"
                           >
                             <td className="px-4 py-3">
-                              <span className="flex min-w-0 items-center gap-2">
+                              <button type="button" onClick={e => { e.stopPropagation(); toggleDoc(doc) }} aria-expanded={isOpen} className="flex w-full min-w-0 items-center gap-2 text-left">
                                 <Chevron open={isOpen} />
                                 <span className="truncate font-semibold text-fg">{doc.title}</span>
                                 <DocTypeBadge type={doc.docType} />
-                              </span>
+                              </button>
                             </td>
                             <td className="px-4 py-3">
                               <DocStatusBadge doc={doc} />
@@ -783,15 +782,16 @@ export default function Analyze() {
                           {isOpen && (
                             <tr className="bg-fg/[0.02]">
                               <td colSpan={4} className="p-0">
-                                <ChunkTable
+                                <LoadState loading={!!loadingDocs[doc.id]} error={chunkErrors[doc.id] ?? null} hasData={!!chunksCache[doc.id]} onRetry={() => fetchChunks(doc.id)} label="Chunk 列表" />
+                                {chunksCache[doc.id] && <ChunkTable
                                   chunks={chunksCache[doc.id]}
-                                  loading={loadingDoc === doc.id}
+                                  loading={!!loadingDocs[doc.id]}
                                   busyId={busyChunk}
                                   onInspect={setInspect}
                                   onToggleStatus={(c) => void toggleChunkStatus(c)}
                                   onExtract={(c) => gotoExtract(c, doc)}
                                   onDelete={(c) => void removeChunk(c)}
-                                />
+                                />}
                               </td>
                             </tr>
                           )}
@@ -808,11 +808,11 @@ export default function Analyze() {
 
       {/* 步骤 2：知识提取（上下文补完 → LLM 抽取 → 消歧评估 → 提交） */}
       {step === 2 && extractCtx && (
-        <ExtractStep ctx={extractCtx} onAdvance={advanceAfterCommit} onBack={backFromExtract} />
+        <ExtractStep key={extractCtx.chunk.id} ctx={extractCtx} onAdvance={advanceAfterCommit} onBack={backFromExtract} />
       )}
 
       {/* 步骤 3：Chunk 增强（语义补全/摘要/假设性问题 + Graph-Chunk 混合向量；完成后启用 chunk） */}
-      {step === 3 && enhanceCtx && <EnhanceStep ctx={enhanceCtx} onPrev={() => setStep(2)} />}
+      {step === 3 && enhanceCtx && <EnhanceStep key={enhanceCtx.chunk.id} ctx={enhanceCtx} onPrev={() => setStep(2)} />}
 
       {/* chunk 内容查看窗（可拖动） */}
       {inspect && <ChunkInspector chunk={inspect} onClose={() => setInspect(null)} />}

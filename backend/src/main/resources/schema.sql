@@ -121,6 +121,29 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 -- 原文块（事实源）；doc_id 指向所属文档（chunk→doc），status 为分析生命周期
+-- 网页快照：原始正文证据与生成论点分存；同一 URL 的不同捕获内容保留独立版本。
+CREATE TABLE IF NOT EXISTS web_snapshot (
+  id TEXT PRIMARY KEY,
+  doc_id INTEGER UNIQUE REFERENCES documents(id),
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  author TEXT NOT NULL DEFAULT '',
+  published_at TEXT NOT NULL DEFAULT '',
+  captured_at INTEGER NOT NULL,
+  saved_at INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_html TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  rationale TEXT NOT NULL,
+  claims TEXT NOT NULL DEFAULT '[]',
+  model TEXT NOT NULL DEFAULT '',
+  warnings TEXT NOT NULL DEFAULT '[]',
+  index_status TEXT NOT NULL DEFAULT 'pending',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(url, content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_web_snapshot_saved ON web_snapshot(saved_at DESC);
+
 CREATE TABLE IF NOT EXISTS chunks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,     -- FTS 同步键
   uuid        TEXT NOT NULL UNIQUE,
@@ -215,6 +238,7 @@ CREATE TABLE IF NOT EXISTS llm_model (
   api_key         TEXT NOT NULL,
   model           TEXT NOT NULL,             -- chat/completions 的 model
   context_window  INTEGER,                   -- 上下文窗口（token 数）；NULL=按默认值估算
+  max_output_tokens INTEGER,                 -- 单次输出上限；NULL=模型服务默认，与上下文窗口独立
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );
@@ -863,10 +887,28 @@ CREATE TABLE IF NOT EXISTS token_usage (
   completion_tokens INTEGER NOT NULL DEFAULT 0, -- 输出 token
   total_tokens      INTEGER NOT NULL DEFAULT 0,
   estimated         INTEGER NOT NULL DEFAULT 0, -- 1=本地估算（供应商未回传 usage）
+  provider          TEXT,                      -- 无凭证的模型端点，历史未知时为 NULL
+  quality           TEXT,                      -- reported | estimated | partial
+  status            TEXT,                      -- success | interrupted | failed
+  cached_tokens     INTEGER,                   -- 已包含在输入中
+  reasoning_tokens  INTEGER,                   -- 已包含在输出中
   created_at        INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_token_usage_source ON token_usage(source);
+
+-- 手工价格版本：按调用时间匹配最近生效版本；更正版本会重新估算历史，金额非实付账单。
+CREATE TABLE IF NOT EXISTS token_price (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  effective_from INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  input_per_million TEXT NOT NULL,
+  output_per_million TEXT NOT NULL,
+  cached_per_million TEXT,
+  UNIQUE(provider, model, effective_from)
+);
 
 -- ---------------------------------------------------------------------------
 -- 命令行终端（ai/terminal 包）：让 Agent 直接控制所在环境的能力面。

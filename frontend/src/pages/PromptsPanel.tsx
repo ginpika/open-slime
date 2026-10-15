@@ -17,6 +17,7 @@
  * 两者的数据结构完全一致，只是读写走的接口不同，于是编排 UI 只有这一份。
  */
 
+import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ApiError,
@@ -43,6 +44,8 @@ import FloatWindow from '../components/FloatWindow'
 import Toast from '../components/Toast'
 import { btnPrimary, btnQuiet, miniBtn, Control } from '../components/ui'
 import { usePageKit } from '../kit'
+import { resetWindowStates, useDraftState, useRememberedState } from '../components/windowState'
+import { DraftNotice } from '../components/DraftNotice'
 
 /** 可编辑提示词位的长条色调（按顺序轮换；超出则回落到主色调） */
 const PART_TONES = ['note-tone-accent', 'note-tone-secondary', 'note-tone-primary']
@@ -80,38 +83,19 @@ function effective(slot: PromptSlot): { content: string; from: string } {
 /** 拖拽手柄：六点握把 */
 function Grip() {
   return (
-    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <circle cx="6" cy="4" r="1.3" />
-      <circle cx="10" cy="4" r="1.3" />
-      <circle cx="6" cy="8" r="1.3" />
-      <circle cx="10" cy="8" r="1.3" />
-      <circle cx="6" cy="12" r="1.3" />
-      <circle cx="10" cy="12" r="1.3" />
-    </svg>
+    <AppIcon name="grip" className="h-4 w-4" />
   )
 }
 
 function Dots() {
   return (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.7" />
-      <circle cx="12" cy="12" r="1.7" />
-      <circle cx="19" cy="12" r="1.7" />
-    </svg>
+    <AppIcon name="more" className="h-4 w-4" />
   )
 }
 
 function Check() {
   return (
-    <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="m5 12.5 4.5 4.5L19 7"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <AppIcon name="check" className="h-3.5 w-3.5 shrink-0" />
   )
 }
 
@@ -123,22 +107,25 @@ function Check() {
  */
 function PromptViewer({
   slot,
+  draftKey,
   onClose,
   onSave,
 }: {
   slot: PromptSlot
+  draftKey: string
   onClose: () => void
   onSave: (content: string) => Promise<void>
 }) {
   const cur = effective(slot)
-  const [draft, setDraft] = useState(cur.content)
-  const [saving, setSaving] = useState(false)
-  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [draft, setDraft, draftState] = useDraftState(draftKey, cur.content)
+  const initializeDraft = draftState.initialize
+  const [saving, setSaving] = useRememberedState(`${draftKey}:saving`, false)
+  const [savedAt, setSavedAt] = useRememberedState<number | null>(`${draftKey}:saved-at`, null)
 
   /* 生效版本切换 / 后端刷新时同步（内容相同则不动，避免打字被覆盖） */
   useEffect(() => {
-    setDraft(cur.content)
-  }, [cur.content, slot.activeVersionId])
+    initializeDraft(cur.content)
+  }, [cur.content, slot.activeVersionId, initializeDraft])
 
   const dirty = draft !== cur.content
 
@@ -147,6 +134,7 @@ function PromptViewer({
     setSaving(true)
     try {
       await onSave(draft)
+      draftState.accept(draft, draft)
       setSavedAt(Date.now())
     } catch {
       /* 失败已由上层 toast 提示；草稿保留 */
@@ -158,6 +146,7 @@ function PromptViewer({
   return (
     <FloatWindow title={`${slot.name} · ${cur.from}`} onClose={onClose} width={860}>
       <div className="flex flex-col gap-3">
+        <DraftNotice dirty={draftState.dirty} onDiscard={draftState.discard} disabled={saving} />
         <p className="text-xs leading-relaxed text-hint">{slot.description}</p>
         <Control>
           <textarea
@@ -180,7 +169,7 @@ function PromptViewer({
           </span>
           <div className="flex gap-2">
             <button type="button" className={btnQuiet('rounded-md')} onClick={onClose}>
-              关闭
+              {dirty ? '保留草稿并关闭' : '关闭'}
             </button>
             <button
               type="button"
@@ -545,14 +534,14 @@ type PromptApi = {
  */
 export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
   const kit = usePageKit()
-  const [data, setData] = useState<PromptsView | null>(null)
+  const [data, setData] = useRememberedState<PromptsView | null>(`prompts:${peerId ?? 'system'}:data`, null)
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useRememberedState(`prompts:${peerId ?? 'system'}:busy`, false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
   /* 当前大类（空 = 用第一个） */
   const [catKey, setCatKey] = useState('')
   /* 正文查看窗口：只记位 key，写的对象从最新 data 派生（避免持有过期快照） */
-  const [viewerKey, setViewerKey] = useState<string | null>(null)
+  const [viewerKey, setViewerKey] = useRememberedState<string | null>(`prompts:${peerId ?? 'system'}:viewer`, null)
   /* 版本命名弹窗 */
   const [dlg, setDlg] = useState<{
     slotKey: string
@@ -632,8 +621,10 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
     try {
       setData(await fn())
       if (ok) notify('success', ok)
+      return true
     } catch (e) {
       notify('error', errMsg(e))
+      return false
     } finally {
       setBusy(false)
     }
@@ -702,19 +693,21 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
     const target = versionId
       ? (dlgSlot?.versions.find((v) => v.id === versionId) ?? null)
       : null
-    await run(
+    const saved = await run(
       () =>
         mode === 'rename' && target
           ? api.updateVersion(target.id, { name: req.name, content: target.content })
           : api.createVersion(slotKey, req),
       mode === 'rename' ? '版本已重命名' : '版本已新建',
     )
-    setDlg(null)
+    if (saved) setDlg(null)
   }
 
   const removeVersion = (slot: PromptSlot, v: PromptVersion) => {
     if (!window.confirm(`删除「${slot.name}」的版本「${v.name}」？`)) return
-    void run(() => api.deleteVersion(v.id), '版本已删除')
+    void run(() => api.deleteVersion(v.id), '版本已删除').then(saved => {
+      if (saved) resetWindowStates(`prompt:${peerId ?? 'system'}:${slot.key}:${v.id}`, `prompt:${peerId ?? 'system'}:${slot.key}:${v.id}:`)
+    })
   }
 
   return (
@@ -787,6 +780,7 @@ export default function PromptsPanel({ peerId }: { peerId?: string } = {}) {
       {viewerSlot && (
         <PromptViewer
           slot={viewerSlot}
+          draftKey={`prompt:${peerId ?? 'system'}:${viewerSlot.key}:${viewerSlot.activeVersionId ?? 'builtin'}`}
           onClose={() => setViewerKey(null)}
           onSave={async (content) => {
             try {

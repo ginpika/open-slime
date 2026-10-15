@@ -1,4 +1,7 @@
+import { AppIcon } from '../components/AppIcon'
 import { useEffect, useState, type ReactNode } from 'react'
+import { DraftNotice } from '../components/DraftNotice'
+import { useDraftState, useRememberedState } from '../components/windowState'
 import {
   genChunkQuestions,
   genChunkSummary,
@@ -87,10 +90,7 @@ const buildPlanText = (segs: EditorSegment[], origId: string): string => {
 /** Spinner 圆环（加载中动画） */
 function Spinner({ className = 'h-4 w-4' }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={`animate-spin ${className}`}>
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.2" />
-      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-    </svg>
+    <AppIcon name="loading" className={`animate-spin ${className}`} />
   )
 }
 
@@ -195,12 +195,13 @@ const fmtDate = (ms: number): string => {
 export default function EnhanceStep({ ctx, onPrev }: Props) {
   const kit = usePageKit()
   /** 最终提交预案的分段（初始按 chunk 快照回显留档；后续将由按钮增删部分，文本均可就地编辑） */
-  const [segments, setSegments] = useState<EditorSegment[]>(() => planSegmentsOf(ctx.chunk))
+  const [segments, setSegments, segmentsState] = useDraftState<EditorSegment[]>(`enhance:${ctx.chunk.id}:segments`, () => planSegmentsOf(ctx.chunk))
+  const initializeSegments = segmentsState.initialize
   /** 提交预览全文（打开确认窗口时填充；null = 窗口关闭） */
-  const [preview, setPreview] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [preview, setPreview] = useState<{ text: string; segments: EditorSegment[] } | null>(null)
+  const [submitting, setSubmitting] = useRememberedState(`enhance:${ctx.chunk.id}:submitting`, false)
   /** 已提交结果（成功后填充，禁止重复提交；重新生成不解除） */
-  const [submitted, setSubmitted] = useState<ChunkSubmitResult | null>(null)
+  const [submitted, setSubmitted] = useRememberedState<ChunkSubmitResult | null>(`enhance:${ctx.chunk.id}:submitted`, null)
   /** 轻提示（message box）：提交成功 / 生成·留档·提交失败，替代页内文案与横幅 */
   const [toast, setToast] = useState<{ kind: ToastKind; text: ReactNode } | null>(null)
 
@@ -208,9 +209,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
   const [planChunkId, setPlanChunkId] = useState(ctx.chunk.id)
   if (planChunkId !== ctx.chunk.id) {
     setPlanChunkId(ctx.chunk.id)
-    setSegments(planSegmentsOf(ctx.chunk))
     setPreview(null)
-    setSubmitted(null)
     setToast(null)
   }
 
@@ -220,7 +219,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
     listDocChunks(ctx.chunk.docId)
       .then((chunks) => {
         const fresh = chunks.find((c) => c.id === ctx.chunk.id)
-        if (alive && fresh) setSegments(planSegmentsOf(fresh))
+        if (alive && fresh && !submitted) initializeSegments(planSegmentsOf(fresh))
       })
       .catch((e: unknown) => {
         const loginUrl = loginUrlOf(e)
@@ -229,10 +228,10 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
     return () => {
       alive = false
     }
-  }, [ctx.chunk.id, ctx.chunk.docId])
+  }, [ctx.chunk.id, ctx.chunk.docId, initializeSegments, submitted])
 
-  const [headerLoading, setHeaderLoading] = useState(false)
-  const [questionsLoading, setQuestionsLoading] = useState(false)
+  const [headerLoading, setHeaderLoading] = useRememberedState(`enhance:${ctx.chunk.id}:header-loading`, false)
+  const [questionsLoading, setQuestionsLoading] = useRememberedState(`enhance:${ctx.chunk.id}:questions-loading`, false)
 
   /** 预案留档入库（生成成功后调用）；成功返回 null，失败返回错误文案（登录跳转除外） */
   const persistPlan = async (
@@ -377,17 +376,18 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
 
   /** 确认并提交（预览窗口内）：预案全文向量化写 chunk_embedding + 分段留档 + chunk 启用，知识入库流程结束 */
   const confirmSubmit = async () => {
-    if (submitting || submitted || preview === null) return
+    if (submitting || submitted || preview === null || segments !== preview.segments) return
     setSubmitting(true)
     try {
       const seg = (id: string) => segments.find((s) => s.id === id)?.text ?? null
       const r = await submitChunkPlan(ctx.chunk.id, {
-        text: preview,
+        text: preview.text,
         // 用户改后的分段一并留档（该部分不存在时传 null = 不更新）
         header: seg(HEADER_ID),
         questions: seg(QUESTION_ID),
       })
       setSubmitted(r)
+      segmentsState.accept(preview.segments, preview.segments)
       setPreview(null)
       setToast({
         kind: 'success',
@@ -416,13 +416,14 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
 
   return (
     <div className="flex flex-col gap-5">
+      <DraftNotice dirty={segmentsState.dirty} onDiscard={segmentsState.discard} disabled={submitting || headerLoading || questionsLoading || preview !== null} />
       {/* ① 增强栏目按钮（点缀色实底） */}
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => void genHeader()}
-          disabled={headerLoading}
-          className={`${btnPrimary('rounded-md')} gap-2`}
+          disabled={headerLoading || submitting || !!submitted || preview !== null}
+          className={`${btnOutline('rounded-md')} gap-2`}
         >
           {headerLoading && <Spinner className="h-3.5 w-3.5" />}
           {headerLoading ? '生成中 …' : 'Chunk Header 生成'}
@@ -430,8 +431,8 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
         <button
           type="button"
           onClick={() => void genQuestions()}
-          disabled={questionsLoading}
-          className={`${btnPrimary('rounded-md')} gap-2`}
+          disabled={questionsLoading || submitting || !!submitted || preview !== null}
+          className={`${btnOutline('rounded-md')} gap-2`}
         >
           {questionsLoading && <Spinner className="h-3.5 w-3.5" />}
           {questionsLoading ? '生成中 …' : '生成假设性问题'}
@@ -448,6 +449,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
         </div>
         <SegmentEditor
           segments={segments}
+          readOnly={submitting || !!submitted || preview !== null}
           onChangeText={(id, text) =>
             setSegments((ss) => ss.map((s) => (s.id === id ? { ...s, text } : s)))
           }
@@ -466,8 +468,8 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
         right={
           <button
             type="button"
-            onClick={() => setPreview(buildPlanText(segments, `chunk-${ctx.chunk.id}`))}
-            disabled={!!submitted}
+            onClick={() => setPreview({ text: buildPlanText(segments, `chunk-${ctx.chunk.id}`), segments })}
+            disabled={submitting || headerLoading || questionsLoading || !!submitted}
             title="拼接最终提交预案全文，预览确认后提交"
             className={`${btnPrimary('rounded-md')} gap-2`}
           >
@@ -488,13 +490,14 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
         >
           <div className="flex flex-col gap-3">
             <div className="scrollbar-slim max-h-[50vh] overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.02] p-3 font-mono text-xs leading-relaxed text-fg">
-              {preview}
+              {preview.text}
             </div>
+            {segments !== preview.segments && <p role="status" className="text-sm text-warn">预案已更新，请关闭此窗口后重新预览。</p>}
             <div className="flex items-center justify-end">
               <button
                 type="button"
                 onClick={() => void confirmSubmit()}
-                disabled={submitting}
+                disabled={submitting || segments !== preview.segments}
                 className={`${btnPrimary('rounded-md')} gap-2`}
               >
                 {submitting && <Spinner className="h-3.5 w-3.5" />}

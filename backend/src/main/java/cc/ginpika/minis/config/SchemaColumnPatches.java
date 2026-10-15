@@ -38,6 +38,11 @@ public class SchemaColumnPatches {
      * <p>只允许「可空、无默认值」的加列：这样老行不必回填，语句也不会锁表太久。
      */
     private static final List<ColumnPatch> PATCHES = List.of(
+            new ColumnPatch("token_usage", "provider", "TEXT"),
+            new ColumnPatch("token_usage", "quality", "TEXT"),
+            new ColumnPatch("token_usage", "status", "TEXT"),
+            new ColumnPatch("token_usage", "cached_tokens", "INTEGER"),
+            new ColumnPatch("token_usage", "reasoning_tokens", "INTEGER"),
             new ColumnPatch("memory_event", "agent_id", "TEXT"),
             new ColumnPatch("memory_event", "project_id", "TEXT"),
             new ColumnPatch("memory_event", "session_id", "TEXT"),
@@ -58,6 +63,7 @@ public class SchemaColumnPatches {
             new ColumnPatch("hub_session", "memory_off", "INTEGER"),
             new ColumnPatch("memory_item", "pinned", "INTEGER"),
             new ColumnPatch("task", "memory_checkpoint", "TEXT"),
+            new ColumnPatch("llm_model", "max_output_tokens", "INTEGER"),
             /* memory-v5 §4.2：记忆归属/治理增量列（全部可空；历史回填由 SchemaMigrations 负责） */
             new ColumnPatch("memory_item", "user_id", "TEXT"),
             new ColumnPatch("memory_item", "owner", "TEXT"),

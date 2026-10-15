@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { ModelBrandIcon } from '../components/ModelBrandIcon'
 import {
   createModel,
   deleteModel,
@@ -26,6 +27,9 @@ import Toast from '../components/Toast'
 import { btnDanger, btnPrimary, btnQuiet, miniBtn } from '../components/ui'
 import { ModeBtn, Select } from '../components/formKit'
 import { usePageKit } from '../kit'
+import { DraftNotice } from '../components/DraftNotice'
+import { LoadState } from '../components/LoadState'
+import { resetWindowStates, useDraftState, useRememberedState } from '../components/windowState'
 
 /** Embedding 表单草稿（可编辑态） */
 type EmbDraft = {
@@ -91,21 +95,35 @@ function ModelDialog({
   initial: ModelView | null
   busy: boolean
   onClose: () => void
-  onSubmit: (req: ModelRequest) => void
+  onSubmit: (req: ModelRequest) => Promise<boolean>
 }) {
   const kit = usePageKit()
-  const [name, setName] = useState(initial?.name ?? '')
-  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
-  const [apiKey, setApiKey] = useState(initial?.apiKey ?? '')
-  const [model, setModel] = useState(initial?.model ?? '')
+  const [modelDraft, setModelDraft, modelDraftState] = useDraftState(`settings:model:${initial?.id ?? 'new'}`, {
+    name: initial?.name ?? '', baseUrl: initial?.baseUrl ?? '', apiKey: initial?.apiKey ?? '', model: initial?.model ?? '',
+    contextWindow: initial?.contextWindow != null ? String(initial.contextWindow) : '',
+    maxOutputTokens: initial?.maxOutputTokens != null ? String(initial.maxOutputTokens) : '',
+  })
+  const { name, baseUrl, apiKey, model, contextWindow } = modelDraft
+  const maxOutputTokens = modelDraft.maxOutputTokens ?? ''
+  const initializeModelDraft = modelDraftState.initialize
+  const setName = (value: string) => setModelDraft(v => ({ ...v, name: value }))
+  const setBaseUrl = (value: string) => setModelDraft(v => ({ ...v, baseUrl: value }))
+  const setApiKey = (value: string) => setModelDraft(v => ({ ...v, apiKey: value }))
+  const setModel = (value: string) => setModelDraft(v => ({ ...v, model: value }))
+  const setContextWindow = (value: string) => setModelDraft(v => ({ ...v, contextWindow: value }))
   /* 上下文窗口（token 数）：留空则由后端从模型 API 获取，取不到用默认值 */
-  const [contextWindow, setContextWindow] = useState(
-    initial?.contextWindow != null ? String(initial.contextWindow) : '',
-  )
   /* 编辑已有模型时自动从模型 API 试取上下文窗口并回填；用户已手动改过则不覆盖 */
   const [probing, setProbing] = useState(false)
   const ctxTouched = useRef(false)
   const valid = !!(name.trim() && baseUrl.trim() && apiKey.trim() && model.trim())
+
+  useEffect(() => {
+    initializeModelDraft({
+      name: initial?.name ?? '', baseUrl: initial?.baseUrl ?? '', apiKey: initial?.apiKey ?? '', model: initial?.model ?? '',
+      contextWindow: initial?.contextWindow != null ? String(initial.contextWindow) : '',
+      maxOutputTokens: initial?.maxOutputTokens != null ? String(initial.maxOutputTokens) : '',
+    })
+  }, [initial, initializeModelDraft])
 
   useEffect(() => {
     if (!initial) return
@@ -116,7 +134,7 @@ function ModelDialog({
     fetchModelContextWindow({ baseUrl: base, apiKey: key, model: mid })
       .then((r) => {
         if (alive && !ctxTouched.current && r.contextWindow != null && r.contextWindow > 0) {
-          setContextWindow(String(r.contextWindow))
+          setModelDraft(current => ({ ...current, contextWindow: String(r.contextWindow) }))
         }
       })
       .catch(() => {
@@ -128,24 +146,28 @@ function ModelDialog({
     return () => {
       alive = false
     }
-  }, [initial])
+  }, [initial, setModelDraft])
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!valid || busy) return
     const win = Number(contextWindow.trim())
-    onSubmit({
+    const output = Number(maxOutputTokens.trim())
+    const saved = await onSubmit({
       name: name.trim(),
       baseUrl: baseUrl.trim(),
       apiKey: apiKey.trim(),
       model: model.trim(),
       contextWindow: contextWindow.trim() && Number.isFinite(win) && win > 0 ? win : null,
+      maxOutputTokens: maxOutputTokens.trim() && Number.isFinite(output) && output > 0 ? output : null,
     })
+    if (saved) modelDraftState.accept(initial ? modelDraft : { name: '', baseUrl: '', apiKey: '', model: '', contextWindow: '', maxOutputTokens: '' }, modelDraft)
   }
 
   return (
     <FloatWindow title={initial ? '编辑模型' : '添加模型'} onClose={onClose} width={480}>
       <form onSubmit={submit} className="space-y-3">
+        <DraftNotice dirty={modelDraftState.dirty} onDiscard={modelDraftState.discard} disabled={busy} />
         <kit.Field label="名称" hint="用于在列表中区分，例如 GPT-4o / 本地 vLLM">
           <input
             value={name}
@@ -202,9 +224,12 @@ function ModelDialog({
             spellCheck={false}
           />
         </kit.Field>
+        <kit.Field label="单次输出上限" hint="编码任务使用的 token 数；留空使用模型服务默认。请填写服务支持的上限，与上下文窗口和整项任务预算不同。">
+          <input aria-label="单次输出上限" value={maxOutputTokens} onChange={e => setModelDraft(current => ({ ...current, maxOutputTokens: e.target.value.replace(/[^\d]/g, '') }))} className="font-mono" placeholder="跟随模型服务" inputMode="numeric" spellCheck={false} />
+        </kit.Field>
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className={btnQuiet('rounded-md')} onClick={onClose}>
-            取消
+            {modelDraftState.dirty ? '保留草稿并关闭' : '关闭'}
           </button>
           <button
             type="submit"
@@ -273,25 +298,25 @@ function ResetKnowledgeDialog({
 export default function Settings() {
   const contentRef = useRef<HTMLDivElement>(null)
   const kit = usePageKit()
-  const [data, setData] = useState<SettingsView | null>(null)
+  const [data, setData] = useRememberedState<SettingsView | null>('settings:data', null)
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useRememberedState('settings:busy', false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null)
 
-  const [modelDlg, setModelDlg] = useState<{ open: boolean; editing: ModelView | null }>({
+  const [modelDlg, setModelDlg] = useRememberedState<{ open: boolean; editing: ModelView | null }>('settings:model-dialog', {
     open: false,
     editing: null,
   })
   /* 重置知识库确认弹窗 */
   const [resetOpen, setResetOpen] = useState(false)
-  const [emb, setEmb] = useState<EmbDraft>({
+  const [emb, setEmb, embDraft] = useDraftState<EmbDraft>('settings:embedding', {
     mode: 'llm',
     llmModelId: 'env',
     baseUrl: '',
     apiKey: '',
     model: '',
   })
-  const [rnk, setRnk] = useState<RnkDraft>({
+  const [rnk, setRnk, rnkDraft] = useDraftState<RnkDraft>('settings:rerank', {
     mode: 'llm',
     llmModelId: 'env',
     baseUrl: '',
@@ -304,6 +329,10 @@ export default function Settings() {
   const [testingRag, setTestingRag] = useState<'emb' | 'rnk' | null>(null)
   /* 任一测试进行中（测试按钮互斥，避免同时打多条探针） */
   const testing = testingId !== null || testingRag !== null
+  const [loading, setLoading] = useState(true)
+  const [retry, setRetry] = useState(0)
+  const initializeEmb = embDraft.initialize
+  const initializeRnk = rnkDraft.initialize
 
   const fail = (e: unknown): void => {
     const loginUrl = loginUrlOf(e)
@@ -316,12 +345,14 @@ export default function Settings() {
 
   useEffect(() => {
     let alive = true
+    setLoading(true)
+    setLoadErr(null)
     getSettings()
       .then((v) => {
         if (!alive) return
         setData(v)
-        setEmb(draftFromEmbedding(v.embedding))
-        setRnk(draftFromRerank(v.rerank))
+        initializeEmb(draftFromEmbedding(v.embedding))
+        initializeRnk(draftFromRerank(v.rerank))
         setLoadErr(null)
       })
       .catch((e: unknown) => {
@@ -333,19 +364,22 @@ export default function Settings() {
         }
         setLoadErr(e instanceof Error ? e.message : String(e))
       })
+      .finally(() => { if (alive) setLoading(false) })
     return () => {
       alive = false
     }
-  }, [])
+  }, [retry, initializeEmb, initializeRnk])
 
   /** 统一提交：成功后以后端返回的最新视图覆盖本地，并提示结果 */
-  const run = async (fn: () => Promise<SettingsView>, ok: string): Promise<void> => {
+  const run = async (fn: () => Promise<SettingsView>, ok: string): Promise<boolean> => {
     setBusy(true)
     try {
       setData(await fn())
       setToast({ kind: 'success', msg: ok })
+      return true
     } catch (e) {
       fail(e)
+      return false
     } finally {
       setBusy(false)
     }
@@ -353,16 +387,21 @@ export default function Settings() {
 
   const submitModel = async (req: ModelRequest) => {
     const editing = modelDlg.editing
-    await run(
+    const saved = await run(
       () => (editing ? updateModel(editing.id, req) : createModel(req)),
       editing ? '模型已更新' : '模型已添加',
     )
-    setModelDlg({ open: false, editing: null })
+    if (saved) setModelDlg({ open: false, editing: null })
+    return saved
   }
 
   const removeModel = (m: ModelView) => {
     if (!window.confirm(`删除模型「${m.name}」？`)) return
-    void run(() => deleteModel(m.id), '模型已删除')
+    void run(() => deleteModel(m.id), '模型已删除').then(saved => {
+      if (!saved) return
+      resetWindowStates(`settings:model:${m.id}`)
+      if (modelDlg.editing?.id === m.id) setModelDlg({ open: false, editing: null })
+    })
   }
 
   /** 连通性测试：基于基准对话验证该模型接口能否正常返回（不改设置数据，独立于 busy） */
@@ -456,7 +495,7 @@ export default function Settings() {
         model: emb.model.trim(),
       })
       setData(v)
-      setEmb(draftFromEmbedding(v.embedding))
+      embDraft.accept(draftFromEmbedding(v.embedding), emb)
       setToast({ kind: 'success', msg: 'Embedding 配置已保存' })
     } catch (e) {
       fail(e)
@@ -480,7 +519,7 @@ export default function Settings() {
         model: rnk.model.trim(),
       })
       setData(v)
-      setRnk(draftFromRerank(v.rerank))
+      rnkDraft.accept(draftFromRerank(v.rerank), rnk)
       setToast({
         kind: 'success',
         msg: rnk.mode === 'off' ? '已关闭 Rerank 精排' : 'Rerank 配置已保存',
@@ -501,6 +540,7 @@ export default function Settings() {
     setBusy(true)
     try {
       const r = await resetKnowledgeBase()
+      resetWindowStates('analyze:', 'extract:', 'enhance:')
       setToast({
         kind: 'success',
         msg:
@@ -524,15 +564,13 @@ export default function Settings() {
         onClose={() => setToast(null)}
       />
 
-      <div className="grid w-full max-w-[1016px] grid-cols-[minmax(0,1fr)_clamp(7.5rem,18vw,14rem)] items-start gap-4 md:gap-6">
+      <LoadState loading={loading} error={loadErr} hasData={!!data} label="设置" onRetry={() => setRetry(v => v + 1)} />
+      <DraftNotice dirty={embDraft.dirty || rnkDraft.dirty} disabled={busy} onDiscard={() => { embDraft.discard(); rnkDraft.discard() }} />
+      {data && <details className="settings-mobile-directory"><summary>跳到设置项</summary><nav aria-label="设置目录">{[
+        ['settings-models', '大模型'], ['settings-embedding', 'Embedding'], ['settings-rerank', 'Rerank'], ['settings-tts', 'TTS 语音'], ['settings-danger', '危险操作'],
+      ].map(([id, label]) => <a key={id} href={`#${id}`} onClick={event => { event.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>{label}</a>)}</nav></details>}
+      <div className="settings-layout">
       <div ref={contentRef} className="flex w-full min-w-0 max-w-3xl flex-col gap-6">
-        {loadErr && (
-          <kit.Note tone="warn">
-            <span className="font-semibold">设置加载失败</span>
-            <span className="mx-1.5">·</span>
-            {loadErr}
-          </kit.Note>
-        )}
 
         {data && (
           <>
@@ -560,6 +598,7 @@ export default function Settings() {
                   <kit.Row key={m.id} className="flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        <ModelBrandIcon model={m.model} size={20} />
                         <span className="text-base font-semibold text-fg">
                           {m.name || m.model || '.env'}
                         </span>
@@ -567,6 +606,7 @@ export default function Settings() {
                         {ctxLabel(m.contextWindow) && (
                           <kit.Badge>上下文 {ctxLabel(m.contextWindow)}</kit.Badge>
                         )}
+                        {m.maxOutputTokens != null && m.maxOutputTokens > 0 && <kit.Badge>编码输出 {ctxLabel(m.maxOutputTokens)}</kit.Badge>}
                         {data.defaultModelId === m.id && <kit.Badge tone="accent">默认</kit.Badge>}
                       </div>
                       <p className="mt-1 break-all font-mono text-xs text-faint">
@@ -876,7 +916,7 @@ export default function Settings() {
           initial={modelDlg.editing}
           busy={busy}
           onClose={() => setModelDlg({ open: false, editing: null })}
-          onSubmit={(req) => void submitModel(req)}
+          onSubmit={submitModel}
         />
       )}
 

@@ -77,7 +77,7 @@ export function logout(): Promise<{ success: boolean }> {
 
 export type SearchHit = {
   /** entity=图谱锚点实体；doc=文档（chunk 命中按父文档聚合）；url 为文章 slug（内部文档 null） */
-  kind: 'chunk' | 'entity' | 'doc'
+  kind: 'chunk' | 'entity' | 'doc' | 'snapshot'
   chunkId: number | null
   entityId: string | null
   title: string
@@ -1028,6 +1028,7 @@ export type ModelView = {
   model: string
   contextWindow: number | null
   builtin: boolean
+  maxOutputTokens?: number | null
 }
 
 export type ModelRequest = {
@@ -1036,6 +1037,7 @@ export type ModelRequest = {
   apiKey: string
   model: string
   contextWindow: number | null
+  maxOutputTokens?: number | null
 }
 
 /** 编辑模型时按端点试取上下文窗口的结果；contextWindow=null 表示接口未返回 */
@@ -1484,37 +1486,59 @@ export async function downloadWorkspaceFile(
   }
 }
 
-/* ---------- 统计（整个应用的 LLM token 消耗） ---------- */
-
-/** 一个维度（来源 / 模型 / 日期）的汇总；key = 来源标识 / 模型名 / 日期（yyyy-MM-dd） */
-export type StatsBucket = {
-  key: string
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  calls: number
+/* ---------- 用量&统计 ---------- */
+export type StatsMoney = { currency: string; amount: number }
+export type StatsModel = { provider: string; model: string }
+export type StatsBucket = StatsModel & {
+  key: string; promptTokens: number; completionTokens: number; totalTokens: number
+  calls: number; unpricedCalls: number; costs: StatsMoney[]
 }
-
-/** 全部记录的合计 */
 export type StatsTotals = {
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  calls: number
+  promptTokens: number; completionTokens: number; totalTokens: number; calls: number
+  reportedCalls: number; estimatedCalls: number; partialCalls: number; unsuccessfulCalls: number
+  cachedTokens: number; reasoningTokens: number; unpricedCalls: number; costs: StatsMoney[]
 }
-
-/** 统计页数据：总量 + 分来源 + 分模型 + 最近 days 天的按日趋势（缺失日期无记录，前端补零） */
+export type StatsPrice = StatsModel & {
+  id: number; effectiveFrom: string; currency: string
+  inputPerMillion: number; outputPerMillion: number; cachedPerMillion: number | null
+}
+export type StatsPriceRequest = StatsModel & {
+  effectiveFrom: string; currency: string
+  inputPerMillion: string; outputPerMillion: string; cachedPerMillion: string | null
+}
+export type StatsCall = StatsModel & {
+  id: number; createdAt: number; source: string; promptTokens: number; completionTokens: number
+  totalTokens: number; quality: 'reported' | 'estimated' | 'partial'; status: 'success' | 'interrupted' | 'failed'
+  cachedTokens: number; reasoningTokens: number; currency: string | null; cost: number | null
+}
 export type StatsView = {
-  total: StatsTotals
-  bySource: StatsBucket[]
-  byModel: StatsBucket[]
-  daily: StatsBucket[]
-  days: number
+  total: StatsTotals; bySource: StatsBucket[]; byModel: StatsBucket[]; daily: StatsBucket[]
+  days: number; from: string; to: string; timeZone: string; today: string; generatedAt: number
+  sources: string[]; models: StatsModel[]; prices: StatsPrice[]; recentCalls: StatsCall[]; recordingFailures: number
 }
-
-/** token 消耗统计；days = 趋势区间（天，默认 30，上限 365） */
-export function getStats(days = 30): Promise<StatsView> {
-  return requestJson<StatsView>(`/api/stats?days=${days}`)
+export type StatsQuery = { days?: number; from?: string; to?: string; source?: string; provider?: string; model?: string }
+/** days=-1 为本月；所有聚合采用响应返回的同一日期范围和时区。 */
+export function getStats(query: StatsQuery | number = 30, signal?: AbortSignal): Promise<StatsView> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(typeof query === 'number' ? { days: query } : query)) {
+    if (value !== undefined) params.set(key, String(value))
+  }
+  const controller = new AbortController()
+  let timedOut = false
+  const abort = () => controller.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) abort()
+  const timer = window.setTimeout(() => { timedOut = true; controller.abort() }, 15000)
+  return requestJson<StatsView>('/api/stats?' + params, { signal: controller.signal }).catch(error => {
+    if (timedOut) throw new Error('统计读取超过 15 秒，请重试')
+    throw error
+  }).finally(() => { window.clearTimeout(timer); signal?.removeEventListener('abort', abort) })
+}
+export function saveStatsPrice(price: StatsPriceRequest): Promise<{ saved: boolean }> {
+  return requestJson('/api/stats/prices', { method: 'PUT', body: JSON.stringify(price) }, 15000)
+}
+export function deleteStatsPrice(id: number): Promise<{ deleted: boolean }> {
+  return requestJson('/api/stats/prices/' + id, { method: 'DELETE' }, 15000)
 }
 
 /* ---------- 后台（每 Agent 一份：心跳 / 常驻职责 / 子代理 / RAG 召回 / 任务）+ 全局系统 ---------- */
@@ -1660,6 +1684,7 @@ export type TaskView = {
   execId: number | null
   createdAt: number
   updatedAt: number
+  codingRunId?: string | null
 }
 
 /** 一批执行 + 这一批里的各次执行 */
@@ -1952,6 +1977,7 @@ async function consumePulseStream(
  *  与首页对话的全局提示词隔离 */
 export type MaPeer = {
   id: string
+  executionKind?: 'CHAT' | 'CODING'
   name: string
   /** 内置 Agent：不可删除、默认存在 */
   builtin: boolean

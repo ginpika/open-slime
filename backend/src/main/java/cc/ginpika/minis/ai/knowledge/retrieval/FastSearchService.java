@@ -190,10 +190,13 @@ public class FastSearchService {
                         return null;
                     }
                     ChunkStore.Row best = docBest.get(e.getKey());
-                    String snip = best == null ? null : snippet(best.content(), matched);
-                    return new SearchDtos.Hit("doc", null, null, d.title(),
+                    boolean snapshot = "snapshot".equals(d.source());
+                    String content = best == null ? "" : best.content();
+                    if (snapshot && content.contains("\n\n")) content = content.substring(content.indexOf("\n\n") + 2);
+                    String snip = best == null ? null : snippet(content, matched);
+                    return new SearchDtos.Hit(snapshot ? "snapshot" : "doc", null, null, d.title(),
                             firstNonBlank(snip, d.summary()), d.source(),
-                            d.url() != null ? d.url() : "doc:" + d.id(), d.url(),
+                            snapshot && best != null ? best.sourceRef() : d.url() != null ? d.url() : "doc:" + d.id(), d.url(),
                             e.getValue(), matched, null);
                 })
                 .filter(h -> h != null)

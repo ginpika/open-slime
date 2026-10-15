@@ -1,3 +1,4 @@
+import { AppIcon } from './AppIcon'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listSessions, type SessionItem } from '../api/client'
 import { getActiveChatSession, onChatSettled } from './chatLive'
@@ -106,19 +107,7 @@ function NoticeCard({
         title="点击前往会话"
         className="flex w-72 cursor-pointer items-start gap-2.5 rounded-xl border border-line border-l-4 border-l-accent bg-bg/95 py-3 pl-3.5 pr-8 text-left shadow-lg backdrop-blur-md transition hover:border-line-strong"
       >
-        <svg
-          className="mt-0.5 h-4 w-4 shrink-0 text-accent"
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M12 4.5c4.7 0 8.5 3.1 8.5 7s-3.8 7-8.5 7c-.9 0-1.8-.1-2.6-.3L5 20l1.1-2.9C4.2 15.9 3.5 14 3.5 11.5c0-3.9 3.8-7 8.5-7z"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <AppIcon name="chat" className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         <span className="min-w-0 flex-1">
           <span className="block text-2xs font-medium uppercase tracking-[0.18em] text-faint">
             {KIND_LABEL[notice.kind]}
@@ -135,14 +124,7 @@ function NoticeCard({
         aria-label="关闭通知"
         className="absolute right-1.5 top-1.5 flex h-5 w-5 cursor-pointer items-center justify-center rounded-md text-hint transition hover:bg-fg/[0.06] hover:text-fg"
       >
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="h-3 w-3">
-          <path
-            d="M6 6l12 12M18 6L6 18"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          />
-        </svg>
+        <AppIcon name="close" className="h-3 w-3" />
       </button>
     </div>
   )

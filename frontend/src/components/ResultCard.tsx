@@ -41,6 +41,7 @@ const STATUS_TONES: Record<string, { tone: 'ok' | 'default'; label: string }> = 
 
 /** 来源文件名：文章 slug / note 路径补全 .md 扩展名（外链与内部文档 ref 原样返回） */
 function fileName(ref: string): string {
+  if (ref.startsWith('snapshot:')) return '本地快照'
   if (!ref || /^https?:\/\//i.test(ref) || ref.startsWith('doc:')) return ref
   const base = ref.slice(ref.lastIndexOf('/') + 1)
   return base.includes('.') ? ref : `${ref}.md`
@@ -55,9 +56,11 @@ export default function ResultCard({ hit }: { hit: SearchHit }) {
   const statusTone = hit.status ? STATUS_TONES[hit.status] : undefined
   /* 外链（http）/ 文档命中跳文章页 / 实体命中跳图谱页（该实体 1 跳展开） */
   const external = /^https?:\/\//i.test(hit.sourceRef)
+  const snapshotHref = hit.kind === 'snapshot' && hit.sourceRef.startsWith('snapshot:')
+    ? `#/snapshots/${hit.sourceRef.slice('snapshot:'.length)}` : null
   const docHref = hit.kind === 'doc' && hit.url ? `#/article/${hit.url}` : null
   const graphHref = isEntity && hit.entityId ? `#/graph?entity=${hit.entityId}` : null
-  const href = external ? hit.sourceRef : (docHref ?? graphHref)
+  const href = snapshotHref ?? (external ? hit.sourceRef : (docHref ?? graphHref))
   return (
     <Card as="article" interactive>
       {/* 面包屑行：等宽元数据（类型牌 / 来源 / chunk 号 / 状态徽章 / 相似度读数） */}
@@ -69,7 +72,7 @@ export default function ResultCard({ hit }: { hit: SearchHit }) {
               : 'font-bold uppercase tracking-[0.18em]'
           }
         >
-          {isEntity ? 'Entity' : isChunk ? 'Chunk' : hit.kind === 'doc' ? 'Document' : hit.source || 'note'}
+          {isEntity ? 'Entity' : isChunk ? 'Chunk' : hit.kind === 'snapshot' ? '网页快照' : hit.kind === 'doc' ? 'Document' : hit.source || 'note'}
         </span>
         {hit.sourceRef && (
           <>

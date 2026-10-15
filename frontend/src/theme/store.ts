@@ -12,7 +12,9 @@
 import { useSyncExternalStore } from 'react'
 import { applyVars, resolveTheme } from './derive'
 import { DEFAULT_THEME_ID, SEEDS, THEME_IDS } from './palette'
+import { ASTROLABE_DEFAULT_CONFIG, ASTROLABE_PALETTES, normalizeAstrolabe } from './astrolabe'
 import type {
+  AstrolabeConfig,
   EndfieldConfig,
   EndfieldPalette,
   EndfieldWindowStyle,
@@ -51,8 +53,9 @@ function resolveVars(
   scheme: Scheme,
   override: OverrideState,
   endfield: EndfieldConfig,
+  astrolabe: AstrolabeConfig,
 ): Vars {
-  return resolveTheme(themeId, scheme, override, endfield)
+  return resolveTheme(themeId, scheme, override, endfield, astrolabe)
 }
 
 const DEFAULT_ENDFIELD: EndfieldConfig = { palette: 'default', window: 'default' }
@@ -64,6 +67,7 @@ function buildState(
   override: OverrideState,
   endfield: EndfieldConfig = DEFAULT_ENDFIELD,
   mono: MonoConfig = DEFAULT_MONO,
+  astrolabe: AstrolabeConfig = ASTROLABE_DEFAULT_CONFIG,
 ): ThemeState {
   const scheme = effectiveScheme(schemeMode)
   return {
@@ -74,7 +78,8 @@ function buildState(
     override,
     endfield,
     mono,
-    vars: resolveVars(themeId, scheme, override, endfield),
+    astrolabe,
+    vars: resolveVars(themeId, scheme, override, endfield, astrolabe),
   }
 }
 
@@ -144,6 +149,7 @@ function load(): ThemeState {
         normalizeOverride(p.override),
         normalizeEndfield(p.endfield, p.endfieldPalette),
         normalizeMono(p.mono),
+        normalizeAstrolabe(p.astrolabe),
       )
     }
     /* v3 → v4：旧主题全部归入 old，明暗档沿用 appearance */
@@ -202,7 +208,7 @@ if (typeof window !== 'undefined' && window.matchMedia) {
   try {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (state.schemeMode !== 'system') return
-        commit(buildState(state.themeId, 'system', state.override, state.endfield, state.mono))
+        commit(buildState(state.themeId, 'system', state.override, state.endfield, state.mono, state.astrolabe))
       })
   } catch {
     /* 老浏览器忽略 */
@@ -233,19 +239,19 @@ export const themeActions = {
   /** 切换主题（保留明暗档与全局覆盖） */
   setTheme(id: ThemeId): void {
     if (!isThemeId(id) || id === state.themeId) return
-    commit(buildState(id, state.schemeMode, state.override, state.endfield, state.mono))
+    commit(buildState(id, state.schemeMode, state.override, state.endfield, state.mono, state.astrolabe))
   },
 
   /** 切换外观档位（浅 / 深 / 跟随系统） */
   setSchemeMode(mode: SchemeMode): void {
     if (!isSchemeMode(mode)) return
-    commit(buildState(state.themeId, mode, state.override, state.endfield, state.mono))
+    commit(buildState(state.themeId, mode, state.override, state.endfield, state.mono, state.astrolabe))
   },
 
   /** 浅/深一键对调（不改变 system 档语义：一旦手动切换即固定为对应档） */
   toggleScheme(): void {
     const next: SchemeMode = state.scheme === 'dark' ? 'light' : 'dark'
-    commit(buildState(state.themeId, next, state.override, state.endfield, state.mono))
+    commit(buildState(state.themeId, next, state.override, state.endfield, state.mono, state.astrolabe))
   },
 
   /** 更新全局覆盖（色种子 delta / 字体） */
@@ -255,24 +261,33 @@ export const themeActions = {
       ...patch,
       seed: { ...state.override.seed, ...(patch.seed ?? {}) },
     }
-    commit(buildState(state.themeId, state.schemeMode, merged, state.endfield, state.mono))
+    commit(buildState(state.themeId, state.schemeMode, merged, state.endfield, state.mono, state.astrolabe))
   },
 
   /** 清除全局覆盖，回到主题原始种子与字体 */
   resetOverride(): void {
-    commit(buildState(state.themeId, state.schemeMode, { seed: {} }, state.endfield, state.mono))
+    commit(buildState(state.themeId, state.schemeMode, { seed: {} }, state.endfield, state.mono, state.astrolabe))
   },
 
   /** 更新终末地主题配置（色风格 / 窗口样式；仅 endfield 消费，增量合并） */
   setEndfieldConfig(patch: Partial<EndfieldConfig>): void {
     const next: EndfieldConfig = { ...state.endfield, ...patch }
-    commit(buildState(state.themeId, state.schemeMode, state.override, next, state.mono))
+    commit(buildState(state.themeId, state.schemeMode, state.override, next, state.mono, state.astrolabe))
   },
 
   /** 更新 Tailwind Mono 主题配置（侧边栏布局 / 桌面端隐藏顶底栏；仅 old 消费，增量合并） */
   setMonoConfig(patch: Partial<MonoConfig>): void {
     const next: MonoConfig = { ...state.mono, ...patch }
-    commit(buildState(state.themeId, state.schemeMode, state.override, state.endfield, next))
+    commit(buildState(state.themeId, state.schemeMode, state.override, state.endfield, next, state.astrolabe))
+  },
+
+  setAstrolabeConfig(patch: Partial<AstrolabeConfig>): void {
+    const next = normalizeAstrolabe({ ...state.astrolabe, ...patch })
+    commit(buildState(state.themeId, state.schemeMode, state.override, state.endfield, state.mono, next))
+  },
+
+  resetAstrolabeConfig(): void {
+    commit(buildState(state.themeId, state.schemeMode, state.override, state.endfield, state.mono, ASTROLABE_DEFAULT_CONFIG))
   },
 
   /** 恢复出厂：默认主题 + 跟随系统 + 无覆盖 */
@@ -294,5 +309,5 @@ export function initTheme(): void {
 
 /** 主题选择面板用的种子读取（不含用户覆盖） */
 export function rawSeed(id: ThemeId, scheme: Scheme) {
-  return SEEDS[id][scheme]
+  return id === 'astrolabe' ? ASTROLABE_PALETTES[state.astrolabe.palette][scheme] : SEEDS[id][scheme]
 }

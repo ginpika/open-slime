@@ -34,6 +34,15 @@ class LayeringTest {
     private static final String MEMORY = "cc.ginpika.minis.ai.memory..";
     private static final String TERMINAL = "cc.ginpika.minis.ai.terminal..";
     private static final String AGENT = "cc.ginpika.minis.agent..";
+    @Test
+    void codingExecutionIsIndependentOfChatAndTransport() {
+        noClasses().that().resideInAnyPackage("cc.ginpika.minis.coding.engine..", "cc.ginpika.minis.coding.context..", "cc.ginpika.minis.coding.repository..", "cc.ginpika.minis.coding.runner..", "cc.ginpika.minis.coding.store..")
+                .should().dependOnClassesThat().resideInAnyPackage(AGENT,"cc.ginpika.minis.web..")
+                .check(CLASSES);
+        noClasses().that().resideInAPackage("cc.ginpika.minis.ai.runtime..")
+                .should().dependOnClassesThat().resideInAnyPackage(AGENT,MEMORY,"cc.ginpika.minis.coding..","cc.ginpika.minis.web..")
+                .check(CLASSES);
+    }
 
     @Test
     void agentServicesDoNotDependOnWebTransport() {

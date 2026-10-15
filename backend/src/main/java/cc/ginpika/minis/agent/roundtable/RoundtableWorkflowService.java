@@ -5,6 +5,7 @@ import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.member.AgentDtos;
 import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.TopicStateMachine.PeerState;
+import cc.ginpika.minis.ai.runtime.AgentActivitySource;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -39,11 +40,13 @@ public class RoundtableWorkflowService {
     private final RoundtableWorkRuntime workRuntime;
     private final RoundtableWorkRunStore workRuns;
     private final ObjectMapper om;
+    private final List<AgentActivitySource> activitySources;
 
     public RoundtableWorkflowService(RoundtableChatService chat, AgentDirectory directory,
                                      RoundtableTodoStore taskBoard, TopicStateMachine machine,
                                      RoundtableWorkRuntime workRuntime,
-                                     RoundtableWorkRunStore workRuns, ObjectMapper om) {
+                                     RoundtableWorkRunStore workRuns, ObjectMapper om,
+                                     List<AgentActivitySource> activitySources) {
         this.chat = chat;
         this.directory = directory;
         this.taskBoard = taskBoard;
@@ -51,6 +54,7 @@ public class RoundtableWorkflowService {
         this.workRuntime = workRuntime;
         this.workRuns = workRuns;
         this.om = om;
+        this.activitySources = activitySources;
     }
 
     /**
@@ -85,6 +89,10 @@ public class RoundtableWorkflowService {
      * @return 没有会话时返回一张空视图（页面据此显示「还没有桌子」）
      */
     public AgentDtos.WorkflowView view(String sessionId) {
+        return view(sessionId,cc.ginpika.minis.ai.core.UserScope.get());
+    }
+
+    public AgentDtos.WorkflowView view(String sessionId,String owner) {
         AgentDtos.SessionView session = pick(sessionId);
         if (session == null) {
             return new AgentDtos.WorkflowView(null, null, null, null, null, false, false,
@@ -107,6 +115,7 @@ public class RoundtableWorkflowService {
                 && workRuntime.workingCount(session.id()) == 0;
 
         List<AgentDtos.WorkflowAgent> agents = new ArrayList<>();
+        List<AgentActivitySource.Activity> activity = activities(owner,session.id());
         for (String peerId : session.memberIds()) {
             PeerStatus two = PeerStatus.of(states.getOrDefault(peerId, PeerState.INACTIVE));
             int pending = 0;
@@ -126,13 +135,17 @@ public class RoundtableWorkflowService {
                     }
                 }
             }
-            boolean working = workRuntime.isWorking(session.id(), peerId);
+            for(var extra:activity){if(peerId.equals(extra.agentId())){pending+=extra.pending();doing+=extra.doing();done+=extra.done();}}
+            boolean working = workRuntime.isWorking(session.id(), peerId)
+                    || activity.stream().anyMatch(a->peerId.equals(a.agentId()) && a.working());
             /* 成员级「待推进」：自己没在跑、名下也没有未完条目、此刻也无活可领（含公共池），
                且这一轮确有人做完过、话题未收束——先做完的先到这里，等全桌集结 */
             boolean idleNoWork = !working && pending == 0 && doing == 0 && blocked == 0
                     && taskBoard.claimable(session.id(), peerId).isEmpty();
             String execution = two.execution().name();
-            if (idleNoWork && anyDone && !topicClosed) {
+            if (working) {
+                execution = ExecutionState.RUNNING.name();
+            } else if (idleNoWork && anyDone && !topicClosed) {
                 execution = ExecutionState.ADVANCED.name();
             }
             AgentRow peerRow = directory.peer(peerId).orElse(null);
@@ -145,7 +158,7 @@ public class RoundtableWorkflowService {
         boolean discussing = session.topicStatus() != null
                 && !RoundtableTopicStore.STATUS_CLOSED.equals(session.topicStatus());
         return new AgentDtos.WorkflowView(session.id(), session.title(), topicId, session.topicStatus(),
-                session.floorPeer(), discussing, advancing, agents, todos);
+                session.floorPeer(), discussing, advancing && activity.stream().noneMatch(AgentActivitySource.Activity::working), agents, todos);
     }
 
     /**
@@ -157,6 +170,10 @@ public class RoundtableWorkflowService {
      * 只有共享任务区（任务视角）才按会话切换，见 {@link #view(String)}。
      */
     public AgentDtos.WorkflowView overview() {
+        return overview(cc.ginpika.minis.ai.core.UserScope.get());
+    }
+
+    public AgentDtos.WorkflowView overview(String owner) {
         List<RoundtableTodoStore.TodoRow> board = new ArrayList<>();
         for (AgentDtos.SessionView s : chat.sessions()) {
             board.addAll(taskBoard.list(s.id()));
@@ -164,6 +181,7 @@ public class RoundtableWorkflowService {
         List<AgentDtos.WorkflowTodo> todos = board.stream().map(this::toTodo).toList();
 
         List<AgentDtos.WorkflowAgent> agents = new ArrayList<>();
+        List<AgentActivitySource.Activity> activity = activities(owner,null);
         for (AgentRow peer : directory.peers()) {
             String peerId = peer.id();
             int pending = 0;
@@ -181,7 +199,9 @@ public class RoundtableWorkflowService {
                     }
                 }
             }
-            boolean working = workRuntime.isWorkingAnywhere(peerId);
+            for(var extra:activity){if(peerId.equals(extra.agentId())){pending+=extra.pending();doing+=extra.doing();done+=extra.done();}}
+            boolean working = workRuntime.isWorkingAnywhere(peerId)
+                    || activity.stream().anyMatch(a->peerId.equals(a.agentId()) && a.working());
             /* 没有单一话题可挂，发言维度（communication）在全局视角下无意义 → 留空由页面略去；
                执行维度只由「此刻有没有在跑」给出就绪 / 执行中 */
             agents.add(new AgentDtos.WorkflowAgent(peerId, peer.name(), null,
@@ -190,6 +210,11 @@ public class RoundtableWorkflowService {
                     working, pending, doing, done, peer.role(), peer.roleColor()));
         }
         return new AgentDtos.WorkflowView(null, null, null, null, null, false, false, agents, todos);
+    }
+
+    private List<AgentActivitySource.Activity> activities(String owner,String sessionId) {
+        if(owner==null || owner.isBlank()){return List.of();}
+        return activitySources.stream().flatMap(source->source.activities(owner,sessionId).stream()).toList();
     }
 
     private AgentDtos.WorkflowTodo toTodo(RoundtableTodoStore.TodoRow t) {

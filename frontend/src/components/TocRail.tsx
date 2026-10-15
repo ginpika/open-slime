@@ -33,6 +33,7 @@ export default function TocRail({
   label = 'Contents',
   compact = false,
   expanded = false,
+  plain = false,
 }: {
   items: TocItem[]
   side?: 'left' | 'right'
@@ -41,6 +42,8 @@ export default function TocRail({
   compact?: boolean
   /** Always-visible directory for settings and other pages with room beside the content. */
   expanded?: boolean
+  /** Render the expanded directory as text without a card or decorative rail. */
+  plain?: boolean
 }) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const navRef = useRef<HTMLElement>(null)
@@ -85,9 +88,9 @@ export default function TocRail({
   const railItems = compact ? items.slice(-RAIL_MAX) : items
 
   if (expanded) return (
-    <nav ref={navRef} aria-label={label} className="ui-card ui-surface p-4">
+    <nav ref={navRef} aria-label={label} className={plain ? 'bg-transparent p-4' : 'ui-card ui-surface p-4'}>
       <p className="ui-label mb-3">{label}</p>
-      <TocList items={items} activeId={activeId} jump={jump} />
+      <TocList items={items} activeId={activeId} jump={jump} rail={!plain} />
     </nav>
   )
 

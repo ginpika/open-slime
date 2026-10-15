@@ -1,4 +1,8 @@
+import { AppIcon } from '../components/AppIcon'
+import { ModelBrandIcon } from '../components/ModelBrandIcon'
 import SpeechButton from '../components/SpeechButton'
+import ConversationBrowser from '../components/ConversationBrowser'
+import { OrbitalSeal } from '../shell/AstrolabeShell'
 import { backfillSettledReply } from '../components/settledChat'
 import { getTtsSettings } from '../api/client'
 import {
@@ -356,20 +360,7 @@ const CotBlock = memo(function CotBlock({
         aria-expanded={open}
         className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium uppercase tracking-[0.12em] text-faint transition hover:text-muted"
       >
-        <svg
-          className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M9 5l7 7-7 7"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <AppIcon name="chevron-right" className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
         <span className="min-w-0 flex-1 truncate text-left">{label}</span>
         {badge && <span className="shrink-0 tabular-nums tracking-normal text-faint">{badge}</span>}
       </button>
@@ -529,20 +520,7 @@ const UserRow = memo(function UserRow({
           aria-label="回到这条提问之前"
           className="absolute -bottom-5 right-1 flex cursor-pointer items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-xs text-faint opacity-0 shadow-sm transition group-hover:opacity-100 hover:text-fg"
         >
-          <svg
-            className="h-3 w-3"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 6 6v1"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <AppIcon name="reply" className="h-3 w-3" />
           回退
         </button>
       )}
@@ -590,17 +568,7 @@ const AssistantRow = memo(function AssistantRow({
             onClick={() => onBranch(msg)}
             title="以到这里为止的内容创建一个副本会话"
           >
-            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="6" cy="5" r="2.4" stroke="currentColor" strokeWidth="2" />
-              <circle cx="6" cy="19" r="2.4" stroke="currentColor" strokeWidth="2" />
-              <circle cx="18" cy="8" r="2.4" stroke="currentColor" strokeWidth="2" />
-              <path
-                d="M6 7.4v9.2M18 10.4a6 6 0 0 1-6 6H8"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
+            <AppIcon name="branch" className="h-3 w-3" />
             分支
           </button>
           {speechEnabled && <SpeechButton text={msg.content} agentId={speechAgentId} />}
@@ -622,16 +590,12 @@ const TODO_TONE: Record<string, string> = {
 function TodoMark({ status }: { status: string }) {
   if (status === 'done') {
     return (
-      <svg className="mt-[3px] h-3.5 w-3.5 shrink-0 text-accent" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <AppIcon name="check" className="mt-[3px] h-3.5 w-3.5 shrink-0 text-accent" />
     )
   }
   if (status === 'failed') {
     return (
-      <svg className="mt-[3px] h-3.5 w-3.5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
-      </svg>
+      <AppIcon name="close" className="mt-[3px] h-3.5 w-3.5 shrink-0 text-red-500" />
     )
   }
   return (
@@ -693,9 +657,7 @@ const TodoCard = memo(function TodoCard({ todos }: { todos: SessionTodo[] }) {
           title="收起待办清单"
           className="ui-btn ui-btn--icon -mr-1 ml-auto h-6 w-6 shrink-0 rounded-full"
         >
-          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <AppIcon name="chevron-down" className="h-3.5 w-3.5" />
         </button>
       </div>
       <ul className="scrollbar-slim min-h-0 space-y-1.5 overflow-y-auto">
@@ -754,15 +716,7 @@ const SubagentBubble = memo(function SubagentBubble({
         )}
         <span className="mt-2 flex items-center gap-1 text-xs text-accent">
           查看完整结论
-          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M9 5l7 7-7 7"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <AppIcon name="chevron-right" className="h-3 w-3" />
         </span>
       </button>
     </div>
@@ -810,6 +764,9 @@ export default function Home({ connErr }: Props) {
   /* 会话历史：当前会话 id + 最近会话列表 + 左侧悬浮面板开合 */
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionItem[]>([])
+  const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [sessionsError, setSessionsError] = useState(false)
+  const sessionsRequest = useRef(0)
   const [panelOpen, setPanelOpen] = useState(false)
   /* 滑块切入会话模式时抽屉以 fadeIn 亮相（挂载即开没有 transition 起点，会硬闪）；
      仅首挂载播一次，之后拉手开合仍走原滑动 transition */
@@ -951,18 +908,16 @@ export default function Home({ connErr }: Props) {
     return () => ro.disconnect()
   }, [])
 
-  /* 最近会话抽屉的左缘基准：外壳带左侧栏时要贴着主视图左缘弹出，不能盖在侧栏上。
-     两种带左侧栏的排布——Tailwind Mono 侧边栏档、桌面壳的 88px 菜单栏——抽屉都得避开：
-       · 侧边栏档：<main> 本就贴着主视图左缘，直接量它；
-       · 桌面壳：主视图在菜单栏右侧，此时 <main> 是居中的内容列，得量主容器 .df__stage；
-       · 默认（Web + 顶部横排）：保持贴视口最左侧，即 0。
-     侧栏宽度/菜单栏宽度都是常量，量一次即可，窗口缩放或排布切换时再量 */
+  /* 最近会话抽屉避开导航：桌面框架优先取 .df__stage；新外壳用
+     data-panel-anchor 明确内容左缘；兼容 Mono 的侧边栏档。
+     窗口缩放、侧栏档与主题切换时重新量实际位置。 */
   const [panelLeft, setPanelLeft] = useState(0)
   useLayoutEffect(() => {
     const main = searchPageRef.current?.closest('main')
     if (!main) return
     const update = () => {
-      const anchor = mono.sidebar ? main : main.closest('.df__stage')
+      const anchor = main.closest('.df__stage') ?? main.closest('[data-panel-anchor]') ??
+        (themeId === 'old' && mono.sidebar ? main : null)
       setPanelLeft(anchor ? anchor.getBoundingClientRect().left : 0)
     }
     update()
@@ -973,7 +928,7 @@ export default function Home({ connErr }: Props) {
       ro.disconnect()
       window.removeEventListener('resize', update)
     }
-  }, [mono.sidebar])
+  }, [themeId, mono.sidebar])
 
   /* 「对话身份」提示词位：内置（.env）+ 用户版本，会话可在「…」菜单里单独切换 */
   const identity = useMemo(
@@ -1300,16 +1255,26 @@ export default function Home({ connErr }: Props) {
 
   /** 刷新最近会话列表；返回列表供自动恢复取最近会话 */
   const refreshSessions = async (): Promise<SessionItem[]> => {
+    const request = ++sessionsRequest.current
+    setSessionsLoading(true)
+    setSessionsError(false)
     try {
       const list = await listSessions()
-      setSessions(list)
-      const active = list.find(item => item.id === activeSessionRef.current)
-      if (active) setProjectId(active.projectId ?? '')
+      if (request === sessionsRequest.current) {
+        setSessions(list)
+        const active = list.find(item => item.id === activeSessionRef.current)
+        if (active) setProjectId(active.projectId ?? '')
+      }
       return list
     } catch (e) {
-      const msg = errorText(e)
-      if (msg !== null) setToast(`会话列表加载失败：${msg}`)
+      if (request === sessionsRequest.current) {
+        setSessionsError(true)
+        const msg = errorText(e)
+        if (msg !== null) setToast(`会话列表加载失败：${msg}`)
+      }
       return []
+    } finally {
+      if (request === sessionsRequest.current) setSessionsLoading(false)
     }
   }
 
@@ -1414,6 +1379,9 @@ export default function Home({ connErr }: Props) {
       }
       setPanelOpen(false)
       void refreshSessions() // 后端已把该会话未读清零，刷新列表去掉未读点
+      // 从首页再次打开同一会话时，激活态和消息数可能不变，仍需显式切回会话屏。
+      mainScrollUntilRef.current = performance.now() + 900
+      requestAnimationFrame(() => chatPageRef.current?.scrollIntoView({ behavior: 'smooth' }))
     } catch (e) {
       const msg = errorText(e)
       if (msg !== null) setToast(`会话加载失败：${msg}`)
@@ -1753,9 +1721,7 @@ export default function Home({ connErr }: Props) {
             color: skyOn ? 'var(--c-accent)' : 'var(--c-faint)',
           }}
         >
-          <svg className="h-4.5 w-4.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M7.2 17.8a4 4 0 0 1-.5-7.97 5.3 5.3 0 0 1 10.3-1.13 4.1 4.1 0 0 1-.4 9.1z" />
-          </svg>
+          <AppIcon name="cloud" className="h-4.5 w-4.5" />
           {!skyOn && (
             <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
               <span className="h-[1.5px] w-6 rotate-45 bg-faint" />
@@ -1770,24 +1736,32 @@ export default function Home({ connErr }: Props) {
       <section
         ref={searchPageRef}
         style={pageH ? { minHeight: pageH } : undefined}
-        className="flex min-h-[calc(100dvh-8.5rem)] flex-col"
+        className={`flex min-h-[calc(100dvh-8.5rem)] flex-col${themeId === 'astrolabe' ? ' astro-home' : ''}`}
       >
         {/* 标题到搜索框的整体区域，在 content 内垂直居中 */}
         <div className="relative my-auto">
           {/* 净空层：标题区压一记底色光晕，把背景层的网格/全息噪声让开，裸排文本才有层级。
               BA 除外——它假设「背景≈底色」才隐形，BA 的实景天空上会显影成中心糊斑 */}
-          {themeId !== 'bluearchive' && (
+          {themeId !== 'bluearchive' && themeId !== 'astrolabe' && (
             <div
               className="sh-clear pointer-events-none absolute -inset-y-14 inset-x-0"
               aria-hidden="true"
             />
           )}
           <div className="relative">
-            {themeId !== 'bluearchive' && (
+            {themeId !== 'bluearchive' && themeId !== 'astrolabe' && (
               /* 军事 HUD 语汇的标签只随其它主题；BA 不显示（其标题图自带氛围） */
               <p className="ui-label text-center">// SYSTEM ONLINE</p>
             )}
-            {themeId === 'bluearchive' ? (
+            {themeId === 'astrolabe' ? (
+              <div className="astro-home__intro">
+                <OrbitalSeal className="astro-home__engraving" />
+                <p className="astro-home__overline">PRIVATE OBSERVATORY / 私人知识研究室</p>
+                <h1 className="ui-heading astro-home__title">每一个问题，<br />都是一颗<em>新的星辰。</em></h1>
+                <p className="astro-home__subtitle">在知识之间发现联系，让灵感沿着自己的轨道生长。</p>
+                <p className="astro-home__caption">A little curiosity. An infinite constellation.</p>
+              </div>
+            ) : themeId === 'bluearchive' ? (
               /* 主题专属标题图（public/theme/blue-archive/）：width/height 登记原图
                  906×250 防加载抖动，CSS 收到 720px 宽、高按比例 */
               <img
@@ -1810,7 +1784,7 @@ export default function Home({ connErr }: Props) {
 
           <div className="mx-auto mt-7 w-full max-w-2xl">
             <form onSubmit={submit}>
-              <div className="ba-home-inputbar ui-surface flex items-center gap-2 rounded-full border border-line py-1.5 pl-5 pr-1.5 shadow-md transition hover:border-line-strong focus-within:border-accent">
+              <div className="astro-composer ba-home-inputbar ui-surface flex items-center gap-2 rounded-full border border-line py-1.5 pl-5 pr-1.5 shadow-md transition hover:border-line-strong focus-within:border-accent">
                 <button
                   type="button"
                   onClick={() => switchMode(!chatMode)}
@@ -1819,40 +1793,9 @@ export default function Home({ connErr }: Props) {
                   className="ba-home-modebtn shrink-0 cursor-pointer rounded-full p-1 text-faint transition hover:text-muted"
                 >
                   {chatMode ? (
-                    <svg
-                      className="h-4.5 w-4.5"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="M12 4.5c4.7 0 8.5 3.1 8.5 7s-3.8 7-8.5 7c-.9 0-1.8-.1-2.6-.3L5 20l1.1-2.9C4.2 15.9 3.5 14 3.5 11.5c0-3.9 3.8-7 8.5-7z"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
+                    <AppIcon name="chat" className="h-4.5 w-4.5" />
                   ) : (
-                    <svg
-                      className="h-4.5 w-4.5"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <circle
-                        cx="10.5"
-                        cy="10.5"
-                        r="6.5"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      />
-                      <path
-                        d="M15.4 15.4 L21 21"
-                        stroke="currentColor"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                      />
-                    </svg>
+                    <AppIcon name="search" className="h-4.5 w-4.5" />
                   )}
                 </button>
                 <DecoupledInput
@@ -1868,14 +1811,7 @@ export default function Home({ connErr }: Props) {
                     onClick={stop}
                     className="ba-home-inputbar-btn flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-6 py-2.5 text-sm font-medium text-accent-fg transition hover:bg-accent-hover"
                   >
-                    <svg
-                      className="h-3 w-3"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <rect x="6" y="6" width="12" height="12" rx="2" />
-                    </svg>
+                    <AppIcon name="stop" className="h-3 w-3" />
                     停止
                   </button>
                 ) : (
@@ -1885,44 +1821,12 @@ export default function Home({ connErr }: Props) {
                   >
                     {chatMode ? (
                       <>
-                        <svg
-                          className="h-3.5 w-3.5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path
-                            d="M21 3 10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8 21 3z"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
+                        <AppIcon name="send" className="h-3.5 w-3.5" />
                         发送
                       </>
                     ) : (
                       <>
-                        <svg
-                          className="h-3.5 w-3.5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <circle
-                            cx="10.5"
-                            cy="10.5"
-                            r="6.5"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          />
-                          <path
-                            d="M15.4 15.4 L21 21"
-                            stroke="currentColor"
-                            strokeWidth="2.2"
-                            strokeLinecap="round"
-                          />
-                        </svg>
+                        <AppIcon name="search" className="h-3.5 w-3.5" />
                         搜索
                       </>
                     )}
@@ -1951,26 +1855,7 @@ export default function Home({ connErr }: Props) {
                       : 'text-muted hover:text-fg'
                   }`}
                 >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <circle
-                      cx="10.5"
-                      cy="10.5"
-                      r="6.5"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    />
-                    <path
-                      d="M15.4 15.4 L21 21"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                  <AppIcon name="search" className="h-3.5 w-3.5" />
                   搜索
                 </button>
                 <button
@@ -1983,19 +1868,7 @@ export default function Home({ connErr }: Props) {
                       : 'text-muted hover:text-fg'
                   }`}
                 >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="M12 4.5c4.7 0 8.5 3.1 8.5 7s-3.8 7-8.5 7c-.9 0-1.8-.1-2.6-.3L5 20l1.1-2.9C4.2 15.9 3.5 14 3.5 11.5c0-3.9 3.8-7 8.5-7z"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <AppIcon name="chat" className="h-3.5 w-3.5" />
                   会话
                 </button>
                 {/* 直达群聊：本页不开对话，跳到圆桌页并打开最近一次群聊（一次会话都没有时，
@@ -2006,31 +1879,17 @@ export default function Home({ connErr }: Props) {
                   title="打开最近一次群聊"
                   className="ba-home-slider-btn flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-base font-medium text-muted transition hover:text-fg"
                 >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <circle cx="9" cy="8.5" r="3" stroke="currentColor" strokeWidth="2" />
-                    <path
-                      d="M3.5 19c0-2.8 2.5-4.5 5.5-4.5s5.5 1.7 5.5 4.5"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                    <path
-                      d="M16 5.6a2.8 2.8 0 0 1 0 5.3M17.6 15c1.8.6 2.9 2 2.9 4"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
+                  <AppIcon name="table" className="h-3.5 w-3.5" />
                   群聊
                 </button>
               </div>
             </div>
           </div>
+          {themeId === 'astrolabe' && <div className="astro-home__links">
+            <a href="#/articles"><span aria-hidden="true">01</span>翻阅文档 <span aria-hidden="true">↗</span></a>
+            <a href="#/graph"><span aria-hidden="true">02</span>探索图谱 <span aria-hidden="true">↗</span></a>
+            <a href="#/multi-agent"><span aria-hidden="true">03</span>与智能体协作 <span aria-hidden="true">↗</span></a>
+          </div>}
         </div>
       </section>
 
@@ -2039,6 +1898,7 @@ export default function Home({ connErr }: Props) {
       {hasChat && (
         <section
           ref={chatPageRef}
+          data-home-view="conversation"
           onMouseDown={(ev) => {
             /* 左键在对话页按下（拖拽选中的起点）：临时把 main 锁为不可滚，
                否则选中文本的自动滚动会把视口带回上方的搜索页；mouseup 后解锁 */
@@ -2058,11 +1918,12 @@ export default function Home({ connErr }: Props) {
               </div>
             </div>
           )}
-          {/* 会话目录（形态同文档渲染页）：贴在正文列右缘外侧的圆点轨，
+          {/* 会话目录（形态同文档渲染页）：圆点轨与正文右缘留出空隙，宽屏向外移 64px，
+              窄窗口至少保留 8px 的右侧边距，避免轨道超出可视区域。
               hover 浮出各次提问，点它跳到那一条提问。随对话页一起进出场——滚回上方的
               搜索页时整页下移，它也跟着走，不会浮在搜索页上 */}
           {tocItems.length > 0 && (
-            <aside className="absolute right-[calc(50%_-_22rem)] top-1/2 z-20 hidden -translate-y-1/2 lg:block">
+            <aside className="absolute right-[max(0.5rem,calc(50%_-_26rem))] top-1/2 z-20 hidden -translate-y-1/2 lg:block">
               <TocRail items={tocItems} side="right" scroller={getChatScroller} compact />
             </aside>
           )}
@@ -2115,23 +1976,10 @@ export default function Home({ connErr }: Props) {
                 aria-label="返回搜索界面"
                 className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-fg shadow-lg transition hover:bg-accent-hover"
               >
-                <svg
-                  className="h-4.5 w-4.5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <AppIcon name="home" className="h-4.5 w-4.5" />
               </button>
               <form onSubmit={chatSubmit} className="min-w-0 flex-1">
-                <div className="ui-surface relative flex items-center gap-2 rounded-full border border-line py-1 pl-5 pr-1 shadow-md transition hover:border-line-strong focus-within:border-accent">
+                <div className="astro-composer ui-surface relative flex items-center gap-2 rounded-full border border-line py-1 pl-5 pr-1 shadow-md transition hover:border-line-strong focus-within:border-accent">
                   <DecoupledInput
                     ref={chatInputRef}
                     placeholder="继续输入…"
@@ -2178,16 +2026,7 @@ export default function Home({ connErr }: Props) {
                         aria-expanded={menuOpen}
                         className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-fg transition hover:bg-accent-hover"
                       >
-                        <svg
-                          className="h-4 w-4"
-                          viewBox="0 0 24 24"
-                          fill="currentColor"
-                          aria-hidden="true"
-                        >
-                          <circle cx="5" cy="12" r="1.7" />
-                          <circle cx="12" cy="12" r="1.7" />
-                          <circle cx="19" cy="12" r="1.7" />
-                        </svg>
+                        <AppIcon name="more" className="h-4 w-4" />
                       </button>
                       {menuOpen && (
                         <div className="absolute bottom-full right-0 z-30 mb-2 grid grid-cols-[16rem_18rem] overflow-hidden rounded-xl border border-line bg-bg shadow-xl">
@@ -2253,20 +2092,20 @@ export default function Home({ connErr }: Props) {
                           <p className="mt-1 text-2xs text-faint">绑定后，同一 Agent 可续接项目内其他会话的最近进度。</p>
                             <div className="mt-3 flex flex-col gap-2">
                               <button type="button" disabled={busy || projectSaving} className={`${projectActionBtn} border-accent bg-accent text-accent-fg hover:border-accent-hover hover:bg-accent-hover`} onClick={() => { setMenuOpen(false); setProjectDialog('create') }}>
-                                <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+                                <AppIcon name="plus" className="h-4 w-4 shrink-0" />
                                 <span>新建项目并绑定</span>
                               </button>
                               {sessionId && <>
                                 <button type="button" disabled={busy || projectSaving} className={`${projectActionBtn} border-line bg-bg text-fg hover:border-accent/40 hover:bg-accent/5`} onClick={() => { setMenuOpen(false); setProjectDialog('organize') }}>
-                                  <svg className="h-4 w-4 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M8 12h8M8 16h5" /></svg>
+                                  <AppIcon name="folder-open" className="h-4 w-4 shrink-0 text-muted" />
                                   <span>将当前会话整理为项目</span>
                                 </button>
                                 <button type="button" disabled={busy || projectSaving} className={`${projectActionBtn} border-line bg-bg text-fg hover:border-accent/40 hover:bg-accent/5`} onClick={() => { void continueInNewSession() }}>
-                                  <svg className="h-4 w-4 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg>
+                                  <AppIcon name="external" className="h-4 w-4 shrink-0 text-muted" />
                                   <span>在新会话继续{projectId ? '项目' : '当前会话'}</span>
                                 </button>
                                 <button type="button" disabled={projectSaving} className={`${projectActionBtn} mt-1 border-red-500/20 bg-red-500/5 text-red-500 hover:border-red-500/40 hover:bg-red-500/10`} onClick={() => { void revokeContinuation() }}>
-                                  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M9 9h6v6H9Z" /></svg>
+                                  <AppIcon name="stop" className="h-4 w-4 shrink-0" />
                                   <span>停止本会话的跨会话续接</span>
                                 </button>
                               </>}
@@ -2294,24 +2133,12 @@ export default function Home({ connErr }: Props) {
                                     : 'text-muted hover:bg-fg/5 hover:text-fg'
                                 }`}
                               >
+                                <ModelBrandIcon model={m.model} />
                                 <span className="flex-1 truncate">
                                   {m.name || m.model || '.env'}
                                 </span>
                                 {modelId === m.id && (
-                                  <svg
-                                    className="h-3.5 w-3.5 shrink-0"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    aria-hidden="true"
-                                  >
-                                    <path
-                                      d="m5 12.5 4.5 4.5L19 7"
-                                      stroke="currentColor"
-                                      strokeWidth="2.2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
+                                  <AppIcon name="check" className="h-3.5 w-3.5 shrink-0" />
                                 )}
                               </button>
                             ))}
@@ -2335,20 +2162,7 @@ export default function Home({ connErr }: Props) {
                             >
                               <span className="flex-1 truncate">跟随默认</span>
                               {!pinnedPromptId && (
-                                <svg
-                                  className="h-3.5 w-3.5 shrink-0"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <path
-                                    d="m5 12.5 4.5 4.5L19 7"
-                                    stroke="currentColor"
-                                    strokeWidth="2.2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
+                                <AppIcon name="check" className="h-3.5 w-3.5 shrink-0" />
                               )}
                             </button>
                             {identityOptions.map((p) => (
@@ -2368,20 +2182,7 @@ export default function Home({ connErr }: Props) {
                               >
                                 <span className="flex-1 truncate">{p.name}</span>
                                 {pinnedPromptId === p.id && (
-                                  <svg
-                                    className="h-3.5 w-3.5 shrink-0"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    aria-hidden="true"
-                                  >
-                                    <path
-                                      d="m5 12.5 4.5 4.5L19 7"
-                                      stroke="currentColor"
-                                      strokeWidth="2.2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
+                                  <AppIcon name="check" className="h-3.5 w-3.5 shrink-0" />
                                 )}
                               </button>
                             ))}
@@ -2501,26 +2302,14 @@ export default function Home({ connErr }: Props) {
                           className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted transition hover:bg-fg/5 hover:text-fg"
                         >
                           <span className="flex-1 truncate">查看原始上下文</span>
-                          <svg
-                            className="h-3.5 w-3.5 shrink-0"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            aria-hidden="true"
-                          >
-                            <path
-                              d="m8 7-5 5 5 5M16 7l5 5-5 5"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
+                          <AppIcon name="code" className="h-3.5 w-3.5 shrink-0" />
                         </button>
                           </div>
                       </div>
                       )}
                     </div>
                   )}
+                  {sessionId && <ConversationBrowser key={sessionId} sessionId={sessionId} />}
                   {busy ? (
                     /* 等待回复期间发送按钮改为「停止」：点击通知后端放弃等待并中断本地读取 */
                     <button
@@ -2528,14 +2317,7 @@ export default function Home({ connErr }: Props) {
                       onClick={stop}
                       className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-base font-medium text-accent-fg shadow-md transition hover:bg-accent-hover"
                     >
-                      <svg
-                        className="h-3 w-3"
-                        viewBox="0 0 24 24"
-                        fill="currentColor"
-                        aria-hidden="true"
-                      >
-                        <rect x="6" y="6" width="12" height="12" rx="2" />
-                      </svg>
+                      <AppIcon name="stop" className="h-3 w-3" />
                       停止
                     </button>
                   ) : (
@@ -2544,20 +2326,7 @@ export default function Home({ connErr }: Props) {
                       disabled={!hasText}
                       className="flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-base font-medium text-accent-fg shadow-md transition enabled:hover:bg-accent-hover disabled:opacity-40"
                     >
-                      <svg
-                        className="h-3.5 w-3.5"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M21 3 10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8 21 3z"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
+                      <AppIcon name="send" className="h-3.5 w-3.5" />
                       发送
                     </button>
                   )}
@@ -2574,12 +2343,12 @@ export default function Home({ connErr }: Props) {
           不能盖到侧栏/菜单栏上；只裁横向，纵向阴影照旧浮出 */}
       {chatMode && (
         <div
-          className="fixed top-1/2 z-40 flex -translate-y-1/2 items-center overflow-x-clip"
+          className="home-session-drawer fixed top-1/2 z-40 flex -translate-y-1/2 items-center overflow-x-clip"
           style={{ left: panelLeft }}
         >
           <aside
             aria-label="最近会话"
-            className={`w-64 shrink-0 rounded-r-xl border-y border-r border-line bg-bg p-2 shadow-xl transition-all duration-300 ease-out ${
+            className={`flex max-h-[calc(100dvh-32px)] w-64 shrink-0 flex-col rounded-r-xl border-y border-r border-line bg-bg p-2 shadow-xl transition-all duration-300 ease-out ${
               panelMountFade ? 'panel-fade-in' : ''
             } ${
               panelOpen
@@ -2587,33 +2356,31 @@ export default function Home({ connErr }: Props) {
                 : 'pointer-events-none invisible -ml-64 opacity-0'
             }`}
           >
-            <div className="px-1.5 pb-1.5 pt-0.5">
+            <div className="flex shrink-0 items-center justify-between gap-2 px-1.5 pb-1.5 pt-0.5">
               <span className="text-base font-medium text-fg">最近会话</span>
+              <span role="status" aria-live="polite" className="flex h-5 w-5 items-center justify-center text-muted">
+                {sessionsLoading && <><AppIcon name="loading" className="home-session-loading h-4 w-4" /><span className="sr-only">会话列表加载中</span></>}
+              </span>
             </div>
             <button
               type="button"
               onClick={() => void startNewSession()}
               disabled={busy}
-              className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
+              className="mb-1.5 flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg transition enabled:hover:bg-accent-hover disabled:opacity-40"
             >
-              <svg
-                className="h-3.5 w-3.5"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path
-                  d="M12 5v14M5 12h14"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <AppIcon name="plus" className="h-3.5 w-3.5" />
               新会话
             </button>
-            <div className="scrollbar-slim max-h-72 overflow-y-auto">
-              {sessions.length === 0 ? (
-                <p className="px-2 py-3 text-sm text-hint">暂无会话记录</p>
+            <div className="home-session-list scrollbar-slim" aria-busy={sessionsLoading}>
+              {sessionsLoading && sessions.length === 0 ? (
+                <div className="home-session-skeleton" aria-hidden="true">
+                  {[0, 1, 2, 3].map(row => <div key={row} className="home-session-skeleton__row"><span /><span /></div>)}
+                </div>
+              ) : sessions.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 px-2 text-sm text-hint">
+                  <p>{sessionsError ? '会话列表加载失败' : '暂无会话记录'}</p>
+                  {sessionsError && <button type="button" className="ui-btn ui-btn--quiet text-sm" onClick={() => void refreshSessions()}>重新加载</button>}
+                </div>
               ) : (
                 sessions.map((s) => (
                   <div
@@ -2665,19 +2432,7 @@ export default function Home({ connErr }: Props) {
                       aria-label="删除会话"
                       className="mr-1 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-hint opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 enabled:hover:bg-secondary/20 enabled:hover:text-fg disabled:cursor-default disabled:group-hover:opacity-40"
                     >
-                      <svg
-                        className="h-3.5 w-3.5"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        aria-hidden="true"
-                      >
-                        <path
-                          d="M6 6l12 12M18 6L6 18"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                        />
-                      </svg>
+                      <AppIcon name="close" className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))
@@ -2697,22 +2452,9 @@ export default function Home({ connErr }: Props) {
               panelMountFade ? 'panel-fade-in' : ''
             }`}
           >
-            <svg
-              className={`h-4 w-4 transition-transform duration-300 ease-out ${
+            <AppIcon name="chevron-right" className={`h-4 w-4 transition-transform duration-300 ease-out ${
                 panelOpen ? 'rotate-180' : ''
-              }`}
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M9 5l7 7-7 7"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+              }`} />
           </button>
         </div>
       )}

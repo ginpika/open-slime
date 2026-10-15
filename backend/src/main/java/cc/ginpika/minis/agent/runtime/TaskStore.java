@@ -29,7 +29,7 @@ public class TaskStore {
     public static final String KIND_SUBAGENT = "subagent";
     /** 任务种类：心跳编制（任务计划 / 心跳主会话） */
     public static final String KIND_PLAN = "plan";
-    /** 任务种类：IDE 任务（预留） */
+    /** 任务种类：编码 Agent 的项目任务 */
     public static final String KIND_CODE = "code";
 
     /** 状态机：pending → running → (suspended) → done / failed / cancelled */

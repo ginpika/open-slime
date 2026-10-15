@@ -43,7 +43,8 @@ export function ModeBtn({
     <button
       type="button"
       onClick={onClick}
-      className={`min-w-[220px] flex-1 rounded-md border px-3.5 py-3 text-left transition ${
+      aria-pressed={active}
+      className={`min-w-0 basis-[220px] flex-1 rounded-md border px-3.5 py-3 text-left transition ${
         active ? 'border-secondary bg-secondary/10' : 'border-line hover:border-line-strong'
       }`}
     >

@@ -33,6 +33,14 @@ import org.springframework.web.server.ResponseStatusException;
 /** 组装单聊上下文与逐 Turn 观测视图；预览和真实请求共用同一条路径。 */
 @Service
 public class ChatContextService {
+    private cc.ginpika.minis.agent.member.AgentStore agents;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setAgents(cc.ginpika.minis.agent.member.AgentStore agents){this.agents=agents;}
+    public String modelIdFor(String agentId,String requested){
+        if(requested!=null && !requested.isBlank()){return requested;}
+        return agents==null?requested:agents.peer(ChatSessionService.ownerOf(agentId))
+                .map(cc.ginpika.minis.agent.member.AgentStore.AgentRow::modelId).orElse(null);
+    }
     private final HubSessionStore sessions;
     private final ChatMessageStore messages;
     private final ObjectMapper om;
@@ -73,9 +81,10 @@ public class ChatContextService {
     public ChatDtos.RawContext rawContext(String hubId) {
         HubRow row = sessions.findById(hubId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
-        ModelTarget target = settings.resolveChatModel(row.modelId());
+        String modelId=modelIdFor(row.agentId(),row.modelId());
+        ModelTarget target = settings.resolveChatModel(modelId);
         ContextRequest req = contextRequest(row, target, row.promptId(),
-                settings.chatContextWindow(row.modelId()));
+                settings.chatContextWindow(modelId));
         ObjectNode body = context.build(req);
         return new ChatDtos.RawContext(body, turnSpans(body, req));
     }

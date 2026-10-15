@@ -18,6 +18,9 @@
  * 两者分属不同构建产物（tauri 自带静态资源 vs Vite 产物），无法共用代码，
  * 所以改引导页那套配色/尺寸时，必须回 desktopFrame.css 成对同步。
  */
+import { AppIcon } from '../components/AppIcon'
+import { AstrolabeLogo } from '../components/AstrolabeLogo'
+import { useThemeState } from '../theme/store'
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
 import {
   closeWindow,
@@ -60,6 +63,7 @@ export function DesktopFrame({
   children: ReactNode
 }) {
   const [maximized, setMaximized] = useState(false)
+  const { themeId } = useThemeState()
 
   /* 页面整体让出底色（见 desktopFrame.css 的 body[data-df]）：窗口是透明的，桌面要从
      外壳的圆角外与那一圈亚克里透出来。用 layout effect 赶在首帧前挂上，
@@ -98,8 +102,8 @@ export function DesktopFrame({
       {/* -------------------------------------------- 左：菜单栏 */}
       <aside className="df__rail">
         {/* 品牌位也当拖拽区（整块含内边距都能拖，故用 deep） */}
-        <div className="df__brand" data-tauri-drag-region="deep" title={BRAND.name}>
-          <img src="/icon-64x64.png" alt={BRAND.name} draggable={false} />
+        <div className="df__brand" data-tauri-drag-region="deep" title={BRAND.name} role="img" aria-label={BRAND.name}>
+          {themeId === 'astrolabe' ? <AstrolabeLogo /> : <img src="/icon-64x64.png" alt="" draggable={false} />}
         </div>
 
         <nav className="df__menu scrollbar-hide" aria-label="主导航">
@@ -138,9 +142,7 @@ export function DesktopFrame({
               aria-label="最小化"
               onClick={minimizeWindow}
             >
-              <svg viewBox="0 0 12 12" aria-hidden="true">
-                <path d="M2 6h8" />
-              </svg>
+              <AppIcon name="minimize" />
             </button>
             <button
               type="button"
@@ -150,14 +152,9 @@ export function DesktopFrame({
               onClick={() => toggleMaximizeWindow().then(setMaximized)}
             >
               {maximized ? (
-                <svg viewBox="0 0 12 12" aria-hidden="true">
-                  <rect x="2.5" y="4.5" width="6" height="6" rx="1" />
-                  <path d="M4.5 4.5V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H9" />
-                </svg>
+                <AppIcon name="restore" />
               ) : (
-                <svg viewBox="0 0 12 12" aria-hidden="true">
-                  <rect x="2.5" y="2.5" width="7" height="7" rx="1" />
-                </svg>
+                <AppIcon name="square" />
               )}
             </button>
             <button
@@ -167,9 +164,7 @@ export function DesktopFrame({
               aria-label="关闭"
               onClick={closeWindow}
             >
-              <svg viewBox="0 0 12 12" aria-hidden="true">
-                <path d="M3 3l6 6M9 3l-6 6" />
-              </svg>
+              <AppIcon name="close" />
             </button>
           </div>
         </div>

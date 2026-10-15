@@ -1,0 +1,13 @@
+.coding-markdown { font-size: 1rem; line-height: 1.625; overflow-wrap: anywhere; }
+.coding-markdown p + p, .coding-markdown ul, .coding-markdown ol { margin-top: 12px; }
+.coding-markdown h1, .coding-markdown h2, .coding-markdown h3 { margin: 20px 0 8px; font-weight: 650; line-height: 1.5; }
+.coding-markdown h1 { font-size: 21px; }
+.coding-markdown h2 { font-size: 18px; }
+.coding-markdown h3 { font-size: 16px; }
+.coding-markdown ul { padding-left: 22px; list-style: disc; }
+.coding-markdown ol { padding-left: 22px; list-style: decimal; }
+.coding-markdown pre { overflow: auto; padding: 12px; margin: 12px 0; border-radius: 6px; background: color-mix(in srgb, currentColor 5%, transparent); font-size: .875rem; }
+.coding-markdown code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.coding-markdown a { color: var(--c-accent); text-decoration: underline; text-underline-offset: 3px; }
+.coding-markdown table { display: block; overflow: auto; width: 100%; margin: 12px 0; border-collapse: collapse; }
+.coding-markdown th, .coding-markdown td { padding: 8px 12px; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); text-align: left; }

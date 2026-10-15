@@ -207,7 +207,6 @@ body[data-df] {
   height: 12px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }

@@ -74,46 +74,50 @@ public class RerankClient implements RerankScorer {
 
     /** 按指定端点打分（设置页测试按钮用草稿端点直连，不改动已保存配置） */
     public Optional<double[]> score(ModelTarget target, String query, List<String> documents) {
+        return score(target, query, documents, TokenUsageService.SOURCE_RERANK);
+    }
+
+    public Optional<double[]> score(ModelTarget target, String query, List<String> documents, String source) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", target.model());
         body.put("query", query);
         body.put("documents", documents);
         body.put("top_n", documents.size());
+        boolean attempted = false, succeeded = false;
+        TokenUsageService.Usage usage = null;
         try {
             Request request = new Request.Builder()
                     .url(join(target.baseUrl(), "rerank"))
                     .post(RequestBody.create(objectMapper.writeValueAsString(body), JSON))
                     .header("Authorization", "Bearer " + target.apiKey())
                     .build();
+            attempted = true;
             try (Response response = client.newCall(request).execute()) {
                 String raw = response.body() == null ? "" : response.body().string();
                 if (!response.isSuccessful()) {
                     throw new IOException("rerank HTTP " + response.code() + " " + abbreviate(raw));
                 }
                 JsonNode root = objectMapper.readTree(raw);
-                recordUsage(target.model(), root.path("usage"), query, documents);
-                return parse(root.path("results"), documents.size());
+                usage = UsageParser.parse(root.path("usage"), true);
+                var result = parse(root.path("results"), documents.size());
+                succeeded = result.isPresent();
+                return result;
             }
         } catch (IOException e) {
             throw new IllegalStateException("rerank 调用失败: " + e.getMessage(), e);
-        }
-    }
-
-    /** 用量留痕：供应商回传 usage 用真实值（rerank 无输出 token），否则按 query + 文档估算 */
-    private void recordUsage(String model, JsonNode usage, String query, List<String> documents) {
-        TokenUsageService.Usage u = null;
-        if (usage.isObject() && (usage.has("prompt_tokens") || usage.has("total_tokens"))) {
-            u = TokenUsageService.Usage.real(usage.path("prompt_tokens").asLong(), 0,
-                    usage.path("total_tokens").asLong());
-        }
-        if (u == null) {
-            long prompt = TokenUsageService.estimateTokens(query);
-            for (String doc : documents) {
-                prompt += TokenUsageService.estimateTokens(doc);
+        } finally {
+            if (attempted) {
+                if (usage == null) {
+                    long prompt = 0;
+                    if (succeeded) {
+                        prompt = TokenUsageService.estimateTokens(query);
+                        for (String doc : documents) prompt += TokenUsageService.estimateTokens(doc);
+                    }
+                    usage = TokenUsageService.Usage.estimated(prompt, 0);
+                }
+                tokenUsage.record(source, target, succeeded ? usage : usage.partial(), succeeded ? "success" : "failed");
             }
-            u = TokenUsageService.Usage.estimated(prompt, 0);
         }
-        tokenUsage.record(TokenUsageService.SOURCE_RERANK, model, u);
     }
 
     /** results[{index, relevance_score}] → 与 documents 对齐的分数组；字段缺失或 index 越界视为响应畸形 */

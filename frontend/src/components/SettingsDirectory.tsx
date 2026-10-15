@@ -14,22 +14,24 @@ export default function SettingsDirectory({ contentRef, items }: { contentRef: R
     if (!content || !main || !slot) return
     const measure = () => {
       const rect = slot.getBoundingClientRect()
+      if (rect.width < 1) { setPosition(null); return }
       const bounds = main.getBoundingClientRect()
       const left = rect.left
       const width = rect.width
-      const top = Math.max(64, bounds.top + 96)
+      // Match the first card's unscrolled top while keeping the directory fixed on scroll.
+      const top = content.getBoundingClientRect().top + main.scrollTop
       setPosition({ left, top, width, maxHeight: Math.max(160, Math.min(bounds.bottom, window.innerHeight) - top - 24) })
     }
     measure()
     const observer = new ResizeObserver(measure)
-    observer.observe(slot); observer.observe(main)
+    observer.observe(slot); observer.observe(main); observer.observe(content)
     window.addEventListener('resize', measure)
     return () => { observer.disconnect(); window.removeEventListener('resize', measure) }
   }, [contentRef])
   // Portal avoids transformed and clipped theme cards changing the fixed positioning reference.
-  return <div ref={slotRef} className="min-w-0">
+  return <div ref={slotRef} className="settings-directory-slot">
     {position && createPortal(<aside className="scrollbar-slim fixed z-20 overflow-y-auto" style={position}>
-    <TocRail items={items} label="设置目录" scroller={scroller} expanded />
+    <TocRail items={items} label="设置目录" scroller={scroller} expanded plain />
     </aside>, document.body)}
   </div>
 }

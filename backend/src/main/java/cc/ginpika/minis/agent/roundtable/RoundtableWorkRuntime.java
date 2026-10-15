@@ -274,7 +274,9 @@ public class RoundtableWorkRuntime {
         }
         /* 有新活开工 = 新一轮：撤销「已报过全员完成」的标记，让这一轮做完后能再报一次 */
         allDoneNotified.remove(sessionId);
+        String owner=cc.ginpika.minis.ai.core.UserScope.get();
         workers.execute(() -> {
+            try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(owner)){
             try {
                 drain(sessionId, peerId);
             } catch (RuntimeException e) {
@@ -283,6 +285,7 @@ public class RoundtableWorkRuntime {
                 running.remove(key);
                 /* 自己退出后可能正是最后一位：若全桌就此做完，报「全员完成」把大家叫回来 */
                 maybeAnnounceAllDone(sessionId);
+            }
             }
         });
     }
