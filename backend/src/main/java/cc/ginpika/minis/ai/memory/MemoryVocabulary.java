@@ -82,7 +82,7 @@ public final class MemoryVocabulary {
     public static final List<String> PROFILE_SCOPES = List.of(SCOPE_PROFILE, SCOPE_DIRECTIVE);
 
     /**
-     * 受保护条目（memory-v6 §2.3 · 不变量 I10）：淘汰、去重、语义取代、预算挤出**一律跳过**。
+     * 受保护条目（memory-v6 §2.3 · 不变量 I10）：淘汰、去重、语义取代**跳过**；本轮注入仍受预算约束。
      * 判据 = {@code pinned} / 正式画像（{@code owner=USER}）/ 未完成事项（{@code open_issue}）
      * / 全局规则与指令（{@code directive}，安全类，必须恒定注入且实时生效）。
      */

@@ -70,6 +70,12 @@ public class TaskStore {
         this.jdbc = jdbc;
     }
 
+    /** Execution provenance invalidated when conversation history is rewound. Audit rows remain intact. */
+    public List<Long> idsSince(String sessionId, long fromTime) {
+        return jdbc.queryForList("SELECT id FROM task WHERE session_id=? AND created_at>=? ORDER BY id",
+                Long.class, sessionId, fromTime);
+    }
+
     /**
      * 建一条任务（pending），返回任务 id。
      *

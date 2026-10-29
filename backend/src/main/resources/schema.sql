@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS hub_session (
   project_id        TEXT,                    -- 本会话所属项目（project.id）；NULL=无项目（记忆归属退化为 Agent 私有，见 memory-v5）
   show_cot          INTEGER NOT NULL DEFAULT 1, -- 本会话是否显示思维链（1=显示）；「…」菜单开关
   context_trace     INTEGER NOT NULL DEFAULT 0, -- 本会话是否把历史思考与工具调用回灌上下文（1=加入）；「…」菜单开关
-  max_rounds        INTEGER NOT NULL DEFAULT 30, -- 本会话单次提问的工具调用轮数上限（超限后撤掉 tools 强制出最终回答）；「…」菜单配置
+  max_rounds        INTEGER NOT NULL DEFAULT 0, -- 历史兼容列，不参与工具执行
   show_rounds       INTEGER NOT NULL DEFAULT 0, -- 本会话思维链分段是否显示轮次计数（1=显示，缺省不显示）；「…」菜单开关
   unread            INTEGER NOT NULL DEFAULT 0, -- 子代理投递过新消息且用户未查看（1=未读）；打开会话即清零
   member_ids        TEXT,                    -- 圆桌会话的成员名册（agent.id 的 JSON 数组；NULL=全体名册）；首页会话为 NULL
@@ -143,6 +143,17 @@ CREATE TABLE IF NOT EXISTS web_snapshot (
   UNIQUE(url, content_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_web_snapshot_saved ON web_snapshot(saved_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at DESC, id DESC);
+
+-- Rebuildable text-only evidence: reading never needs to load embedded media after materialization.
+CREATE TABLE IF NOT EXISTS web_snapshot_paragraph (
+  snapshot_id TEXT NOT NULL REFERENCES web_snapshot(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL,
+  paragraph_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  PRIMARY KEY(snapshot_id, ordinal),
+  UNIQUE(snapshot_id, paragraph_id)
+);
 
 CREATE TABLE IF NOT EXISTS chunks (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,     -- FTS 同步键
@@ -586,6 +597,12 @@ CREATE TABLE IF NOT EXISTS memory_event (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_event_time ON memory_event(created_at, id);
 
+-- 回退撤销的是来源，不是内容；异步提炼返回时据此拒绝写回旧分支。
+CREATE TABLE IF NOT EXISTS memory_retracted_source (
+  ref TEXT PRIMARY KEY,
+  retracted_at INTEGER NOT NULL
+);
+
 -- 记忆事件向量（AI Memory 的向量轴，M1）：memory_event 的 embedding 投影，列结构对齐
 -- chunk_embedding（BLOB = little-endian float32，同模型余弦）。用法上的差别：记忆侧的余弦只在
 -- 时间窗收敛后的候选内打分，不做全表暴力扫（见 ai/memory/recall/MemoryRecall）。
@@ -601,7 +618,7 @@ CREATE TABLE IF NOT EXISTS memory_event_embedding (
 );
 
 -- ---------------------------------------------------------------------------
--- 记忆条目（memory_item，记忆体系 v2 · STEP M1）：系统里「记忆」的一等公民。
+-- 记忆条目（graph_claim，记忆体系 v2 · STEP M1）：系统里「记忆」的一等公民。
 --
 --   与 memory_event（证据层）的分工：memory_event 是「发生过什么的原始投影」（只追加、逐条），
 --   本表是「关于用户 / 项目的稳定信息」（会更新、会过期、会被取代）。记忆召回默认读本表，
@@ -609,7 +626,7 @@ CREATE TABLE IF NOT EXISTS memory_event_embedding (
 --   scope：directive（对记忆行为的指令）| profile（长期画像）| project（进行中的事）| episode（时段摘要）。
 --   superseded_by 指向取代它的新条目（NULL=仍有效）；valid_until 到期即失效——两者由巩固（M4）维护。
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS memory_item (
+CREATE TABLE IF NOT EXISTS graph_claim (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   agent_id      TEXT,                      -- 归属 Agent（agent.id）；NULL 已规范化：历史 NULL 归 'builtin'（见 memory-v5）
   scope         TEXT NOT NULL,             -- profile|directive|project|episode|fact|decision|method|open_issue|checkpoint|handoff|knowledge
@@ -646,19 +663,20 @@ CREATE TABLE IF NOT EXISTS memory_item (
   ---------------------------------------------------------------- memory-v6 增量（identity / 提升来源 / 软过期）
   identity      TEXT,                      -- REAL|FICTION|PROJECT_PREF|INFERRED —— 身份上下文（role-play 隔离）
   promoted_from INTEGER,                   -- 提升来源：memory_promotion.id（L4/L1 的可追溯凭据）
-  expires_soft  INTEGER                    -- 软过期时刻：到期只「不再注入」，不删除（与 hard 过期分开）
+  expires_soft  INTEGER,                   -- 软过期时刻：到期只「不再注入」，不删除（与 hard 过期分开）
+  temporal_json TEXT                       -- 来源锚定的事件/状态时间区间、精度、时区；未知保持空
 );
-CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON memory_item(scope, superseded_by, valid_until);
-CREATE INDEX IF NOT EXISTS idx_memory_item_agent ON memory_item(agent_id, scope);
+CREATE INDEX IF NOT EXISTS idx_memory_item_scope ON graph_claim(scope, superseded_by, valid_until);
+CREATE INDEX IF NOT EXISTS idx_memory_item_agent ON graph_claim(agent_id, scope);
 -- 注意：memory-v5 新增列（owner/project_id/domain/status/fingerprint…）上的索引**不在这里**建：
 -- 老库执行 schema.sql 时这些列尚未由 SchemaColumnPatches 补上，建索引会当场报 no such column。
 -- 它们统一由 SchemaIndexes 在加列之后创建（见 config/SchemaIndexes.java）。
 
--- 记忆条目向量（memory_item_embedding，M1）：memory_item 的 embedding 投影，列结构对齐
+-- 记忆条目向量（memory_item_embedding，M1）：graph_claim 的 embedding 投影，列结构对齐
 -- memory_event_embedding（BLOB = little-endian float32，同模型余弦）。
 CREATE TABLE IF NOT EXISTS memory_item_embedding (
   item_version INTEGER,
-  item_id    INTEGER PRIMARY KEY REFERENCES memory_item(id),
+  item_id    INTEGER PRIMARY KEY REFERENCES graph_claim(id),
   model      TEXT NOT NULL,                  -- embedding 模型名（同 memory_event_embedding 的语义）
   dim        INTEGER NOT NULL,
   vec        BLOB NOT NULL,
@@ -682,7 +700,7 @@ CREATE TABLE IF NOT EXISTS project (
 CREATE INDEX IF NOT EXISTS idx_project_user ON project(user_id, status);
 
 -- 画像候选（memory_candidate，memory-v5 §5.4）：用户画像的唯一权威入口。普通 Agent 不得直接写
--- memory_item 的 USER_PROFILE 域——只能生成候选，经证据/审批闸门方可由 UserProfileService 落为正式画像。
+-- graph_claim 的 USER_PROFILE 域——只能生成候选，经证据/审批闸门方可由 UserProfileService 落为正式画像。
 --   evidence_level：explicit（用户明说）| repeated（多次出现）| inferred（推断，不足以上升）
 --   fingerprint 在 pending 内唯一：同指纹追证只累加 evidence_count，不重复建候选。
 CREATE TABLE IF NOT EXISTS memory_candidate (
@@ -709,7 +727,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_candidate_fp
 -- 读侧 R5 经此表联合查询发现（不推送）；revoked 后天然不可见。
 CREATE TABLE IF NOT EXISTS memory_share (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  item_id      INTEGER NOT NULL REFERENCES memory_item(id),
+  item_id      INTEGER NOT NULL REFERENCES graph_claim(id),
   from_owner   TEXT NOT NULL,
   from_agent   TEXT,
   from_project TEXT,
@@ -753,7 +771,7 @@ CREATE TABLE IF NOT EXISTS memory_edge (
   invalid_at   INTEGER,
   learned_at   INTEGER NOT NULL,
   expired_at   INTEGER,
-  source_item  INTEGER REFERENCES memory_item(id),
+  source_item  INTEGER REFERENCES graph_claim(id),
   created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_edge_subject ON memory_edge(subject, predicate, invalid_at);
@@ -828,7 +846,7 @@ CREATE INDEX IF NOT EXISTS idx_promotion_item ON memory_promotion(item_id, state
 -- 交接状态（memory_handoff，memory-v6 §9.2）：L4 的「交到谁手上、做到哪一步」。
 CREATE TABLE IF NOT EXISTS memory_handoff (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  item_id    INTEGER NOT NULL REFERENCES memory_item(id),
+  item_id    INTEGER NOT NULL REFERENCES graph_claim(id),
   to_kind    TEXT NOT NULL,                 -- agent|project|session|user
   to_ref     TEXT,
   state      TEXT NOT NULL DEFAULT 'offered', -- offered|accepted|done|rejected
@@ -940,6 +958,7 @@ CREATE TABLE IF NOT EXISTS term_target (
   docker_host     TEXT,                         -- 如 unix:///var/run/docker.sock、tcp://localhost:2375；NULL=环境默认
   image           TEXT,
   container       TEXT,
+  host_workdir    TEXT,                         -- 可选：Docker 宿主机目录，绑定到 workdir（容器内路径）
   -- ssh
   ssh_host        TEXT,
   ssh_port        INTEGER,
@@ -1135,6 +1154,27 @@ CREATE TABLE IF NOT EXISTS session_continuation (
     PRIMARY KEY (target_session_id, source_session_id, agent_id)
 );
 
+-- Collaboration issues reuse multi-agent sessions for their isolated message history.
+CREATE TABLE IF NOT EXISTS collaboration_issue (
+  id TEXT PRIMARY KEY,
+  parent_session_id TEXT NOT NULL REFERENCES hub_session(id),
+  session_id TEXT NOT NULL UNIQUE REFERENCES hub_session(id),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved')),
+  conclusion TEXT,
+  message_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  resolved_at INTEGER,
+  CHECK(parent_session_id <> session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_collaboration_issue_parent ON collaboration_issue(parent_session_id);
+CREATE TABLE IF NOT EXISTS collaboration_project_member (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  PRIMARY KEY(project_id,agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS project_proposal (
     session_id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
@@ -1143,6 +1183,174 @@ CREATE TABLE IF NOT EXISTS project_proposal (
     created_at INTEGER NOT NULL
 );
 -- TTS profiles and per-agent selection (empty selection inherits the default).
+CREATE TABLE IF NOT EXISTS deepseek_web_config (
+    id INTEGER PRIMARY KEY CHECK(id=1), base_url TEXT NOT NULL, api_key TEXT NOT NULL,
+    fast_enabled INTEGER NOT NULL DEFAULT 0, rag_enabled INTEGER NOT NULL DEFAULT 0,
+    fetch_enabled INTEGER NOT NULL DEFAULT 1, result_count INTEGER NOT NULL DEFAULT 5,
+    timeout_seconds INTEGER NOT NULL DEFAULT 15
+);
+
 CREATE TABLE IF NOT EXISTS tts_profile (id TEXT PRIMARY KEY, config TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tts_endpoint (id TEXT PRIMARY KEY, config TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tts_selection (agent_id TEXT PRIMARY KEY, profile_id TEXT);
+
+-- ComfyUI：可复用端点、模型工作流档案与持久化生成图片。
+CREATE TABLE IF NOT EXISTS comfyui_endpoint (id TEXT PRIMARY KEY, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS comfyui_profile (id TEXT PRIMARY KEY, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS comfyui_setting (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS comfyui_generation (
+    id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, prompt TEXT NOT NULL, prompt_id TEXT,
+    status TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS comfyui_image (
+    id TEXT PRIMARY KEY, generation_id TEXT NOT NULL REFERENCES comfyui_generation(id),
+    media_type TEXT NOT NULL, content BLOB NOT NULL
+);
+
+-- Bounded autonomous collaboration and durable links from issues back to work.
+CREATE TABLE IF NOT EXISTS roundtable_progress (
+    session_id TEXT PRIMARY KEY REFERENCES hub_session(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'active', steps INTEGER NOT NULL DEFAULT 0, reason TEXT
+);
+CREATE TABLE IF NOT EXISTS roundtable_attempt (
+    todo_id TEXT PRIMARY KEY REFERENCES roundtable_todo(id) ON DELETE CASCADE,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS collaboration_issue_work (
+    issue_id TEXT PRIMARY KEY REFERENCES collaboration_issue(id) ON DELETE CASCADE,
+    todo_id TEXT NOT NULL REFERENCES roundtable_todo(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS collaboration_plan (
+    session_id TEXT PRIMARY KEY REFERENCES hub_session(id) ON DELETE CASCADE,
+    coordinator_id TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    phase TEXT NOT NULL DEFAULT 'planning',
+    criteria TEXT,
+    decision TEXT,
+    evidence TEXT,
+    todo_id TEXT,
+    executor_id TEXT,
+    reviewer_id TEXT
+);
+CREATE TABLE IF NOT EXISTS project_workspace (
+    project_id TEXT PRIMARY KEY REFERENCES project(id) ON DELETE CASCADE,
+    repository_id TEXT NOT NULL REFERENCES coding_repository(id) ON DELETE RESTRICT
+);
+-- Explicit controller-owned wave. One Agent profile can execute several isolated TODOs.
+CREATE TABLE IF NOT EXISTS collaboration_assignment (
+    session_id TEXT NOT NULL REFERENCES collaboration_plan(session_id) ON DELETE CASCADE,
+    todo_id TEXT NOT NULL REFERENCES roundtable_todo(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    executor_id TEXT NOT NULL, reviewer_id TEXT NOT NULL,
+    phase TEXT NOT NULL, decision TEXT NOT NULL,
+    PRIMARY KEY(session_id,todo_id)
+);
+-- Preserve an in-flight single assignment when upgrading.
+INSERT OR IGNORE INTO collaboration_assignment(session_id,todo_id,version,executor_id,reviewer_id,phase,decision)
+SELECT session_id,todo_id,version,executor_id,reviewer_id,phase,COALESCE(decision,'') FROM collaboration_plan
+WHERE phase IN ('executing','checking') AND todo_id IS NOT NULL AND executor_id IS NOT NULL AND reviewer_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS collaboration_scope (
+    session_id TEXT PRIMARY KEY REFERENCES hub_session(id) ON DELETE CASCADE,
+    deliverables TEXT NOT NULL, exclusions TEXT NOT NULL, baseline TEXT NOT NULL, roadmap TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS collaboration_task_archive (
+    session_id TEXT PRIMARY KEY REFERENCES hub_session(id) ON DELETE CASCADE,
+    archived_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collaboration_scope_review (
+    session_id TEXT NOT NULL REFERENCES hub_session(id) ON DELETE CASCADE,
+    digest TEXT NOT NULL, allowed INTEGER NOT NULL, reason TEXT NOT NULL,
+    PRIMARY KEY(session_id,digest)
+);
+CREATE TABLE IF NOT EXISTS collaboration_coding_run (
+    -- Coding owns run lifetime; keep session cleanup independent of the optional coding schema.
+    run_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES hub_session(id) ON DELETE CASCADE,
+    todo_id TEXT NOT NULL REFERENCES roundtable_todo(id) ON DELETE CASCADE,
+    executor_id TEXT NOT NULL, assignment_version INTEGER NOT NULL,
+    reviewer_id TEXT, reviewed_hash TEXT, review_evidence TEXT, review_version INTEGER
+);
+CREATE TABLE IF NOT EXISTS collaboration_task_quality (
+ todo_id TEXT PRIMARY KEY REFERENCES roundtable_todo(id) ON DELETE CASCADE,
+ contract TEXT, findings TEXT, diagnosis TEXT, updated_at INTEGER NOT NULL
+);
+
+-- Project documents outlive their source sessions. Every update appends an immutable revision.
+CREATE TABLE IF NOT EXISTS project_document (
+ project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+ doc_key TEXT NOT NULL, version INTEGER NOT NULL,
+ kind TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+ graph_claim_id INTEGER REFERENCES graph_claim(id),
+ retired INTEGER NOT NULL DEFAULT 0,
+ source_session_id TEXT, source_title TEXT, author TEXT NOT NULL, updated_at INTEGER NOT NULL,
+ PRIMARY KEY(project_id,doc_key,version)
+);
+CREATE INDEX IF NOT EXISTS idx_project_document_updated ON project_document(project_id,updated_at DESC);
+
+-- Preserve existing confirmed deliveries without inventing a project summary or changing edited documents.
+INSERT OR IGNORE INTO project_document(project_id,doc_key,version,kind,title,content,source_session_id,source_title,author,updated_at)
+SELECT s.project_id,'delivery-'||s.id||'-'||c.version,1,'delivery','交付 · '||COALESCE(s.title,'未命名会话'),
+ '# '||COALESCE(s.title,'未命名会话')||char(10)||char(10)||'## 交付与验证'||char(10)||c.evidence
+ ||char(10)||char(10)||'## 本次成果'||char(10)||COALESCE(sc.deliverables,'历史记录未填写')
+ ||char(10)||char(10)||'## 范围外事项与限制'||char(10)||COALESCE(sc.exclusions,'历史记录未填写')
+ ||char(10)||char(10)||'## 后续建议（尚未执行）'||char(10)||COALESCE(sc.roadmap,'历史记录未填写')
+ ||char(10)||char(10)||'## 工作结果'||char(10)||COALESCE((SELECT group_concat(t.title||' ['||t.status||'] '||COALESCE(t.result,'未记录结果'),char(10)||char(10)) FROM roundtable_todo t WHERE t.session_id=s.id),'未记录工作结果'),
+ s.id,s.title,c.coordinator_id,s.updated_at
+FROM collaboration_plan c JOIN hub_session s ON s.id=c.session_id LEFT JOIN collaboration_scope sc ON sc.session_id=c.session_id
+WHERE s.project_id IS NOT NULL AND c.phase='completed' AND c.evidence IS NOT NULL;
+CREATE TABLE IF NOT EXISTS economy_report (
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL,
+    created_at INTEGER NOT NULL, body TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_economy_report_owner ON economy_report(owner,kind,created_at DESC);
+
+-- Unified knowledge graph: graph_claim is the sole statement body and governance record.
+-- Legacy entities/relations are retained for migration only; runtime reads these graph tables.
+CREATE TABLE IF NOT EXISTS graph_entity (
+  id TEXT PRIMARY KEY, namespace TEXT NOT NULL, identity_key TEXT NOT NULL, type TEXT NOT NULL, types TEXT,
+  name TEXT NOT NULL, aliases TEXT, summary TEXT, meta TEXT,
+  metadata_claim_id INTEGER REFERENCES graph_claim(id) ON DELETE SET NULL,
+  retired INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL, updated_at INTEGER,
+  UNIQUE(namespace, identity_key)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_entity_namespace ON graph_entity(namespace,name);
+CREATE TABLE IF NOT EXISTS graph_relation (
+  id TEXT PRIMARY KEY, claim_id INTEGER NOT NULL REFERENCES graph_claim(id) ON DELETE CASCADE,
+  subject_id TEXT NOT NULL REFERENCES graph_entity(id), predicate TEXT NOT NULL,
+  object_id TEXT NOT NULL REFERENCES graph_entity(id), props TEXT,
+  source_chunk INTEGER, source_claim INTEGER REFERENCES graph_claim(id) ON DELETE SET NULL,
+  UNIQUE(claim_id,subject_id,predicate,object_id)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_subject ON graph_relation(subject_id,claim_id);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_object ON graph_relation(object_id,claim_id);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_claim ON graph_relation(claim_id);
+CREATE TABLE IF NOT EXISTS graph_chunk_entity (
+  chunk_id INTEGER NOT NULL REFERENCES chunks(id), entity_id TEXT NOT NULL REFERENCES graph_entity(id),
+  PRIMARY KEY(chunk_id,entity_id)
+);
+CREATE TABLE IF NOT EXISTS graph_entity_embedding (
+  id TEXT PRIMARY KEY REFERENCES graph_entity(id), model TEXT NOT NULL, dim INTEGER NOT NULL,
+  vec BLOB NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS graph_episode (
+  id TEXT PRIMARY KEY, source_ref TEXT NOT NULL, content_hash TEXT NOT NULL,
+  payload TEXT NOT NULL, exec_json TEXT, observed_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active', UNIQUE(source_ref,content_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_episode_source ON graph_episode(source_ref,status);
+CREATE TABLE IF NOT EXISTS graph_support (
+  claim_id INTEGER NOT NULL REFERENCES graph_claim(id) ON DELETE CASCADE,
+  episode_id TEXT NOT NULL REFERENCES graph_episode(id), stance TEXT NOT NULL DEFAULT 'supports',
+  PRIMARY KEY(claim_id,episode_id)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_support_episode ON graph_support(episode_id,claim_id);
+CREATE TABLE IF NOT EXISTS graph_ingest_job (
+  id TEXT PRIMARY KEY, group_key TEXT NOT NULL, exec_json TEXT NOT NULL,
+  episode_id TEXT NOT NULL REFERENCES graph_episode(id), source_refs TEXT,
+  explicit INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+  next_at INTEGER NOT NULL, lease_until INTEGER, lease_token TEXT, created_at INTEGER NOT NULL,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_graph_ingest_due ON graph_ingest_job(state,next_at,group_key);
+CREATE VIRTUAL TABLE IF NOT EXISTS graph_claim_fts USING fts5(title,body,tokenize='trigram');

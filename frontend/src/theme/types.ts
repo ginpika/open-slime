@@ -132,6 +132,7 @@ export type ThemeState = {
  * ------------------------------------------------------------------------- */
 
 export const OVERRIDE_ROUTES = [
+  'todos',
   'home',
   'chat',
   'search',
@@ -145,16 +146,17 @@ export const OVERRIDE_ROUTES = [
   'memory',
   'agent',
   'roundtable',
+  'collaboration',
   'workflow',
   'workspace',
   'settings',
   'stats',
-  'about',
 ] as const
 
 export type OverrideRoute = (typeof OVERRIDE_ROUTES)[number]
 
 export const ROUTE_LABELS: Record<OverrideRoute, string> = {
+  todos: '待办',
   home: '首页',
   chat: '聊天',
   search: '搜索',
@@ -168,9 +170,9 @@ export const ROUTE_LABELS: Record<OverrideRoute, string> = {
   memory: '记忆',
   agent: '智能体内部页',
   roundtable: '圆桌',
+  collaboration: '协作',
   workflow: '执行态',
   workspace: '工作空间',
   settings: '设置',
   stats: '用量 & 统计',
-  about: '关于',
 }

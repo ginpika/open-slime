@@ -62,10 +62,31 @@ class CodingStoreTest {
         assertTrue(store.pendingInputs(run.id()).isEmpty());assertEquals(messages.toString(),store.messages(run.id()));
         assertEquals(2,store.run(run.id(),"alice").round());
     }
+    @Test void instructionReceiptsPersistAcceptedAppliedAndTrustedSource() {
+        String text="用户新指令：修复文档";
+        long input=store.input(run.id(),text,"COLLABORATION_AGENT","request-key",2);
+        assertEquals(input,store.receipt(run.id(),"request-key").instructionId());
+        assertEquals(text,store.receipt(run.id(),"request-key").acceptedInput());
+        assertEquals("ACCEPTED",store.latestReceipt(run.id()).instructionState());
+        var pending=store.pendingInputs(run.id());
+        assertTrue(store.instructionText(run.id(),pending.getFirst()).contains("来源=COLLABORATION_AGENT"));
+        store.applyInputs(run.id(),new ObjectMapper().createArrayNode(),1,pending);
+        assertEquals("APPLIED",store.receipt(run.id(),"request-key").instructionState());
+        assertThrows(org.springframework.dao.DataAccessException.class,()->store.input(run.id(),"duplicate","AGENT","request-key",2));
+        assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM coding_input WHERE run_id=?",Integer.class,run.id()));
+    }
     @Test void eventReplayUsesStableCursorAndRunFilter(){
         long first=store.event(run.id(),"first",java.util.Map.of("value",1));store.event(run.id(),"second",java.util.Map.of("value",2));
         var rows=store.events(run.id(),first,10);assertEquals(1,rows.size());assertEquals("second",rows.getFirst().type());
         assertTrue(store.events("other-run",0,10).isEmpty());
+    }
+    @Test void reviewPermissionsAreDurableAndInitialPolicySurvivesContinuation(){
+        assertFalse(store.autoReview(run.id()));assertFalse(store.requestedAutoReview(run.id()));
+        store.reviewPolicy(run.id(),true);assertTrue(store.autoReview(run.id()));assertFalse(store.requestedAutoReview(run.id()));
+        var created=store.create("alice",new StartRun(run.repositoryId(),"Review this",null,Mode.EDIT,Runner.DOCKER,10,null,true),10);
+        assertTrue(store.autoReview(created.id()));assertTrue(store.requestedAutoReview(created.id()));
+        store.reviewPolicy(created.id(),false);assertFalse(store.autoReview(created.id()));assertTrue(store.requestedAutoReview(created.id()));
+        assertFalse(new CodingStore(jdbc,new TransactionTemplate(new DataSourceTransactionManager(jdbc.getDataSource())),new ObjectMapper()).autoReview(created.id()));
     }
     @Test void repeatedProviderCallIdsAreResolvedAgainstCheckpointAttemptAndRound(){
         var messages=new ObjectMapper().createArrayNode();

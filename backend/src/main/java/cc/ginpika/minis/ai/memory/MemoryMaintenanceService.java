@@ -24,6 +24,22 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class MemoryMaintenanceService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    /** Acquire the SQLite write boundary before clearing any content. Reserved reset cursors survive cleanup. */
+    public void beginReset() {
+        long now=System.currentTimeMillis();
+        var cursor=new MemoryCursorStore(jdbc);
+        cursor.set("reset:generation",MemoryResetBoundary.read(jdbc).generation()+1);
+        cursor.set("reset:at",now);
+        cursor.set("reset:chat",jdbc.queryForObject("SELECT COALESCE(max(id),0) FROM chat_message",Long.class));
+        cursor.set("reset:task",jdbc.queryForObject("SELECT COALESCE(max(id),0) FROM task",Long.class));
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() { MemoryStage.invalidateAll(); MemoryMetrics.reset(); }
+                });
+    }
 
     /** 一次清空的统计 */
     public record Cleared(int events, int items, int candidates, int shares, int revocations,
@@ -71,18 +87,26 @@ public class MemoryMaintenanceService {
 
     /** 清空记忆子系统全部落点（调用方须在事务内，保证整体成功或整体回滚） */
     public Cleared clearAll() {
-        int e = events.clearAll();
-        int i = items.clearAll();
+        return clearAll(false);
+    }
+
+    public Cleared clearAll(boolean deleteProjectKnowledge) {
         int c = candidates.clearAll();
         int s = shares.clearAll();
         int r = revocations.clearAll();
         int g = edges.clearAll();
+        g+=jdbc.update("DELETE FROM memory_edge");
+        jdbc.update("DELETE FROM memory_retracted_source");
+        jdbc.update("DELETE FROM graph_ingest_job");
+        if(deleteProjectKnowledge) jdbc.update("DELETE FROM project_document");
         int cur = cursors.clearAll();
         int snap = snapshots.clearAll();
         int promo = promotions.clearAll();
         int hand = handoffs.clearAll();
         int work = works.clearAll();
         int rev = revisions.clearAll();
+        int e = events.clearAll();
+        int i = items.clearAll(!deleteProjectKnowledge);
         return new Cleared(e, i, c, s, r, g, cur, snap, promo, hand, work, rev);
     }
 }

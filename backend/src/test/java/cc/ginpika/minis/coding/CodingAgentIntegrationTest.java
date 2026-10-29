@@ -35,7 +35,7 @@ class CodingAgentIntegrationTest {
         var seeded=ArgumentCaptor.forClass(AgentStore.AgentRow.class);verify(agents).insert(seeded.capture());
         assertEquals(BuiltinAgents.CODING,seeded.getValue().id());assertTrue(seeded.getValue().builtin());assertTrue(seeded.getValue().tools().contains("coding_task"));
         verify(versions).saveBinding(BuiltinAgents.CODING,"identity","builtin-coding-identity-v1");
-        var directory=new AgentDirectory(agents,null,mock(AgentPromptService.class),null,json);
+        var directory=new AgentDirectory(agents,null,mock(AgentPromptService.class),null,json,mock(cc.ginpika.minis.ai.core.tool.ToolManager.class));
         when(agents.peer(BuiltinAgents.CODING)).thenReturn(Optional.of(seeded.getValue()));
         assertThrows(IllegalArgumentException.class,()->directory.delete(BuiltinAgents.CODING));
         assertFalse(AgentDirectory.isBuiltin(BuiltinAgents.CODING),"Coding identity must not alias the assistant's global prompt");
@@ -47,9 +47,46 @@ class CodingAgentIntegrationTest {
         when(prompts.system(BuiltinAgents.CODING)).thenReturn("shared-config");
         CodingAgent agent=new CodingAgent(agents,prompts,versions);new CodingAgent(agents,prompts,versions);
         verify(agents,never()).insert(any());verifyNoInteractions(versions);
-        assertEquals("model-1",agent.modelId(null));assertEquals("explicit",agent.modelId("explicit"));assertEquals("shared-config",agent.instructions());
+        assertEquals("model-1",agent.modelId(null));assertEquals("explicit",agent.modelId("explicit"));
+        assertTrue(agent.instructions().startsWith("shared-config"));
+        assertTrue(agent.instructions().contains("executionAuthorized"),"runtime capabilities supplement rather than overwrite user identity");
+        verify(prompts,atLeastOnce()).system(BuiltinAgents.CODING);
         when(agents.peer(BuiltinAgents.CODING)).thenReturn(Optional.of(row("model-2")));
         assertEquals("model-2",agent.profile().modelId());assertEquals("model-2",agent.modelId(""));
+    }
+
+    @Test void customNameAndAvatarPersistAcrossProfileReadsAndReseeding() throws Exception {
+        var source = new org.springframework.jdbc.datasource.SingleConnectionDataSource("jdbc:sqlite::memory:", true);
+        try {
+            new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
+                    new org.springframework.core.io.ClassPathResource("schema.sql")).execute(source);
+            var agents = new AgentStore(new org.springframework.jdbc.core.JdbcTemplate(source));
+            var versions = new AgentPromptStore(new org.springframework.jdbc.core.JdbcTemplate(source));
+            var prompts = mock(AgentPromptService.class);
+            var agent = new CodingAgent(agents, prompts, versions);
+            var directory = new AgentDirectory(agents, null, prompts, null, json, null);
+            String avatar = "data:image/png;base64,aGVsbG8=";
+            directory.update(BuiltinAgents.CODING, "牧濑红莉栖", null, null, "character-model", null,
+                    null, avatar, "研究员", "#6b7280");
+
+            // A fresh runtime must use the saved directory identity, including its avatar.
+            var restarted = new CodingAgent(agents, prompts, versions);
+            assertEquals(agent.profile(), restarted.profile());
+            assertEquals("牧濑红莉栖", restarted.profile().name());
+            assertEquals(avatar, restarted.profile().avatar());
+            assertEquals("character-model", restarted.profile().modelId());
+            assertEquals(avatar, json.valueToTree(restarted.profile()).path("avatar").asText());
+            assertEquals(BuiltinAgents.CODING, directory.byName("牧濑红莉栖").orElseThrow().id());
+            assertThrows(IllegalArgumentException.class, () -> directory.delete(BuiltinAgents.CODING));
+
+            directory.update(BuiltinAgents.CODING, null, null, null, null, null, null, "", null, null);
+            assertNull(agent.profile().avatar());
+            assertEquals("牧濑红莉栖", agent.profile().name());
+            assertEquals("研究员", agents.peer(BuiltinAgents.CODING).orElseThrow().role());
+            assertFalse(versions.versions(BuiltinAgents.CODING).isEmpty());
+        } finally {
+            source.destroy();
+        }
     }
 
     @Test void codingContextUsesSuppliedIdentityAndRebuildsModeRulesWithoutLosingHistory(){
@@ -76,7 +113,9 @@ class CodingAgentIntegrationTest {
         assertTrue(manager.readOnlyToolsOf(ToolSurface.CHAT).isEmpty());
         assertEquals(1,manager.toolsOf(List.of("coding_task"),ToolSurface.CHAT).size());
         assertEquals(ToolDomain.CODING,tool.domain());
-        assertNotNull(tool.validate(json.createObjectNode().put("action","start").put("repositoryId","p1").put("prompt","build").put("mode","EXECUTE")));
+        assertNull(tool.validate(json.createObjectNode().put("action","start").put("repositoryId","p1").put("prompt","build").put("mode","EXECUTE")),
+                "syntax accepts EXECUTE; CodingFacade verifies live project dispatch before granting it");
+        assertNotNull(tool.validate(json.createObjectNode().put("action","start").put("repositoryId","p1").put("prompt","build").put("mode","ROOT")));
         assertNull(tool.validate(json.createObjectNode().put("action","resume").put("runId","r1")));
     }
 

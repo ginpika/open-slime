@@ -59,6 +59,8 @@ class SchemaColumnPatchesTest {
                 Statement statement = connection.createStatement()) {
             statement.execute(LEGACY_DDL);
             statement.execute(LEGACY_TODO_DDL);
+            statement.execute("CREATE TABLE term_target(id TEXT PRIMARY KEY, name TEXT)");
+            statement.execute("INSERT INTO term_target(id, name) VALUES('legacy', '已有工作空间')");
             statement.execute("INSERT INTO chat_message(session_id, role, content, created_at) "
                     + "VALUES('s1','user','老数据',1)");
             JdbcTemplate jdbc = new JdbcTemplate(new SingleConnectionDataSource(connection, true));
@@ -66,6 +68,9 @@ class SchemaColumnPatchesTest {
 
             patches.apply();
 
+            assertTrue(columnsOf(connection, "term_target").contains("host_workdir"));
+            assertEquals("已有工作空间", jdbc.queryForObject("SELECT name FROM term_target", String.class));
+            assertNull(jdbc.queryForObject("SELECT host_workdir FROM term_target", String.class));
             assertTrue(columnsOf(connection, "chat_message").contains("event_kind"), "缺的列应被补上");
             assertTrue(columnsOf(connection, "roundtable_todo").contains("depends_on"),
                     "任务板的前置依赖列也应被补上");

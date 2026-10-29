@@ -39,6 +39,8 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @Service
 public class SettingsService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     /** 内置项 id（.env 传入），不可编辑/删除 */
     public static final String ENV_ID = "env";
@@ -258,8 +260,8 @@ public class SettingsService {
         return e.getMessage() == null ? e.toString() : e.getMessage();
     }
 
-    /** 按列表 id 精确解析模型端点（连通性测试用）：非内置 id 不存在时 404，不回退 env */
-    private ModelTarget requireModelTarget(String id) {
+    /** 设置页按列表 id 精确解析端点（测试/账户查询）：非内置 id 不存在时 404，不回退 env。 */
+    public ModelTarget requireModelTarget(String id) {
         if (id == null || id.isBlank() || ENV_ID.equals(id)) {
             return resolveModelById(null);
         }
@@ -370,7 +372,7 @@ public class SettingsService {
     /**
      * 重置知识库（设置页「危险操作」）：清空全部 chunk（含双 FTS 索引、chunk_extraction 与
      * chunk_embedding）、知识图谱的全部实体/关系（含 chunk_entity 关联与 entity_embedding），
-     * 以及<b>整个记忆子系统</b>——时序事件（memory_event）、记忆条目（memory_item）、
+     * 以及<b>整个记忆子系统</b>——时序事件（memory_event）、记忆条目（graph_claim）、
      * 画像候选、共享、撤销墓碑、知识边与提炼水位（见 {@link MemoryMaintenanceService}），不可恢复。
      * documents 元数据不在删除范围。整个清空在同一事务内完成。
      *
@@ -379,12 +381,30 @@ public class SettingsService {
      */
     @Transactional
     public SettingsDtos.ResetResult resetKnowledgeBase() {
+        return resetKnowledgeBase(false);
+    }
+
+    @Transactional
+    public SettingsDtos.ResetResult resetKnowledgeBase(boolean deleteProjectKnowledge) {
+        memoryMaintenance.beginReset();
+        if(jdbc.queryForObject("SELECT count(*) FROM task WHERE status='running'",Integer.class)>0) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT,
+                    "请先结束正在运行的 Agent 对话、协作或编码执行，再重置知识库，避免执行中的旧上下文回写。");
+        }
+        int episodes=jdbc.queryForObject("SELECT count(*) FROM graph_episode",Integer.class);
+        int jobs=jdbc.queryForObject("SELECT count(*) FROM graph_ingest_job",Integer.class);
+        int projectDocuments=jdbc.queryForObject("SELECT count(*) FROM project_document",Integer.class);
+        int checkpoints=jdbc.update("UPDATE task SET memory_checkpoint=NULL WHERE memory_checkpoint IS NOT NULL");
+        int recalls=jdbc.update("DELETE FROM rag_recall");
         GraphStore.Cleared graph = graphStore.clearAll();
         int chunks = chunkStore.clearAll();
-        MemoryMaintenanceService.Cleared mem = memoryMaintenance.clearAll();
+        MemoryMaintenanceService.Cleared mem = memoryMaintenance.clearAll(deleteProjectKnowledge);
+        jdbc.update("UPDATE web_snapshot SET index_status=CASE WHEN enabled=1 THEN 'reset' ELSE 'disabled' END");
         anchorSeeder.seed();
+        int keptEpisodes=jdbc.queryForObject("SELECT count(*) FROM graph_episode",Integer.class);
         return new SettingsDtos.ResetResult(chunks, graph.entities(), graph.relations(), mem.entries(),
-                mem.events(), mem.items(), mem.candidates(), mem.shares());
+                mem.events(), mem.items(), mem.candidates(), mem.shares(),Math.max(0,episodes-keptEpisodes),jobs,
+                checkpoints,recalls,deleteProjectKnowledge?projectDocuments:0,deleteProjectKnowledge?0:projectDocuments);
     }
 
     // ---------- 运行时解析 ----------

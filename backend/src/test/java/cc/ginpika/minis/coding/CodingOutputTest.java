@@ -67,14 +67,14 @@ class CodingOutputTest {
         assertEquals("length",new OpenAiChatClient.RawResult(json.createObjectNode(),"{\"choices\":[{\"finish_reason\":\"length\"}]}" ).finishReason());
         assertNull(new OpenAiChatClient.RawResult(json.createObjectNode(),"non-json").finishReason());
     }
-    @Test void recoveryConsumesTheExistingRoundBudgetAndNeverDispatchesIncompleteCalls(){
+    @Test void recoveryContinuesUntilAnAnswerWithoutDispatchingIncompleteCalls(){
         OpenAiChatClient client=mock(OpenAiChatClient.class);var recovery=new CodingOutput(props,store,run);var request=body();
         var message=json.createObjectNode();message.putArray("tool_calls").addObject().put("id","broken");
-        when(client.chatRaw(any(),any(),any(),anyString())).thenReturn(new OpenAiChatClient.RawResult(message,"raw","length"));
+        when(client.chatRaw(any(),any(),any(),anyString())).thenReturn(new OpenAiChatClient.RawResult(message,"raw","length"),text("finished","stop"));
         List<JsonNode> executed=new ArrayList<>();
-        var result=new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",request,1,false,calls->{executed.addAll(calls);return List.of();},new ModelLoop.Hooks(){
+        var result=new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",request,false,calls->{executed.addAll(calls);return List.of();},new ModelLoop.Hooks(){
             @Override public boolean continueAfterResponse(int round,ObjectNode body,OpenAiChatClient.RawResult raw){return recovery.continueResponse(round,body,raw);}
         },null));
-        assertEquals(ModelLoop.End.ROUNDS_EXHAUSTED,result.end());assertTrue(executed.isEmpty());verify(client,times(1)).chatRaw(any(),any(),any(),anyString());
+        assertEquals(ModelLoop.End.ANSWERED,result.end());assertEquals("finished",result.content());assertTrue(executed.isEmpty());verify(client,times(2)).chatRaw(any(),any(),any(),anyString());
     }
 }

@@ -6,6 +6,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Base64;
+import cc.ginpika.minis.ai.knowledge.web.SnapshotEvidenceStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -50,6 +53,65 @@ public class DocumentStore {
     public record DocHit(long id, String title, String url, String summary, String source) {
     }
 
+    public record DirectoryEntry(long docId, String title, String source, String url, String localUrl,
+                                 String snapshotId, long createdAt, boolean enabled, String indexStatus, String summary) {}
+    public record DirectoryPage(List<DirectoryEntry> items, String nextCursor, boolean hasMore) {}
+
+    /** One stable keyset order for both browsing and title search. No document bodies are fetched. */
+    public DirectoryPage directory(String keywords, String source, String status, Long from, Long to,
+                                   String cursor, int requestedLimit) {
+        if (source != null && !List.of("doc", "blog", "snapshot").contains(source))
+            throw new IllegalArgumentException("source 须为 doc、blog 或 snapshot");
+        if (!List.of("all", "enabled", "disabled").contains(status))
+            throw new IllegalArgumentException("status 须为 all、enabled 或 disabled");
+        if (from != null && to != null && from > to) throw new IllegalArgumentException("created_from 不能晚于 created_to");
+        int limit = Math.max(1, Math.min(30, requestedLimit));
+        var predicates = new ArrayList<String>();
+        var params = new ArrayList<Object>();
+        predicates.add("1=1");
+        if (keywords != null && !keywords.isBlank()) {
+            for (String term : keywords.strip().split("\\s+")) {
+                predicates.add("d.title LIKE ? ESCAPE '\\'"); params.add("%" + escapeLike(term) + "%");
+            }
+        }
+        if (source != null) { predicates.add("d.source=?"); params.add(source); }
+        // 'enabled' describes retrieval availability, not authorization or document analysis completion.
+        String enabled = "COALESCE(s.enabled, NOT EXISTS(SELECT 1 FROM chunks c WHERE c.doc_id=d.id) OR EXISTS(SELECT 1 FROM chunks c WHERE c.doc_id=d.id AND c.status!='disabled'))";
+        if (!"all".equals(status)) { predicates.add(enabled + "=?"); params.add("enabled".equals(status) ? 1 : 0); }
+        if (from != null) { predicates.add("d.created_at>=?"); params.add(from); }
+        if (to != null) { predicates.add("d.created_at<=?"); params.add(to); }
+        if (cursor != null && !cursor.isBlank()) {
+            try {
+                String[] values = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8).split(":", -1);
+                if (values.length != 2) throw new IllegalArgumentException();
+                long time = Long.parseLong(values[0]), id = Long.parseLong(values[1]);
+                if (time < 0 || id <= 0) throw new IllegalArgumentException();
+                predicates.add("(d.created_at<? OR (d.created_at=? AND d.id<?))");
+                params.add(time); params.add(time); params.add(id);
+            } catch (IllegalArgumentException e) { throw new IllegalArgumentException("cursor 无效，请重新列举并使用返回的 next_cursor"); }
+        }
+        params.add(limit + 1);
+        var entries = jdbc.query("SELECT d.id,d.title,d.source,COALESCE(s.url,d.url) AS url,s.id AS snapshot_id,"
+                        + "d.created_at," + enabled + " AS enabled,s.index_status,substr(COALESCE(NULLIF(d.summary,''),d.contextualizing,''),1,200) AS summary "
+                        + "FROM documents d LEFT JOIN web_snapshot s ON s.doc_id=d.id WHERE " + String.join(" AND ", predicates)
+                        + " ORDER BY d.created_at DESC,d.id DESC LIMIT ?",
+                (rs, i) -> {
+                    String snapshot = rs.getString("snapshot_id"), url = rs.getString("url");
+                    String local = snapshot != null ? "#/snapshots/" + snapshot
+                            : "blog".equals(rs.getString("source")) && url != null ? "#/article/" + url : "#/analyze?doc=" + rs.getLong("id");
+                    return new DirectoryEntry(rs.getLong("id"), rs.getString("title"), rs.getString("source"), snapshot != null ? url : null,
+                            local, snapshot, rs.getLong("created_at"), rs.getBoolean("enabled"), rs.getString("index_status"), rs.getString("summary"));
+                }, params.toArray());
+        boolean more = entries.size() > limit;
+        var items = List.copyOf(entries.subList(0, Math.min(limit, entries.size())));
+        String next = null;
+        if (more) {
+            var last = items.getLast();
+            next = Base64.getUrlEncoder().withoutPadding().encodeToString((last.createdAt() + ":" + last.docId()).getBytes(StandardCharsets.UTF_8));
+        }
+        return new DirectoryPage(items, next, more);
+    }
+
     /** 按 id 批量取文档行；不存在的跳过 */
     public List<DocHit> docsByIds(Collection<Long> ids) {
         if (ids.isEmpty()) {
@@ -62,31 +124,6 @@ public class DocumentStore {
                         rs.getString("summary"), rs.getString("source")));
     }
 
-    /** 按标题关键词查文档（chat 工具用）：keywords 按空白切成多词，逐词 LIKE（AND，ASCII 大小写不敏感）；
-     *  短标题优先（命中的标题越接近关键词越靠前）；空关键词返回空 */
-    public List<DocHit> searchByTitle(String keywords, int limit) {
-        List<String> terms = keywords == null ? List.of() : java.util.Arrays.stream(keywords.strip().split("\\s+"))
-                .filter(t -> !t.isEmpty())
-                .toList();
-        if (terms.isEmpty()) {
-            return List.of();
-        }
-        String where = terms.stream()
-                .map(t -> "title LIKE ? ESCAPE '\\'")
-                .collect(java.util.stream.Collectors.joining(" AND "));
-        Object[] params = new Object[terms.size() + 1];
-        for (int i = 0; i < terms.size(); i++) {
-            params[i] = "%" + escapeLike(terms.get(i)) + "%";
-        }
-        params[terms.size()] = limit;
-        return jdbc.query(
-                "SELECT id, title, url, summary, source FROM documents WHERE " + where
-                        + " ORDER BY LENGTH(title) ASC, id DESC LIMIT ?",
-                (rs, i) -> new DocHit(rs.getLong("id"), rs.getString("title"), rs.getString("url"),
-                        rs.getString("summary"), rs.getString("source")),
-                params);
-    }
-
     /** LIKE 通配符转义（配合 ESCAPE '\'）：让关键词里的 % _ \ 按字面匹配 */
     private static String escapeLike(String term) {
         return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
@@ -97,15 +134,18 @@ public class DocumentStore {
     private final GraphStore graph;
     private final Chunker chunker;
     private final Path articleDir;
+    private final SnapshotEvidenceStore snapshotEvidence;
 
     public DocumentStore(JdbcTemplate jdbc, ChunkStore chunks, GraphStore graph,
                          Chunker chunker,
-                         @Value("${minis.article-dir:../data/article}") String articleDir) {
+                         @Value("${minis.article-dir:../data/article}") String articleDir,
+                         SnapshotEvidenceStore snapshotEvidence) {
         this.jdbc = jdbc;
         this.chunks = chunks;
         this.graph = graph;
         this.chunker = chunker;
         this.articleDir = Path.of(articleDir).toAbsolutePath().normalize();
+        this.snapshotEvidence = snapshotEvidence;
     }
 
     /** 写文章 markdown 原文（发布/更新的文件侧） */
@@ -192,15 +232,12 @@ public class DocumentStore {
         }
         String url = (String) rows.get(0).get("url");
         if ("snapshot".equals(rows.getFirst().get("source"))) {
-            var snapshots = jdbc.queryForList("SELECT id,url,title,source_html FROM web_snapshot WHERE doc_id=?",docId);
+            var snapshots = jdbc.queryForList("SELECT id,url,title FROM web_snapshot WHERE doc_id=?",docId);
             if (!snapshots.isEmpty()) {
                 var snapshot = snapshots.getFirst();
                 StringBuilder original = new StringBuilder("# " + snapshot.get("title") + "\n来源：" + snapshot.get("url")
                         + "\n本地快照：#/snapshots/" + snapshot.get("id") + "\n\n");
-                for (var paragraph : org.jsoup.Jsoup.parse((String)snapshot.get("source_html")).select("[id]")) {
-                    if (paragraph.id().matches("p[0-9]+")) original.append('[').append(paragraph.id()).append("] ")
-                            .append(paragraph.wholeText()).append("\n\n");
-                }
+                original.append(snapshotEvidence.text((String) snapshot.get("id")));
                 return original.toString();
             }
         }

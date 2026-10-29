@@ -24,9 +24,9 @@ import org.springframework.stereotype.Component;
  * 组装好的请求体（{@link Spec#body()}）与「一次工具调用该由谁办」（{@link Spec#dispatch()}）交进来，
  * 把「过程要通知谁」（{@link Spec#listener()}，可为空）与累计态的落点（{@link Spec#runState()}）备好。
  *
- * <p>两条约定与两处旧实现一致，不要改：
+ * <p>工具协议约定：
  * <ul>
- *   <li><b>最后一轮撤掉 tools</b>，逼模型给出最终回答；</li>
+ *   <li>保留工具能力，直到模型给出最终回答；</li>
  *   <li>带 {@code tool_calls} 的 assistant 轮次补 {@code reasoning_content}（思考模型的续轮硬要求），
  *       工具结果按 {@code tool_call_id} 配对续在同一串 messages 上——协议闭合。</li>
  * </ul>
@@ -57,20 +57,20 @@ public class AgentRuntime {
      * @param target    本次发往的模型
      * @param source    计量留痕的来源（{@link cc.ginpika.minis.stats.TokenUsageService} 的 source）
      * @param body      请求体：已含 model 与 messages（内核就地往 messages 追加工具往返）；
-     *                  最后一轮由内核用去掉 tools 的副本
      * @param dispatch  一次工具调用该由谁办
-     * @param maxRounds 工具往返轮数上限（0 = 只有首轮）
      * @param listener  过程回调；不需要过程通知的流传 null
      * @param runState  累计态（思考链 / 分段 / 工具往返 / 原始返回）的落点，由调用方持有
      */
     public record Spec(ModelTarget target, String source, ObjectNode body, ToolDispatch dispatch,
-                       int maxRounds, Listener listener, RunState runState) {
+                       Listener listener, RunState runState) {
     }
 
     /** 一次工具调用的执行入口：调用方决定这件工具归谁办、能不能并行 */
     public interface ToolDispatch {
         /** 落地一条调用，返回要回给模型的文本 */
         String run(JsonNode call);
+
+        default String answerAfterTools(List<JsonNode> calls, List<String> results) { return null; }
 
         /** 该工具名是否可并行（默认不可并行） */
         default boolean parallelizable(String name) {
@@ -154,9 +154,7 @@ public class AgentRuntime {
         /** 拿到最终回答 */
         ANSWERED,
         /** 模型这一轮既没正文也没思考（供应商形态异常） */
-        EMPTY_CONTENT,
-        /** 轮数用尽仍只给工具调用，没产出最终回答 */
-        ROUNDS_EXHAUSTED
+        EMPTY_CONTENT
     }
 
     /** 执行结果：内容为空时看 {@link #end()} 区分成因，调用方据此报错与留痕 */
@@ -165,7 +163,7 @@ public class AgentRuntime {
 
     // ---------- 循环 ----------
 
-    /** 跑一次：多轮模型往返与工具批，直到拿到最终回答或用尽轮数 */
+    /** 跑一次：多轮模型往返与工具批，直到拿到最终回答、用户停止或上游失败 */
     public Result run(Spec spec) {
         var previous = cc.ginpika.minis.ai.memory.MemoryLiveContext.begin((ArrayNode) spec.body().get("messages"));
         boolean ownsStage = !cc.ginpika.minis.ai.memory.MemoryStage.active();
@@ -212,13 +210,16 @@ public class AgentRuntime {
             }
             @Override public void message(JsonNode message) { spec.runState().toolRounds.add(message); }
             @Override public void progress() { if (spec.listener() != null) { spec.listener().progress(); } }
+            @Override public String answerAfterTools(int round, List<JsonNode> calls, List<String> results) {
+                return spec.dispatch().answerAfterTools(calls, results);
+            }
             @Override public void fallback(int round, String text, String raw) {
                 if (spec.listener() != null) { spec.listener().fallbackToReasoning(round, text.length(), raw); }
             }
         };
         var result = new cc.ginpika.minis.ai.runtime.ModelLoop(client).run(
                 new cc.ginpika.minis.ai.runtime.ModelLoop.Spec(spec.target(), spec.source(), spec.body(),
-                        spec.maxRounds(), true,
+                        true,
                         calls -> ToolBatch.run(calls, spec.dispatch()::parallelizable, call -> {
                             if (liveMemory != null) { liveMemory.refresh((ArrayNode) spec.body().get("messages")); }
                             return spec.dispatch().run(call);

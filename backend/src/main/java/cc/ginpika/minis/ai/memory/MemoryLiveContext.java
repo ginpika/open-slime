@@ -63,15 +63,23 @@ public class MemoryLiveContext {
         }
         items.protectedVisible(exec).stream().filter(it -> "directive".equals(it.scope())).forEach(allowed::add);
         int maxChars = Math.max(120, props.getBodyMaxChars());
-        StringBuilder text = new StringBuilder(allowed.stream().map(it -> MemoryItemRecall.oneLine(it,maxChars))
-                .collect(java.util.stream.Collectors.joining("\n")));
+        StringBuilder text = new StringBuilder();
+        java.util.Set<Long> included=new java.util.HashSet<>();
+        allowed.sort(java.util.Comparator.comparing((MemoryItemStore.ItemRow it)->!"directive".equals(it.scope())));
+        for(var it:allowed) {
+            String line=MemoryItemRecall.oneLine(it,maxChars);
+            if(included.add(it.id()) && cc.ginpika.minis.stats.TokenUsageService.estimateTokens(text+"\n"+line)<=props.getBudget().getTotal()) text.append(line).append('\n');
+        }
         for (MemoryWorkStore.WorkRow old : initial.work()) {
             work.findById(old.id()).filter(w -> "open".equals(w.status())
                     && java.util.Objects.equals(w.projectId(), exec.projectId())
                     && ((w.sessionId() != null && w.sessionId().equals(exec.sessionId()))
                         || (w.taskId() != null && w.taskId().equals(exec.taskId())))
                     && (w.expiresAt() == null || w.expiresAt() > System.currentTimeMillis()))
-                    .ifPresent(w -> text.append('\n').append(MemorySnapshotBuilder.workLine(old, maxChars)));
+                    .ifPresent(w -> {
+                        String line=MemorySnapshotBuilder.workLine(old,maxChars);
+                        if(cc.ginpika.minis.stats.TokenUsageService.estimateTokens(text+"\n"+line)<=props.getBudget().getTotal()) text.append('\n').append(line);
+                    });
         }
         if (progress!=null) {
             for (var p : initial.progress()) {

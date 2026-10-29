@@ -4,10 +4,10 @@ import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolResult;
 import cc.ginpika.minis.ai.core.tool.NowTool;
 import cc.ginpika.minis.ai.core.util.LlmJson;
-import cc.ginpika.minis.ai.core.tool.doc.CreateDocumentTool;
-import cc.ginpika.minis.ai.core.tool.doc.ReadDocumentTool;
-import cc.ginpika.minis.ai.core.tool.doc.SearchDocumentsTool;
 import cc.ginpika.minis.ai.core.tool.doc.SearchVectorChunksTool;
+import cc.ginpika.minis.ai.core.tool.doc.SearchWebTool;
+import cc.ginpika.minis.ai.core.tool.doc.FetchWebTool;
+import cc.ginpika.minis.ai.knowledge.web.WebRetrievalService;
 import cc.ginpika.minis.ai.core.tool.memory.BackfillMemoryVectorsTool;
 import cc.ginpika.minis.ai.core.tool.memory.RecallMemoryTool;
 import cc.ginpika.minis.ai.core.tool.graph.DeleteGraphItemTool;
@@ -44,7 +44,6 @@ import cc.ginpika.minis.ai.memory.store.MemoryItemStore;
 import cc.ginpika.minis.config.MemoryProps;
 import cc.ginpika.minis.ai.memory.recall.MemoryRecall;
 import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
-import cc.ginpika.minis.ai.knowledge.store.DocumentStore;
 import cc.ginpika.minis.ai.knowledge.store.GraphStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.time.LocalDateTime;
@@ -79,9 +78,6 @@ public class KnowledgeToolbox {
     /** 图谱实体查找工具单次返回的实体条数上限 */
     private static final int GRAPH_LOOKUP_LIMIT = 10;
 
-    /** 标题查文档工具单次返回的文档条数上限 */
-    private static final int DOC_TITLE_LOOKUP_LIMIT = 10;
-
     /** 图谱最短路径工具返回的路径条数上限 */
     private static final int PATH_TOP_K = 3;
 
@@ -106,7 +102,7 @@ public class KnowledgeToolbox {
     private final GraphStore graph;
     private final GraphPathFinder pathFinder;
     private final ChunkStore chunkStore;
-    private final DocumentStore documents;
+    private final DocumentToolbox documents;
     private final EmbeddingClient embedding;
     private final ToolManager tools;
     /* 记忆域两件套（ai.memory 与本包平级）：所有工具面的默认分发都汇到这里，就近代发 */
@@ -125,16 +121,20 @@ public class KnowledgeToolbox {
     /* RAG 召回留痕：三路召回工具调用记一行（查询 + 回给模型的原始数据），供潜意识页回看效果 */
     private final RagRecallRecorder ragRecalls;
     private final cc.ginpika.minis.ai.knowledge.web.WebToolbox web;
+    private final WebRetrievalService webRetrieval;
+    private final cc.ginpika.minis.ai.comfyui.integration.GenerateImageTool imageTool;
 
     public KnowledgeToolbox(FastSearchService fast, GraphStore graph, GraphPathFinder pathFinder,
-                            ChunkStore chunkStore, DocumentStore documents, EmbeddingClient embedding,
+                            ChunkStore chunkStore, DocumentToolbox documents, EmbeddingClient embedding,
                             ToolManager tools, MemoryRecall memoryRecall,
                             MemoryItemRecall memoryItems,
                             MemoryEmbeddingWriter memoryVectors, RagRecallRecorder ragRecalls,
                             MemoryItemStore memoryItemStore, MemoryItemEmbeddingWriter memoryItemVectors,
                             MemoryPublisher memoryPublisher, WorkingSetService workingSet,
                             MemoryEditService memoryEdit, MemoryProps memoryProps,
-                            cc.ginpika.minis.ai.knowledge.web.WebToolbox web) {
+                            cc.ginpika.minis.ai.knowledge.web.WebToolbox web,
+                            cc.ginpika.minis.ai.comfyui.integration.GenerateImageTool imageTool,
+                            WebRetrievalService webRetrieval) {
         this.fast = fast;
         this.graph = graph;
         this.pathFinder = pathFinder;
@@ -153,6 +153,8 @@ public class KnowledgeToolbox {
         this.memoryEdit = memoryEdit;
         this.memoryProps = memoryProps;
         this.web = web;
+        this.imageTool = imageTool;
+        this.webRetrieval = webRetrieval;
     }
 
     /** 执行一次 OpenAI 风格的工具调用节点；source 标明来自哪条流（chat / multiagent / heartbeat / plan / agent） */
@@ -165,8 +167,27 @@ public class KnowledgeToolbox {
     /** 执行一次工具调用，返回给模型的 tool 消息内容（按工具名分发）；三路召回工具顺手留痕 */
     public ToolResult run(String name, String argsJson, String source) {
         JsonNode args = LlmJson.readTree(argsJson);
+        if (SearchWebTool.NAME.equals(name) || FetchWebTool.NAME.equals(name)) {
+            String content;
+            if (FetchWebTool.NAME.equals(name)) {
+                content = webRetrieval.fetch(args.path("url").asText(""));
+            } else {
+                var result = webRetrieval.search(args.path("query").asText(""), true,
+                        args.has("count") ? args.path("count").asInt(0) : null);
+                content = result.enabled() ? WebRetrievalService.render(result)
+                        : "网页检索未启用，请在设置中开启「在 RAG 中启用」";
+            }
+            ragRecalls.record(name, argsJson, content, source);
+            return new ToolResult(name, argsJson, content, false);
+        }
+        if (cc.ginpika.minis.ai.comfyui.integration.GenerateImageTool.NAME.equals(name)) {
+            return new ToolResult(name, argsJson, imageTool.execute(args), false);
+        }
         if (cc.ginpika.minis.ai.knowledge.web.WebToolbox.handles(name)) {
             return new ToolResult(name, argsJson, web.run(name, args), tools.isWriteTool(name));
+        }
+        if (DocumentToolbox.handles(name)) {
+            return new ToolResult(name, argsJson, documents.run(name, args), tools.isWriteTool(name));
         }
         String content = switch (name) {
             case SearchVectorChunksTool.NAME -> ragTool(args);
@@ -179,9 +200,6 @@ public class KnowledgeToolbox {
             case UpsertNodeTool.NAME -> upsertNodeTool(args);
             case UpsertEdgeTool.NAME -> upsertEdgeTool(args);
             case DeleteGraphItemTool.NAME -> deleteGraphTool(args);
-            case CreateDocumentTool.NAME -> createDocumentTool(args);
-            case SearchDocumentsTool.NAME -> searchDocumentsTool(args);
-            case ReadDocumentTool.NAME -> readDocumentTool(args);
             case RecallMemoryTool.NAME -> recallMemoryTool(args);
             case PublishKnowledgeTool.NAME -> publishKnowledgeTool(args);
             case "manage_handoff" -> manageHandoff(args);
@@ -416,7 +434,7 @@ public class KnowledgeToolbox {
         if (name.isEmpty()) {
             return "参数缺少 name";
         }
-        GraphStore.Entity exist = graph.byName(name);
+        GraphStore.Entity exist = args.path("identity_key").isTextual()?null:graph.byName(name);
         /* type 兼容字符串（可逗号/顿号分隔多类型）与字符串数组（同 AnalyzeService 写图） */
         List<String> types = new ArrayList<>();
         JsonNode tnode = args.path("type");
@@ -433,12 +451,13 @@ public class KnowledgeToolbox {
             args.path("aliases").forEach(a -> aliases.add(a.asText()));
         }
         String summary = args.path("summary").asText(null);
-        graph.upsertEntity(primary, types, name, aliases, summary);
-        embedEntity(GraphStore.entityIdFor(name), name, summary);
+        String entityId=graph.upsertEntity(primary,types,name,aliases,summary,args.path("identity_key").asText(null));
+        embedEntity(entityId, name, summary);
         String msg = exist == null
                 ? "已新建实体「" + name + "」（type: " + primary + "）"
                 : "已更新实体「" + name + "」（类型已并入，主类型保持 " + exist.type()
                         + "；别名/摘要按本次提交覆盖）";
+        msg += "；实体 ID="+entityId;
         /* 写入按精确名，不据此拦截；提示相近实体让模型自查撞名/应否合并 */
         List<String> near = graph.lookup(List.of(name), ENTITY_CANDIDATE_LIMIT).stream()
                 .filter(e -> !e.name().equals(name))
@@ -546,54 +565,17 @@ public class KnowledgeToolbox {
         return "已删除关系: " + s.name() + " --" + predicate + "--> " + o.name();
     }
 
-    /** create_document：把一段 markdown 正文新建为知识库文档。走 {@link DocumentStore#create}
-     *  （内部文档：source=doc、url 为空，不发布为文章），由 Chunker 按标题/段落自动分块；
-     *  新块状态为未分析，但 FTS 已同步，随即可被关键词检索命中。 */
-    private String createDocumentTool(JsonNode args) {
-        String title = args.path("title").asText("").trim();
-        if (title.isEmpty()) {
-            return "参数缺少 title";
-        }
-        String content = args.path("content").asText("").trim();
-        if (content.isEmpty()) {
-            return "参数缺少 content";
-        }
-        DocumentStore.CreatedDoc doc = documents.create(title, content);
-        return "已新建文档《" + doc.title() + "》（id: " + doc.id() + "，共 " + doc.chunks()
-                + " 个分块，已入库可被检索；尚未做知识提取与图谱写入）";
-    }
-
-    /** search_documents_by_title：按关键词模糊命中标题查文档（多词 AND，短标题优先），
-     *  只回文档清单（标题/来源/摘要），正文片段由 RAG 检索工具负责 */
-    private String searchDocumentsTool(JsonNode args) {
-        String keywords = args.path("keywords").asText("");
-        if (keywords.isBlank()) {
-            return "参数缺少 keywords";
-        }
-        return ResultTexts.documentsText(
-                documents.searchByTitle(keywords, DOC_TITLE_LOOKUP_LIMIT));
-    }
-
-    /** read_document：按 id 读文档全文后实时分页（page / page_size 由模型给，越界只在渲染层纠正，
-     *  不落库也不改文档）；文章文档读 md 原文，内部文档由 chunk 按序拼接 */
-    private String readDocumentTool(JsonNode args) {
-        long docId = args.path("doc_id").asLong(0);
-        if (docId <= 0) {
-            return "参数缺少 doc_id";
-        }
-        String content = documents.fullText(docId);
-        if (content == null) {
-            return "文档不存在: " + docId;
-        }
-        return ResultTexts.documentPageText(docId, documents.title(docId), content,
-                args.path("page").asInt(1), args.path("page_size").asInt(0));
-    }
-
     /** recall_memory：查记忆事件流（说过/做过的时间线）。query 与窗口内事件向量做余弦
      *  （向量不可用退化为时间倒序）；days 收敛时间窗，kind/actor 过滤类型与主角 */
     private String recallMemoryTool(JsonNode args) {
+        if("evidence".equals(args.path("mode").asText())) {
+            if(!args.path("id").canConvertToLong()) return "mode=evidence 需要事实 id";
+            String evidence=cc.ginpika.minis.ai.memory.graph.MemoryGraphStore.encode(memoryItems.evidence(ScopeGuard.resolveRead(null),args.path("id").asLong(),args.path("offset").asInt(),args.path("limit").asInt(8)));
+            return ToolTextPage.slice(new com.fasterxml.jackson.databind.ObjectMapper(),evidence,args.path("text_offset").asInt(),args.path("max_chars").asInt(6000)).toString();
+        }
         String query = args.path("query").asText("").trim();
-        if (query.isEmpty()) {
+        boolean timed=args.hasNonNull("occurred_from") || args.hasNonNull("occurred_to") || args.hasNonNull("temporal_kind");
+        if (query.isEmpty() && !timed) {
             return "参数缺少 query";
         }
         /* mode=event：下钻原始事件流（证据层，见 MemoryRecall）；缺省读记忆条目（默认面） */
@@ -605,7 +587,17 @@ public class KnowledgeToolbox {
         /* memory-v6 §8.6：工具面召回必须走作用域谓词——作用域取执行入口圈定的 MemoryScopeCtx，
            没有作用域时退化为「只读正式画像」，绝不退化为读全量（v5 的 G2 类漏洞修复） */
         MemoryExec exec = ScopeGuard.resolveRead(null);
-        String text = MemoryItemRecall.hitsText(memoryItems.recall(exec, query, scope, limit));
+        java.time.ZoneId zone;
+        Long from, to;
+        String temporalKind=blankToNull(args.path("temporal_kind").asText(null));
+        if(temporalKind!=null && !List.of("event","state","timeless","unknown").contains(temporalKind)) return "temporal_kind 无效";
+        try {
+            zone=java.time.ZoneId.of(args.path("time_zone").asText(memoryProps.getTimeZone()));
+            from=cc.ginpika.minis.ai.memory.MemoryTime.instant(args.path("occurred_from").asText(null),zone);
+            to=cc.ginpika.minis.ai.memory.MemoryTime.instant(args.path("occurred_to").asText(null),zone);
+            if(from!=null && to!=null && from>=to) return "时间区间必须满足 occurred_from < occurred_to";
+        } catch(java.time.DateTimeException e) { return "时间或时区格式无效，请使用 ISO 日期/时间和 IANA 时区"; }
+        String text = MemoryItemRecall.hitsText(memoryItems.recall(exec, query, scope, limit,from,to,temporalKind));
         return text.isEmpty() ? "（没有相关的记忆）" : text;
     }
 
@@ -808,7 +800,7 @@ public class KnowledgeToolbox {
             return Resolution.ambiguous(hits);
         }
         graph.upsertEntity("CONCEPT", name, List.of(), null);
-        embedEntity(GraphStore.entityIdFor(name), name, null);
+        embedEntity(graph.byName(name).id(), name, null);
         return Resolution.of(graph.byName(name));
     }
 
@@ -908,7 +900,7 @@ public class KnowledgeToolbox {
     /** 多候选消歧文本：列候选让模型确认——一次反问胜过基于错误实体推理三轮 */
     private String candidatesText(String name, List<GraphStore.Entity> candidates) {
         return "实体「" + name + "」匹配到多个候选，请结合上下文确认想要的是哪一个"
-                + "（用完整实体名重新调用，或向用户澄清）:\n"
+                + "（用明确实体 ID 重新调用，或向用户澄清）:\n"
                 + ResultTexts.graphEntitiesText(candidates);
     }
 

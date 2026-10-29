@@ -7,26 +7,35 @@ import cc.ginpika.minis.agent.chat.store.HubSessionStore;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore.HubRow;
 import cc.ginpika.minis.agent.context.ChatProtocol;
 import cc.ginpika.minis.agent.member.AgentDirectory;
+import cc.ginpika.minis.agent.chat.turn.TurnStore;
+import cc.ginpika.minis.agent.runtime.TaskCheckpointService;
+import cc.ginpika.minis.ai.memory.MemoryIngest;
+import cc.ginpika.minis.ai.memory.store.MemoryRetractionStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 会话域：会话的增删改查、转录读取、回退，以及围绕它们的那几条规则。
  *
  * <p>会话管理与执行编排分开：
- * 这里不调模型、不跑工具、不参与循环，只碰会话与消息两张表；而循环也不需要知道「会话怎么列出来」。
+ * 这里不调模型、不跑工具、不参与循环；回退时同步撤回依赖被丢弃消息的记忆与工作状态。
  *
  * <p>规则集中在这里，不再散落于循环的各个调用点：
  * <ul>
- *   <li>配置的部分更新（仅更新请求里非 null 的项），轮数上限收敛到 {@link #MIN_MAX_ROUNDS}~{@link #MAX_MAX_ROUNDS}；</li>
+ *   <li>配置的部分更新（仅更新请求里非 null 的项）；</li>
  *   <li>回退只认「本会话的一条 user 提问」，回答或别的会话的 id 一律拒；</li>
  *   <li>打开会话即清未读。</li>
  * </ul>
@@ -37,11 +46,6 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class ChatSessionService {
 
-    /** 工具往返轮数上限的合法区间：会话级可配（{@code hub_session.max_rounds}，「…」菜单），
-     *  写入时收敛一下，避免手改请求把轮数设成 0（一轮都跑不了）或天文数字 */
-    public static final int MIN_MAX_ROUNDS = 1;
-    public static final int MAX_MAX_ROUNDS = 100;
-
     private final HubSessionStore sessions;
     private final ChatMessageStore messages;
     /** 列表要带上「该会话此刻是否在生成」，供前端在答完时弹通知 */
@@ -49,6 +53,10 @@ public class ChatSessionService {
     /** 删除会话时一并清掉它的待办清单（plan-of-record），免得留下孤儿行 */
     private final TodoService todo;
     private final ObjectMapper om;
+    private final TurnStore turns;
+    private final MemoryIngest memoryIngest;
+    private final MemoryRetractionStore memoryRetractions;
+    private final TaskCheckpointService checkpoints;
     private ProjectWorkflowService projectWorkflows;
     private cc.ginpika.minis.project.ProjectProgressStore projectProgress;
     @org.springframework.beans.factory.annotation.Autowired
@@ -57,12 +65,18 @@ public class ChatSessionService {
     public void setProjectWorkflows(ProjectWorkflowService workflows) { this.projectWorkflows=workflows; }
 
     public ChatSessionService(HubSessionStore sessions, ChatMessageStore messages,
-                              ChatLiveStore live, TodoService todo, ObjectMapper om) {
+                              ChatLiveStore live, TodoService todo, ObjectMapper om,
+                              TurnStore turns, MemoryIngest memoryIngest,
+                              MemoryRetractionStore memoryRetractions, TaskCheckpointService checkpoints) {
         this.sessions = sessions;
         this.messages = messages;
         this.live = live;
         this.todo = todo;
         this.om = om;
+        this.turns = turns;
+        this.memoryIngest = memoryIngest;
+        this.memoryRetractions = memoryRetractions;
+        this.checkpoints = checkpoints;
     }
 
     /** 会话列表（最近在前）：带「此刻是否在生成」标记 */
@@ -123,8 +137,7 @@ public class ChatSessionService {
         String agentId = req == null ? null : req.agentId();
         Boolean showCot = req == null ? null : req.showCot();
         Boolean contextTrace = req == null ? null : req.contextTrace();
-        Integer maxRounds = req == null || req.maxRounds() == null ? null
-                : Math.max(MIN_MAX_ROUNDS, Math.min(MAX_MAX_ROUNDS, req.maxRounds()));
+        Integer maxRounds = 0; // Ignore historical client limits; keep the wire/storage shape compatible.
         Boolean showRounds = req == null ? null : req.showRounds();
         sessions.updateConfig(row.id(), modelId, promptId, agentId, showCot, contextTrace, maxRounds,
                 showRounds);
@@ -134,7 +147,7 @@ public class ChatSessionService {
                 agentId != null ? (agentId.isBlank() ? null : agentId) : row.agentId(),
                 showCot != null ? showCot : row.showCot(),
                 contextTrace != null ? contextTrace : row.contextTrace(),
-                maxRounds != null ? maxRounds : row.maxRounds(),
+                0,
                 showRounds != null ? showRounds : row.showRounds());
     }
 
@@ -173,9 +186,15 @@ public class ChatSessionService {
      *
      * <p>定位：messageId 优先；缺省时用 keep=保留的消息条数（发送失败时前端尚无落库 id）。
      */
+    @Transactional
     public ChatDtos.Rewind rewind(String hubId, Long messageId, Integer keep) {
-        sessions.findById(hubId)
+        var session = sessions.findById(hubId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
+        if ("multi-agent".equals(session.mode())) throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "多 Agent 会话请使用协作页的回退入口");
+        if (live.isRunning(hubId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "请先停止当前回复再回退");
+        }
         List<MessageRow> rows = messages.listBySession(hubId);
         MessageRow target;
         if (messageId != null) {
@@ -190,7 +209,29 @@ public class ChatSessionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "回退位置无效（需为本会话的一条提问）: messageId=" + messageId + ", keep=" + keep);
         }
-        return new ChatDtos.Rewind(hubId, messages.deleteFrom(hubId, target.id()));
+        List<Long> discarded = rows.stream().filter(m -> m.id() >= target.id()).map(MessageRow::id).toList();
+        Set<Long> discardedIds = new HashSet<>(discarded);
+        List<TurnStore.TurnRow> discardedTurns = turns.turns(hubId).stream()
+                .filter(t -> discardedIds.contains(t.triggerMessageId()) || discardedIds.contains(t.replyMessageId()))
+                .toList();
+        List<Long> taskIds = discardedTurns.stream()
+                .map(TurnStore.TurnRow::taskId)
+                .filter(Objects::nonNull).distinct().toList();
+        List<String> turnIds = discardedTurns.stream().map(t -> Long.toString(t.id())).toList();
+        memoryRetractions.retractChat(hubId, discarded, taskIds, turnIds,
+                target.createdAt() == null ? 0 : target.createdAt());
+        taskIds.forEach(id -> checkpoints.save(id, null));
+        int removed = messages.deleteFrom(hubId, target.id());
+        // 数据库回退成功后再裁剪内存；写入前的来源校验同时挡住已经在提炼中的旧批次。
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override public void afterCommit() { memoryIngest.rewind(hubId, discardedIds); }
+                    });
+        } else {
+            memoryIngest.rewind(hubId, discardedIds);
+        }
+        return new ChatDtos.Rewind(hubId, removed);
     }
 
     /**
@@ -218,15 +259,15 @@ public class ChatSessionService {
         /* 分支继承项目绑定：同一工作域内的分叉不该掉出项目（记忆归属随之一致） */
         sessions.insert(newId, base + " · 分支", src.projectId());
         messages.copyUpTo(hubId, newId, messageId);
-        /* 继承会话级配置：模型 / 提示词 / Agent / CoT / 上下文留痕 / 轮数上限 / 轮次计数 */
+        /* 继承会话级配置：模型 / 提示词 / Agent / CoT / 上下文留痕 / 轮次计数 */
         sessions.updateConfig(newId, src.modelId(), src.promptId(), src.agentId(), src.showCot(),
-                src.contextTrace(), src.maxRounds(), src.showRounds());
+                src.contextTrace(), 0, src.showRounds());
         return new ChatDtos.NewSession(newId, src.projectId());
     }
 
     private static ChatDtos.SessionItem toItem(HubRow row, boolean generating) {
         return new ChatDtos.SessionItem(row.id(), row.title(), row.modelId(), row.promptId(), row.agentId(),
-                row.projectId(), row.showCot(), row.contextTrace(), row.maxRounds(), row.showRounds(),
+                row.projectId(), row.showCot(), row.contextTrace(), 0, row.showRounds(),
                 row.unread(), generating, iso(row.updatedAt() != null ? row.updatedAt() : row.createdAt()));
     }
 

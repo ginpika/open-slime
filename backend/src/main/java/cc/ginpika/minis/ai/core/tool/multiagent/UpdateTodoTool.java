@@ -25,12 +25,9 @@ public class UpdateTodoTool implements AiTool {
 
     @Override
     public String description() {
-        return "改圆桌共享任务区里的一条待办：可改状态（pending/doing/blocked/done/dropped）、"
-                + "负责人（owner）、补充说明（detail），标记受阻时在 reason 里写清原因。"
-                + "标 blocked 时先用 with 做一次决策——找谁商量：可写多个成员名（用「、」分隔，只你们"
-                + "定向沟通一轮、其余成员不受打扰）；写「用户」= 请用户拍板（全桌暂停等用户发言）；"
-                + "留空或填「全员」= 全桌一起议。"
-                + "id 就是任务区里那一条的 id。要标完成请用 " + CompleteTodoTool.NAME + "（能带上结论）。";
+        return "主控修订原待办的目标、说明、负责人和依赖，可重新排队返工（pending）或放弃（dropped）。"
+                + "规划阶段可将 blocked、dropped 或 done 的原条目重开为 pending，须给出 reason；执行者只能将自己当前条目标 blocked 并写清原因和证据。"
+                + "with 可建议相关成员，主控统一决定如何处理；with=用户 会暂停等待用户。不能跳过成果和独立检查。";
     }
 
     @Override
@@ -54,13 +51,17 @@ public class UpdateTodoTool implements AiTool {
         ObjectNode params = om.createObjectNode();
         params.put("type", "object");
         ObjectNode props = params.putObject("properties");
+        props.putObject("title").put("type", "string").put("description", "主控修订工作目标；不填不改");
+        props.putObject("depends_on").put("type", "array").put("description", "主控修订前置条目ID列表，空数组清空依赖")
+                .putObject("items").put("type", "string");
         props.putObject("id").put("type", "string").put("description", "任务区里那一条的 id");
         ObjectNode status = props.putObject("status");
-        status.put("type", "string").put("description", "新状态：pending | doing | blocked | done | dropped");
-        status.putArray("enum").add("pending").add("doing").add("blocked").add("done").add("dropped");
+        status.put("type", "string").put("description", "新状态：pending | blocked | dropped；不能跳过成果检查");
+        status.putArray("enum").add("pending").add("blocked").add("dropped");
         props.putObject("owner").put("type", "string").put("description", "改负责人（成员名）；不填不改");
         props.putObject("detail").put("type", "string").put("description", "补充说明；不填不改");
-        props.putObject("reason").put("type", "string").put("description", "受阻原因（status=blocked 时写）");
+        props.set("contract", AddTodoTool.contractSchema(om));
+        props.putObject("reason").put("type", "string").put("description", "受阻、重开或返工依据；标 blocked 或将 blocked/dropped/done 重开为 pending 时必填");
         props.putObject("with").put("type", "string")
                 .put("description", "status=blocked 时的决策：找谁。可多个成员名（用「、」分隔，只你们"
                         + "定向沟通一轮）；写「用户」= 请用户拍板（全桌暂停等用户发言）；"

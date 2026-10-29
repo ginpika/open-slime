@@ -22,7 +22,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Agent 内核（唯一那条循环）的回归：末轮撤工具的约定、工具往返的协议闭合、以及三种收尾。
+ * Agent 内核（唯一那条循环）的回归：工具持续可用、工具往返的协议闭合、以及正常结束与取消。
  *
  * <p>内核是最要紧的一块——会话、子代理、心跳、计划全跑在它上面，任何一处改动都得先在这里钉住。
  */
@@ -30,7 +30,7 @@ class AgentRuntimeTest {
 
     private static final ObjectMapper OM = new ObjectMapper();
 
-    /** 依次回放给定的 message；同时记下每次请求体，供断言「最后一轮撤掉 tools」 */
+    /** 依次回放给定的 message；同时记下每次请求体，供断言工具始终可用 */
     private static final class Stub {
         final Deque<JsonNode> pending = new ArrayDeque<>();
         final List<ObjectNode> bodies = new ArrayList<>();
@@ -92,7 +92,7 @@ class AgentRuntimeTest {
         return target;
     }
 
-    private static AgentRuntime.Spec spec(Stub stub, int maxRounds, ObjectNode body,
+    private static AgentRuntime.Spec spec(Stub stub, ObjectNode body,
                                           AgentRuntime.Listener listener,
                                           AgentRuntime.RunState state) {
         return new AgentRuntime.Spec(target(), "test", body,
@@ -103,35 +103,35 @@ class AgentRuntimeTest {
                         return "工具结果";
                     }
                 },
-                maxRounds, listener, state);
+                listener, state);
     }
 
     @Test
-    void dropsToolsWhenOnlyOneRoundIsAllowed() {
+    void answeringNeverStripsAvailableTools() {
         Stub stub = stub(answer("答"));
         AgentRuntime.RunState state = new AgentRuntime.RunState();
 
         AgentRuntime.Result result = new AgentRuntime(stub.client())
-                .run(spec(stub, 0, bodyWithTools(), null, state));
+                .run(spec(stub, bodyWithTools(), null, state));
 
         assertEquals(AgentRuntime.End.ANSWERED, result.end());
         assertEquals("答", result.content());
-        /* 末轮（此处是唯一一轮）不挂 tools */
-        assertFalse(stub.bodies.get(0).has("tools"));
+        /* 回答阶段也保留工具面，由模型自主结束。 */
+        assertTrue(stub.bodies.get(0).has("tools"));
     }
 
     @Test
-    void keepsToolsUntilLastRoundAndPairsToolRounds() {
+    void keepsToolsAvailableAndPairsToolRounds() {
         Stub stub = stub(toolCall(null), answer("终"));
         AgentRuntime.RunState state = new AgentRuntime.RunState();
 
         AgentRuntime.Result result = new AgentRuntime(stub.client())
-                .run(spec(stub, 1, bodyWithTools(), null, state));
+                .run(spec(stub, bodyWithTools(), null, state));
 
         assertEquals(AgentRuntime.End.ANSWERED, result.end());
         assertEquals("终", result.content());
         assertTrue(stub.bodies.get(0).has("tools"), "首轮要带工具");
-        assertFalse(stub.bodies.get(1).has("tools"), "末轮撤掉工具逼结论");
+        assertTrue(stub.bodies.get(1).has("tools"), "后续轮次继续保留工具");
         assertEquals(List.of("t"), stub.dispatched);
         /* messages 里按 protocol 续上 assistant(含 tool_calls) 与配对的 tool 结果 */
         ArrayNode msgs = (ArrayNode) stub.bodies.get(1).path("messages");
@@ -150,7 +150,7 @@ class AgentRuntimeTest {
         ((ObjectNode) stub.pending.peekLast()).put("reasoning_content", "想二");
 
         AgentRuntime.RunState state = new AgentRuntime.RunState();
-        new AgentRuntime(stub.client()).run(spec(stub, 1, bodyWithTools(), null, state));
+        new AgentRuntime(stub.client()).run(spec(stub, bodyWithTools(), null, state));
 
         assertEquals("想一" + ChatTrace.REASONING_SEPARATOR + "想二", state.reasoning());
     }
@@ -161,7 +161,7 @@ class AgentRuntimeTest {
         AgentRuntime.RunState state = new AgentRuntime.RunState();
 
         AgentRuntime.Result result = new AgentRuntime(stub.client())
-                .run(spec(stub, 0, bodyWithTools(), null, state));
+                .run(spec(stub, bodyWithTools(), null, state));
 
         assertEquals(AgentRuntime.End.EMPTY_CONTENT, result.end());
         assertNull(result.content());
@@ -173,20 +173,22 @@ class AgentRuntimeTest {
         ((ObjectNode) stub.pending.peekLast()).put("reasoning_content", "想出来的答案");
 
         AgentRuntime.Result result = new AgentRuntime(stub.client())
-                .run(spec(stub, 0, bodyWithTools(), null, new AgentRuntime.RunState()));
+                .run(spec(stub, bodyWithTools(), null, new AgentRuntime.RunState()));
 
         assertEquals(AgentRuntime.End.ANSWERED, result.end());
         assertEquals("想出来的答案", result.content());
     }
 
     @Test
-    void exhaustedRoundsAreReported() {
-        Stub stub = stub(toolCall(null), toolCall(null));
-
+    void continuesPastEveryFormerRoundLimitUntilTheModelFinishes() {
+        Stub stub = new Stub();
+        for (int i=0; i<256; i++) stub.pending.add(toolCall(null));
+        stub.pending.add(answer("completed"));
         AgentRuntime.Result result = new AgentRuntime(stub.client())
-                .run(spec(stub, 1, bodyWithTools(), null, new AgentRuntime.RunState()));
-
-        assertEquals(AgentRuntime.End.ROUNDS_EXHAUSTED, result.end());
-        assertNull(result.content());
+                .run(spec(stub, bodyWithTools(), null, new AgentRuntime.RunState()));
+        assertEquals(AgentRuntime.End.ANSWERED, result.end());
+        assertEquals(256, result.round());
+        assertEquals(256, stub.dispatched.size());
+        assertTrue(stub.bodies.stream().allMatch(body -> body.has("tools")));
     }
 }

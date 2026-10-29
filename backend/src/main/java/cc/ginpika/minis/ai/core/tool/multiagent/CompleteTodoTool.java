@@ -25,8 +25,7 @@ public class CompleteTodoTool implements AiTool {
 
     @Override
     public String description() {
-        return "把圆桌共享任务区里的一条标记为完成，并在 result 里写下结论（做了什么、结论是什么、"
-                + "产出在哪）。结论全桌可见，后续讨论据此继续。id 就是任务区里那一条的 id。";
+        return "提交当前执行的待办成果供另一位成员检查，暂不标记完成。result 必须包含实际产出位置、验证方法、结果和限制。检查通过才解锁下游。";
     }
 
     @Override
@@ -52,7 +51,7 @@ public class CompleteTodoTool implements AiTool {
         ObjectNode props = params.putObject("properties");
         props.putObject("id").put("type", "string").put("description", "任务区里那一条的 id");
         props.putObject("result").put("type", "string").put("description", "完成结论（做了什么、结论、产出）");
-        params.putArray("required").add("id");
+        params.putArray("required").add("id").add("result");
         return params;
     }
 }

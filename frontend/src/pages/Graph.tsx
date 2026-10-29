@@ -16,6 +16,7 @@ import {
 } from '../api/client'
 import { Card } from '../components/Card'
 import GraphCanvas, { typeColorMap, type GraphSel } from '../components/GraphCanvas'
+import { edgeKey } from '../components/graphRendering'
 import PropsEditor from '../components/PropsEditor'
 import Toast from '../components/Toast'
 import { btnOutline, btnPrimary, Control } from '../components/ui'
@@ -34,8 +35,6 @@ const GraphECharts = lazy(() => import('../components/GraphECharts'))
  * 详情 / 空态卡交给主题化 Card（空态引导文案走 kit.Empty），关系行交给 kit.Row，
  * 实体类型标签走 kit.Badge，输入框包 Control 外壳，微标签走 ui-label。
  */
-
-const edgeKey = (e: GraphEdge) => `${e.from}|${e.predicate}|${e.to}`
 
 /** 毫秒 epoch → 本地时间（YYYY-MM-DD HH:mm），实体时间戳展示用 */
 function fmtTime(ts: number): string {
@@ -479,6 +478,7 @@ export default function Graph() {
             selected={sel}
             typeColors={typeColors}
             physics={physics}
+            fitOnUpdate={fitNext}
             onSelect={setSel}
             onExpand={(id) => void expandFrom(id)}
           />

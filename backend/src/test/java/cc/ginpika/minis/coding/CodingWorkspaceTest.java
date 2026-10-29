@@ -61,6 +61,18 @@ class CodingWorkspaceTest {
         assertThrows(IllegalArgumentException.class,()->files.accept(id,repository,"old-review-hash"));
         files.accept(id,repository,artifact.artifactHash());assertEquals("new code",Files.readString(source.resolve("created.txt")));
     }
+    @Test void existingContentConfirmationRequiresTheWholeAfterImage() throws Exception {
+        files.prepare(id,repository);Files.writeString(files.checkout(id).resolve("created.txt"),"new code");
+        var diff=files.diff(id);var expected=files.appliedManifest(id,diff);
+        assertTrue(files.matchesApplied(id,diff,expected));
+        var partial=new java.util.TreeMap<>(expected);partial.remove("created.txt");
+        assertFalse(files.matchesApplied(id,diff,partial));
+        var altered=new java.util.TreeMap<>(expected);altered.put("hello.java",new cc.ginpika.minis.coding.repository.CodingWorkspace.FileStamp("user-change",1,false));
+        assertFalse(files.matchesApplied(id,diff,altered),"未改动的基准文件也必须一致");
+        Files.writeString(source.resolve("created.txt"),"new code");Files.writeString(source.resolve("hello.java"),"user change");
+        assertThrows(IllegalArgumentException.class,()->files.accept(id,repository,diff.artifactHash()));
+        assertEquals("user change",Files.readString(source.resolve("hello.java")));
+    }
     @Test void privateGitMetadataIsNotControlledByTaskCommands() throws Exception {
         files.prepare(id,repository);Files.delete(files.checkout(id).resolve(".git"));Files.createDirectory(files.checkout(id).resolve(".git"));
         Files.writeString(files.checkout(id).resolve(".git/config"),"[filter \"fixture\"]\n clean = command-that-does-not-exist\n required = true\n");
@@ -78,5 +90,51 @@ class CodingWorkspaceTest {
         assertTrue(CodingWorkspace.binary(new byte[]{(byte)0xff}));
         assertTrue(CodingWorkspace.binary(new byte[]{0}));
         assertFalse(CodingWorkspace.binary("代码\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+    @Test void disjointParallelCopiesIntegrateWithoutOverwritingAnAcceptedChange() throws Exception {
+        String other=UUID.randomUUID().toString();files.prepare(id,repository);files.prepare(other,repository);
+        Files.writeString(files.checkout(id).resolve("hello.java"),"first worker\n");
+        Files.writeString(files.checkout(other).resolve("feature.txt"),"second worker\n");
+        String previousHash=files.diff(other).artifactHash();
+        files.accept(id,repository,files.diff(id).artifactHash());
+        assertTrue(files.integrate(other,repository));
+        assertEquals("first worker\n",Files.readString(files.checkout(other).resolve("hello.java")));
+        var merged=files.diff(other);
+        assertNotEquals(previousHash,merged.artifactHash(),"整合改变代码树，旧验证必须失效");
+        assertEquals(java.util.List.of("feature.txt"),merged.changes().stream().map(c->c.path()).toList());
+        assertFalse(merged.patch().contains("first worker"),"已接受的其他成果属于新基准，不应重复提交");
+        files.accept(other,repository,merged.artifactHash());
+        assertEquals("first worker\n",Files.readString(source.resolve("hello.java")));
+        assertEquals("second worker\n",Files.readString(source.resolve("feature.txt")));
+    }
+    @Test void parallelEditsToOnePathFailBeforeChangingEitherCopy() throws Exception {
+        String other=UUID.randomUUID().toString();files.prepare(id,repository);files.prepare(other,repository);
+        Files.writeString(files.checkout(id).resolve("hello.java"),"accepted worker");
+        Files.writeString(files.checkout(other).resolve("hello.java"),"conflicting worker");
+        files.accept(id,repository,files.diff(id).artifactHash());
+        String hash=files.diff(other).artifactHash();
+        var error=assertThrows(IllegalArgumentException.class,()->files.integrate(other,repository));
+        assertTrue(error.getMessage().contains("APPLICATION_CONFLICT"));
+        assertEquals("conflicting worker",Files.readString(files.checkout(other).resolve("hello.java")));
+        assertEquals(hash,files.diff(other).artifactHash());
+        assertEquals("accepted worker",Files.readString(source.resolve("hello.java")));
+    }
+    @Test void integrationTracksSourceAdditionsAndDeletionsAndKeepsOwnDeletion() throws Exception {
+        Files.writeString(source.resolve("obsolete.txt"),"delete by source");files.prepare(id,repository);
+        Files.delete(files.checkout(id).resolve("hello.java"));
+        Files.delete(source.resolve("obsolete.txt"));Files.writeString(source.resolve("fresh.txt"),"new source");
+        assertTrue(files.integrate(id,repository));
+        assertFalse(Files.exists(files.checkout(id).resolve("obsolete.txt")));
+        assertFalse(Files.exists(files.checkout(id).resolve("hello.java")));
+        assertEquals("new source",Files.readString(files.checkout(id).resolve("fresh.txt")));
+        assertEquals(java.util.List.of("hello.java"),files.diff(id).changes().stream().map(c->c.path()).toList());
+        files.accept(id,repository,files.diff(id).artifactHash());
+        assertFalse(Files.exists(source.resolve("hello.java")));
+    }
+    @Test void interruptedIntegrationCannotBeAppliedOrResumed() throws Exception {
+        files.prepare(id,repository);Files.writeString(files.task(id).resolve("integration-journal.json"),"{}");
+        assertThrows(IllegalStateException.class,()->files.diff(id));
+        assertThrows(IllegalStateException.class,()->files.prepare(id,repository));
+        assertEquals("one\r\ntwo\r\n",Files.readString(source.resolve("hello.java")));
     }
 }

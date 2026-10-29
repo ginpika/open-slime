@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
  * <ul>
  *   <li><b>对话历史</b> = {@code chat_message}（还原过程）；</li>
  *   <li><b>工作状态</b> = 本服务（{@code memory_work}）+ 任务检查点 + 子代理黑板（临时、随会话）；</li>
- *   <li><b>长期记忆</b> = {@code memory_item}（跨会话仍有价值）。</li>
+ *   <li><b>长期记忆</b> = {@code graph_claim}（跨会话仍有价值）。</li>
  * </ul>
  *
  * <p>硬规则（§7.3）：

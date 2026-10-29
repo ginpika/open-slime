@@ -16,6 +16,18 @@ const { codingTimeline, toolPresentation } = await import(moduleUrl('../src/page
 const { nextSelectValue } = await import(moduleUrl('../src/components/selectModel.ts'))
 const { readCodingProject, rememberCodingProject, resolveCodingProject } = await import(moduleUrl('../src/pages/coding/projectSession.ts'))
 const { sortAgentPeers } = await import(moduleUrl('../src/api/agentRuntime.ts'))
+const colorUrl = moduleUrl('../src/theme/color.ts')
+const { contrast } = await import(colorUrl)
+const { terminalTheme } = await import(moduleUrl('../src/components/terminal/terminalTheme.ts', source => source.replace("'../../theme/color'", `'${colorUrl}'`)))
+
+test('terminal colors follow light, dark and custom theme tokens with readable ANSI text', () => {
+  for (const [bg, fg, accent] of [['#ffffff', '#0f0f0f', '#0f0f0f'], ['#101010', '#ededed', '#ededed'], ['#ece3c4', '#303a35', '#a78632']]) {
+    const theme = terminalTheme({ '--c-bg': bg, '--c-fg': fg, '--c-accent': accent, '--c-muted': '#8b8f96', '--c-danger': '#ed4444', '--c-ok': '#22cc88', '--c-warn': '#ddaa22' })
+    assert.equal(theme.background, bg); assert.equal(theme.foreground, fg); assert.equal(theme.cursorAccent, bg)
+    assert.notEqual(theme.black, theme.white)
+    for (const key of ['cursor', 'red', 'green', 'yellow', 'blue', 'cyan', 'magenta', 'brightBlack']) assert.ok(contrast(theme[key], bg) >= 4.49, key)
+  }
+})
 
 test('agent roster pins default then coding agent regardless of sort values or display names', () => {
   const peers = [

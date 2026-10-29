@@ -31,6 +31,11 @@ export default defineConfig({
         target: process.env.VITE_DEV_API ?? 'http://localhost:18081',
         changeOrigin: true,
       },
+      '/ws': {
+        target: process.env.VITE_DEV_API ?? 'http://localhost:18081',
+        changeOrigin: true,
+        ws: true,
+      },
     },
     allowedHosts:[
       'local.minis.ginpika.cc'

@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { memoryRevisions, pinMemoryItem, purgeMemory, revokeMemoryShare, shareMemoryItem, updateMemoryItem, type MemoryItem, type MemoryRevision, type MemoryShare } from '../../api/client'
 import { MemoryButton, MemoryField, MemorySelect } from './MemoryControls'
 import type { MemoryAccess } from '../../api/memoryObservation'
-import { domainNames, evidence, errorText, identityNames, ownerNames, scopeKind, scopeNames, status, time } from './model'
+import { domainNames, errorText, identityNames, occurrence, ownerNames, scopeKind, scopeNames, status, time } from './model'
+import MemorySources from './MemorySources'
 /* 查询开始重置读取状态；旧审计不能作为新条目的查询结果。 */
 /* oxlint-disable react/set-state-in-effect */
 
@@ -60,7 +61,6 @@ export default function MemoryInspector({ item, shares, sharesAvailable, access,
   }, [item.id, item.version, auditTick])
   useEffect(() => { if (action) actionForm.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [action])
   const grants = shares.filter(s => s.itemId === item.id && s.status === 'published')
-  const refs = evidence(item.sourceRefs)
   const names = kind === 'agent' ? agentNames : kind === 'project' ? projectNames : sessionNames
   async function run(fn: () => Promise<unknown>, text: string) {
     setBusy(true); setError(''); setMessage('')
@@ -97,6 +97,7 @@ export default function MemoryInspector({ item, shares, sharesAvailable, access,
     </form>}
     {error && <p role="alert" className="mem-error">{error}</p>}{message && <p role="status" className="mem-note">{message}</p>}
     <p className="mem-body">{item.body}</p>
+    <div className="mem-detail-time"><strong>记住于 {time(item.createdAt)}</strong><p>{occurrence(item) || (item.temporalJson ? '长期信息，无特定发生时间。' : '发生时间尚未标定，原文中的相对日期不能按今天理解。')}</p>{item.pinned && <p>固定可避免数量归档，已有有效期仍然生效。</p>}{item.validUntil!=null && <p>有效期至 {time(item.validUntil)}，之后停止自动使用。</p>}{item.expiresSoft!=null && <p>软保留期至 {time(item.expiresSoft)}，到期保留历史。</p>}</div>
     <dl className="mem-facts">
       <dt>归属 Owner</dt><dd>{ownerNames[item.owner ?? ''] ?? item.owner ?? '未标记'}</dd>
       <dt>内容域 Domain</dt><dd>{domainNames[item.domain ?? ''] ?? item.domain ?? '未标记'}</dd>
@@ -106,7 +107,7 @@ export default function MemoryInspector({ item, shares, sharesAvailable, access,
       <dt>会话 / 任务</dt><dd>{item.sessionId ? sessionNames.get(item.sessionId) ?? item.sessionId : '无会话'} / {item.taskId ?? '无任务'}</dd>
     </dl>
     {access && <section className="mem-note"><strong>当前 Agent 为什么能读</strong>{access.reasons.map(r => <p key={r}>{r}</p>)}<p>Agent {access.editableByAgent ? '可按自身权限编辑' : '不可自行编辑'}；你以用户管理身份操作。</p></section>}
-    <section><h4>证据与来源</h4>{refs.length ? refs.map((r, n) => <div className="mem-evidence" key={n}><code>{r.ref}</code>{r.text ? <blockquote>{r.text}</blockquote> : <p className="mem-muted">仅有来源引用，没有留存原文。</p>}</div>) : <p className="mem-muted">未留存可展示的证据原文。</p>}</section>
+    <MemorySources key={item.id} id={item.id} />
     <details className="mem-metadata"><summary>生命周期与来源 · 保留 / 期限 / 生产者</summary><dl className="mem-facts">
       <dt>生产者</dt><dd>{item.producerAgent ? agentNames.get(item.producerAgent) ?? item.producerAgent : '未留存'}</dd>
       <dt>类别 / 保留</dt><dd>{item.scopeLabel} / {item.retention ?? '未设置'}</dd>

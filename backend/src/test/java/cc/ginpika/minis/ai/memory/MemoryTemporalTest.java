@@ -17,7 +17,7 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 class MemoryTemporalTest {
 
     private static final String DDL = """
-            CREATE TABLE memory_item(
+            CREATE TABLE graph_claim(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               agent_id TEXT, scope TEXT NOT NULL, title TEXT, body TEXT NOT NULL,
               confidence REAL NOT NULL DEFAULT 0.5, source TEXT NOT NULL DEFAULT 'auto',
@@ -46,6 +46,8 @@ class MemoryTemporalTest {
         for (String stmt : DDL.split("\\n(?=CREATE )")) {
             j.execute(stmt);
         }
+        try { org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(ds.getConnection(),new org.springframework.core.io.ClassPathResource("schema.sql")); }
+        catch(Exception e) { throw new IllegalStateException(e); }
         MemoryItemStore items = new MemoryItemStore(j);
         MemoryEdgeStore edges = new MemoryEdgeStore(j);
         return new Fixture(j, items, edges, new MemoryTemporalService(items, edges));
@@ -121,7 +123,7 @@ class MemoryTemporalTest {
 
         assertEquals(1, f.temporal().asOf(tBefore, 50).edges().size(), "失效前：边有效");
         assertTrue(f.temporal().asOf(tAfter, 50).edges().isEmpty(), "失效后：边不再有效");
-        Integer rows = f.jdbc().queryForObject("SELECT COUNT(*) FROM memory_edge", Integer.class);
+        Integer rows = f.jdbc().queryForObject("SELECT COUNT(*) FROM graph_relation r JOIN graph_entity e ON e.id=r.object_id WHERE e.type<>'STATEMENT'", Integer.class);
         assertEquals(1, rows == null ? 0 : rows, "双时态不删除：边仍在库里，只是关闭了有效期");
     }
 }

@@ -3,6 +3,7 @@
  *
  * 两层结构：
  *  1) <JsonViewer>：通用 JSON 树。对象 / 数组可折叠，超长字符串折叠成一行预览，
+ *     字符串内成对的 Prompt 标签可独立折叠（含嵌套，原文不作 HTML 执行）。
  *     值按类型着色（走主题语义色，四主题自适应）。初始展开深度由 openDepth 决定，
  *     之后每个节点各自维护折叠状态、可单独点开——不再是一坨无法收起的纯文本。
  *  2) <RawContextView>：贴合会话 Turn 架构的封装。把 /chat/completions 请求体拆成
@@ -15,7 +16,8 @@
  */
 import { AppIcon } from './AppIcon'
 import { memo, useMemo, useState, type ReactNode } from 'react'
-import { miniBtn } from './ui'
+import { parseTaggedText, type TaggedTextPart } from './taggedText'
+import './jsonViewer.css'
 import {
   sessionTurnCalls,
   type RawContext,
@@ -44,7 +46,7 @@ function kindOf(value: unknown): Kind {
 
 /** 值类型 → 文本配色（全部走主题语义色，深浅底均保证对比） */
 const KIND_TEXT: Record<Kind, string> = {
-  string: 'text-ok',
+  string: 'text-fg-2',
   number: 'text-info',
   boolean: 'text-warn',
   null: 'text-faint',
@@ -96,6 +98,49 @@ function Caret({ open }: { open: boolean }) {
 
 /* ================================================================ JSON 树 */
 
+function TaggedText({ parts, defaultOpen, insideTag = false }: { parts: TaggedTextPart[]; defaultOpen: boolean; insideTag?: boolean }) {
+  const structured = insideTag || parts.some((part) => part.type === 'tag')
+  return <div className="jv-tagged-text">{parts.map((part, i) => {
+    if (part.type === 'tag') return <TagBlock key={i} part={part} defaultOpen={defaultOpen} />
+    // 块级标签之间的缩进 / 空行是源文本的排版，不应生成额外行盒。
+    // 仅调整结构化阅读视图，解析结果与复制的原始 JSON 保持不变。
+    const text = structured
+      ? part.text.replace(/^(?:[\t ]*\r?\n)+/, '').replace(/(?:\r?\n[\t ]*)+$/, '')
+      : part.text
+    return text.trim() || !structured ? <span className="jv-text-run" key={i}>{text}</span> : null
+  })}</div>
+}
+
+function TagBlock({ part, defaultOpen }: {
+  part: Extract<TaggedTextPart, { type: 'tag' }>
+  defaultOpen: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="jv-tag" data-open={open}>
+      <button
+        type="button"
+        aria-label={`${open ? '收起' : '展开'} ${part.name} 标签`}
+        aria-expanded={open}
+        onClick={toggleOnRow(() => setOpen((v) => !v))}
+        className="jv-tag-toggle"
+      >
+        <Caret open={open} />
+        <span className="jv-tag-name">
+          {part.opening}
+        </span>
+        {!open && <span className="jv-tag-fold">…</span>}
+      </button>
+      {open && <>
+        <div className="jv-tag-body">
+          <TaggedText parts={part.children} defaultOpen={defaultOpen} insideTag />
+        </div>
+        <div className="jv-tag-close">{part.closing}</div>
+      </>}
+    </div>
+  )
+}
+
 type NodeProps = {
   value: unknown
   /** 对象键名（根节点与数组项不传） */
@@ -121,16 +166,18 @@ const JsonNode = memo(function JsonNode({ value, name, index, depth, openDepth, 
       : 0
   const emptyContainer = isContainer && containerSize === 0
   const text = kind === 'string' ? (value as string) : null
+  const taggedParts = useMemo(() => text !== null ? parseTaggedText(text) : [], [text])
   const isLongString = text !== null && (text.includes('\n') || text.length > STRING_FOLD)
+  const isFoldableString = isLongString || taggedParts.some((p) => p.type === 'tag')
   /** 空容器没什么可折的，当叶子内联展示（`{}` / `[]`） */
-  const foldable = !emptyContainer && (isContainer || isLongString)
+  const foldable = !emptyContainer && (isContainer || isFoldableString)
 
   const [open, setOpen] = useState(depth < openDepth)
   const toggle = () => setOpen((v) => !v)
 
   /* 值那一半：容器折叠态报数量 / 预览，展开态只画左括号（右括号在子节点之后单独一行） */
   let valueEl: ReactNode
-  if (isContainer && open) {
+  if (isContainer && open && !emptyContainer) {
     valueEl = <span className="text-dim">{isArray ? '[' : '{'}</span>
   } else if (emptyContainer) {
     valueEl = <span className="text-dim">{isArray ? '[]' : '{}'}</span>
@@ -142,13 +189,10 @@ const JsonNode = memo(function JsonNode({ value, name, index, depth, openDepth, 
         <span className="text-dim">{isArray ? ']' : '}'}</span>
       </span>
     )
-  } else if (isLongString && !open) {
+  } else if (isFoldableString && !open) {
     valueEl = <span className={KIND_TEXT.string}>{`"${clip(text ?? '', 90)}"`}</span>
-  } else if (isLongString) {
-    /* 展开的长字符串：保留原始换行，可选中复制 */
-    valueEl = (
-      <span className={`whitespace-pre-wrap break-words ${KIND_TEXT.string}`}>{`"${text}"`}</span>
-    )
+  } else if (isFoldableString) {
+    valueEl = <span className={KIND_TEXT.string}>{'"'}</span>
   } else {
     valueEl = (
       <span className={KIND_TEXT[kind]}>
@@ -157,7 +201,7 @@ const JsonNode = memo(function JsonNode({ value, name, index, depth, openDepth, 
     )
   }
 
-  /* 展开的容器：逗号挪到右括号那行；其余情况逗号跟在值后面 */
+  /* 展开的容器 / 字符串：逗号挪到闭合符号那行；其余情况逗号跟在值后面 */
   const commaHere = !last && !(foldable && open)
 
   return (
@@ -177,7 +221,7 @@ const JsonNode = memo(function JsonNode({ value, name, index, depth, openDepth, 
               }
             : undefined
         }
-        className={`flex items-start gap-1 rounded-sm${
+        className={`jv-node-row flex items-start gap-1 rounded-sm${
           foldable ? ' cursor-pointer hover:bg-fg/[0.04]' : ''
         }`}
       >
@@ -195,7 +239,20 @@ const JsonNode = memo(function JsonNode({ value, name, index, depth, openDepth, 
         </span>
       </div>
 
-      {foldable && open && (
+      {isFoldableString && open && (
+        <>
+          <div className="jv-string-body">
+            <TaggedText parts={taggedParts} defaultOpen={depth < openDepth} />
+          </div>
+          <div className="ml-3.5">
+            <span className={KIND_TEXT.string}>{'"'}</span>
+            {!last && <span className="text-dim">,</span>}
+          </div>
+        </>
+      )}
+
+      {/* 只有容器遍历子项；Object.entries(string) 会把整段正文再逐字符渲染一次。 */}
+      {isContainer && open && !emptyContainer && (
         <>
           <div className="ml-3.5 border-l border-line/50 pl-2">
             {isArray
@@ -242,7 +299,7 @@ export function JsonViewer({
   className?: string
 }) {
   return (
-    <div className={`font-mono text-sm leading-[1.75] text-fg ${className}`}>
+    <div className={`json-viewer font-mono text-fg ${className}`}>
       <JsonNode value={value} depth={0} openDepth={openDepth} last />
     </div>
   )
@@ -251,13 +308,6 @@ export function JsonViewer({
 /* ==================================================== 贴合 Turn 架构的封装 */
 
 type Msg = Record<string, unknown>
-
-const ROLE_TEXT: Record<string, string> = {
-  system: 'text-faint',
-  user: 'text-accent',
-  assistant: 'text-ok',
-  tool: 'text-warn',
-}
 
 function roleName(msg: Msg): string {
   return String(msg.role ?? '?')
@@ -375,7 +425,7 @@ const MessageCard = memo(function MessageCard({
   const [open, setOpen] = useState(defaultOpen)
   const role = roleName(msg)
   return (
-    <div className="rounded-sm border border-line/60 bg-fg/[0.02]">
+    <div className="raw-message" data-role={role}>
       <div
         role="button"
         tabIndex={0}
@@ -387,16 +437,16 @@ const MessageCard = memo(function MessageCard({
             setOpen((v) => !v)
           }
         }}
-        className="flex cursor-pointer items-start gap-1.5 rounded-sm px-1.5 py-1 hover:bg-fg/[0.04]"
+        className="raw-message-heading"
       >
         <Caret open={open} />
-        <span className={`mono shrink-0 text-xs font-medium ${ROLE_TEXT[role] ?? 'text-muted'}`}>
+        <span className="raw-role">
           {role}
         </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted">{summarize(msg)}</span>
+        <span className="raw-message-summary">{summarize(msg)}</span>
       </div>
       {open && (
-        <div className="border-t border-line/50 px-1.5 pb-1.5 pt-1">
+        <div className="raw-message-body">
           <JsonViewer value={msg} openDepth={openDepth} />
         </div>
       )}
@@ -527,8 +577,8 @@ const TurnBlock = memo(function TurnBlock({
   }
 
   return (
-    <div className="my-1 rounded-sm border-l-2 border-accent/40 bg-fg/[0.015] pl-1.5">
-      <div className="flex items-center gap-1.5 py-1 pr-1.5">
+    <div className="raw-turn">
+      <div className="raw-turn-heading">
         <div
           role="button"
           tabIndex={0}
@@ -544,12 +594,12 @@ const TurnBlock = memo(function TurnBlock({
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm hover:bg-fg/[0.04]"
         >
           <Caret open={open} />
-          <span className="ui-label shrink-0">Turn {index}</span>
-          <span className="shrink-0 text-2xs text-faint">{label}</span>
+          <span className="raw-turn-title">Turn {index}</span>
+          <span className="raw-turn-source">{label}</span>
           <span className="min-w-0 flex-1 truncate text-xs text-muted">
             {summarize(messages[0])}
           </span>
-          <span className="shrink-0 text-2xs text-faint">
+          <span className="raw-turn-count">
             {messages.length} 条{rounds > 0 ? ` · ${rounds} 轮工具` : ''}
           </span>
         </div>
@@ -558,7 +608,7 @@ const TurnBlock = memo(function TurnBlock({
             type="button"
             onClick={toggleCalls}
             title="查看这一 Turn 每一轮真正发出去的请求体与收到的响应体"
-            className={`${miniBtn} shrink-0`}
+            className="raw-context-action shrink-0"
           >
             请求 / 响应
           </button>
@@ -566,7 +616,7 @@ const TurnBlock = memo(function TurnBlock({
       </div>
 
       {open && (
-        <div className="space-y-1 pb-1 pr-1.5">
+        <div className="raw-message-list">
           {messages.map((m, i) => (
             <MessageCard key={i} msg={m} defaultOpen={msgOpen} openDepth={nodeDepth} />
           ))}
@@ -593,7 +643,7 @@ const TurnBlock = memo(function TurnBlock({
   )
 })
 
-/** 原始请求体入口：信封（model）+ messages（按后端 Turn 切片分组）+ tools + 其他顶层字段。
+/** 原始请求体入口：messages（按后端 Turn 切片分组）+ 请求参数 + tools。
  *  sessionId 用于回看某个 Turn 的调用留痕（见 TurnBlock 的「请求 / 响应」按钮） */
 export function RawContextView({ ctx, sessionId }: { ctx: RawContext; sessionId: string }) {
   const [gen, setGen] = useState(0)
@@ -605,11 +655,8 @@ export function RawContextView({ ctx, sessionId }: { ctx: RawContext; sessionId:
   const messages = useMemo(() => (body.messages ?? []) as Msg[], [body])
   const items = useMemo(() => buildItems(messages, ctx.turns ?? []), [messages, ctx.turns])
   const tools = Array.isArray(body.tools) ? body.tools : null
-  const extraKeys = useMemo(
-    () =>
-      Object.keys(body as Record<string, unknown>).filter(
-        (k) => k !== 'model' && k !== 'messages' && k !== 'tools',
-      ),
+  const parameters = useMemo(
+    () => Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'messages' && k !== 'tools')),
     [body],
   )
   const turnCount = useMemo(() => items.filter((i) => i.type === 'turn').length, [items])
@@ -635,43 +682,34 @@ export function RawContextView({ ctx, sessionId }: { ctx: RawContext; sessionId:
   }
 
   return (
-    <div className="select-text text-fg">
+    <div className="raw-context-view select-text text-fg">
       {/* 工具条：统计 + 展开 / 折叠全部 + 复制 */}
-      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line pb-2">
-        <span className="text-xs text-muted">
-          {messages.length} 条消息 · {turnCount} 个 Turn
-          {roundCount > 0 && ` · ${roundCount} 轮工具往返`}
-          {tools && ` · ${tools.length} 个工具`}
-        </span>
-        <div className="ml-auto flex items-center gap-1">
-          <button type="button" className={miniBtn} onClick={() => bust(true)}>
-            展开全部
+      <div className="raw-context-toolbar">
+        <div className="raw-context-overview">
+          <span className="raw-context-model"><AppIcon name="code" size={16} />{body.model}</span>
+          <span className="raw-context-stats">
+            {messages.length} 条消息 · {turnCount} 个 Turn
+            {roundCount > 0 && ` · ${roundCount} 轮工具往返`}
+            {tools && ` · ${tools.length} 个工具`}
+          </span>
+        </div>
+        <div className="raw-context-actions">
+          <button type="button" className="raw-context-action" onClick={() => bust(true)}>
+            <AppIcon name="chevron-down" size={16} />展开全部
           </button>
-          <button type="button" className={miniBtn} onClick={() => bust(false)}>
-            折叠全部
+          <button type="button" className="raw-context-action" onClick={() => bust(false)}>
+            <AppIcon name="chevron-right" size={16} />折叠全部
           </button>
-          <button type="button" className={miniBtn} onClick={() => void copy()}>
-            {copied ? '已复制' : '复制 JSON'}
+          <button type="button" className="raw-context-action raw-context-copy" onClick={() => void copy()}>
+            <AppIcon name={copied ? 'check' : 'restore'} size={16} />{copied ? '已复制' : '复制 JSON'}
           </button>
         </div>
       </div>
 
-      <div key={gen} className="font-mono text-sm leading-[1.75]">
-        <div className="text-dim">{'{'}</div>
-        <div className="ml-3.5 border-l border-line/50 pl-2">
-          {/* 信封：model */}
-          <JsonNode value={body.model} name="model" depth={1} openDepth={0} />
-
-          {/* messages：按 Turn 切片分组，每条默认折叠 */}
-          <div>
-            <div className="flex items-start gap-1">
-              <span className="mt-[2px] h-3 w-3 shrink-0" />
-              <span className="min-w-0 flex-1">
-                <span className="text-fg">messages</span>
-                <span className="text-dim">: [</span>
-              </span>
-            </div>
-            <div className="ml-3.5 border-l border-line/50 pl-2">
+      <div key={gen} className="raw-context-scroll scrollbar-slim">
+          <section className="raw-context-section" aria-label="上下文消息">
+            <div className="raw-context-section-heading"><h3>上下文消息</h3><span>messages · 按会话轮次排列</span></div>
+            <div className="raw-message-list">
               {items.map((it, i) =>
                 it.type === 'turn' ? (
                   <TurnBlock
@@ -686,44 +724,27 @@ export function RawContextView({ ctx, sessionId }: { ctx: RawContext; sessionId:
                     nodeDepth={nodeDepth}
                   />
                 ) : (
-                  <div key={i} className="space-y-1">
+                  <div key={i} className="raw-message-list">
                     {it.msgs.map((m, j) => (
                       <MessageCard key={j} msg={m} defaultOpen={msgOpen} openDepth={nodeDepth} />
                     ))}
                   </div>
                 ),
               )}
+              {messages.length === 0 && <p className="raw-context-empty">暂无消息</p>}
             </div>
-            <div className="flex gap-1">
-              <span className="h-3 w-3 shrink-0" />
-              <span className="text-dim">{tools || extraKeys.length > 0 ? '],' : ']'}</span>
-            </div>
-          </div>
+          </section>
 
-          {/* tools：整体折叠，点开看工具面 */}
+          <section className="raw-context-section" aria-label="请求参数">
+            <div className="raw-context-section-heading"><h3>请求参数</h3><span>model 与其他顶层字段</span></div>
+            <JsonViewer value={parameters} openDepth={nodeDepth} />
+          </section>
           {tools && (
-            <JsonNode
-              value={tools}
-              name="tools"
-              depth={1}
-              openDepth={0}
-              last={extraKeys.length === 0}
-            />
+            <section className="raw-context-section" aria-label="工具定义">
+              <div className="raw-context-section-heading"><h3>工具定义</h3><span>tools · {tools.length} 项</span></div>
+              <JsonViewer value={tools} openDepth={all === true ? 999 : 0} />
+            </section>
           )}
-
-          {/* 其他顶层字段（如 temperature 之类）：原样补在末尾，保证 JSON 结构完整 */}
-          {extraKeys.map((k, i) => (
-            <JsonNode
-              key={k}
-              value={(body as Record<string, unknown>)[k]}
-              name={k}
-              depth={1}
-              openDepth={1}
-              last={i === extraKeys.length - 1}
-            />
-          ))}
-        </div>
-        <div className="text-dim">{'}'}</div>
       </div>
     </div>
   )

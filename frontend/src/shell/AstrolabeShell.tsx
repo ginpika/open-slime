@@ -77,9 +77,6 @@ export function AstrolabeShell({ route, activePath, fullBleed, hideChrome = fals
               </div>
             ))}
           </nav>
-          <div className="astro-rail__end">
-            <span className="astro-rail__caption">让知识，有迹可循。</span>
-          </div>
         </aside>
       )}
       <div className="astro-workarea">

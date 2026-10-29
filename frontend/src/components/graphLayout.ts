@@ -52,8 +52,10 @@ type LayoutOpts = {
   /** 归一化目标视口；不给则返回世界坐标（以原点为图心，图谱页自行 pan/zoom） */
   outW?: number
   outH?: number
-  /** 已有节点位置：新布局从它出发（增量展开时旧节点不动） */
+  /** 已有节点位置：新布局从它出发 */
   seedById?: Map<string, Pt>
+  /** 静态增量布局保留已有节点，物理模拟开启后仍可继续运动。 */
+  preserveSeed?: boolean
   /** 中心锚定节点（图谱页的浏览中心；向心力 × anchorBoost 稳居图心） */
   centerId?: string | null
 }
@@ -74,7 +76,7 @@ export function forceLayout(
   const pos = new Map<string, Pt>()
   for (const nd of nodes) {
     const seed = opts.seedById?.get(nd.id)
-    if (seed) {
+    if (seed && Number.isFinite(seed.x) && Number.isFinite(seed.y)) {
       pos.set(nd.id, { ...seed })
       continue
     }
@@ -93,9 +95,15 @@ export function forceLayout(
   // 布局结果与后续开物理的形态同源连续
   const iters = opts.iters ?? 300
   const st: PhysicsState = { pos, vel: new Map(), alpha: 1 }
-  for (let it = 0; it < iters; it++) {
+  const fixedIds = opts.preserveSeed
+    ? new Set(nodes.filter(nd => {
+      const p = opts.seedById?.get(nd.id)
+      return p && Number.isFinite(p.x) && Number.isFinite(p.y)
+    }).map(nd => nd.id))
+    : undefined
+  for (let it = 0; it < iters && fixedIds?.size !== n; it++) {
     st.alpha = 1 - (it / iters) * (1 - PHYS_ALPHA_MIN)
-    physicsTick(st, ids, springs, { centerId: opts.centerId ?? null })
+    physicsTick(st, ids, springs, { centerId: opts.centerId ?? null, fixedIds })
   }
 
   const pts = ids.map((id) => st.pos.get(id) ?? { x: 0, y: 0 })
@@ -116,9 +124,9 @@ export function forceLayout(
     maxX = Math.max(maxX, p.x)
     maxY = Math.max(maxY, p.y)
   }
-  const cw = Math.max(1, maxX - minX)
-  const ch = Math.max(1, maxY - minY)
-  const scale = Math.min((opts.outW - pad * 2) / cw, (opts.outH - pad * 2) / ch)
+  const cw = maxX - minX
+  const ch = maxY - minY
+  const scale = Math.min(Math.max(1, opts.outW - pad * 2) / Math.max(1, cw), Math.max(1, opts.outH - pad * 2) / Math.max(1, ch))
   const ox = (opts.outW - cw * scale) / 2 - minX * scale
   const oy = (opts.outH - ch * scale) / 2 - minY * scale
 
@@ -137,6 +145,85 @@ export type PhysicsState = {
 /** alpha 低于此值视为沉降，可停止动画循环 */
 export const PHYS_ALPHA_MIN = 0.02
 
+type Quad = {
+  x: number; y: number; width: number
+  cx: number; cy: number; count: number
+  children?: Quad[]
+  indices?: number[]
+}
+
+/** Barnes–Hut 四叉树：远处簇用质心近似，近邻仍逐点计算，避免大图每帧 O(n²)。 */
+function repulsionTree(points: (Pt | undefined)[]): Quad | null {
+  const indices: number[] = []
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  points.forEach((p, i) => {
+    if (!p) return
+    indices.push(i)
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
+  })
+  if (!indices.length) return null
+  const build = (list: number[], x: number, y: number, width: number, depth: number): Quad => {
+    let cx = 0, cy = 0
+    for (const i of list) { cx += points[i]!.x; cy += points[i]!.y }
+    const quad: Quad = { x, y, width, cx: cx / list.length, cy: cy / list.length, count: list.length }
+    // 重合节点不能无限细分。
+    if (list.length <= 4 || depth >= 24 || width < 0.001) {
+      quad.indices = list
+      return quad
+    }
+    const half = width / 2
+    const buckets: number[][] = [[], [], [], []]
+    for (const i of list) {
+      const p = points[i]!
+      buckets[(p.x >= x + half ? 1 : 0) + (p.y >= y + half ? 2 : 0)].push(i)
+    }
+    quad.children = buckets.flatMap((bucket, i) => bucket.length
+      ? [build(bucket, x + (i % 2) * half, y + (i >= 2 ? half : 0), half, depth + 1)] : [])
+    return quad
+  }
+  return build(indices, minX, minY, Math.max(1, maxX - minX, maxY - minY), 0)
+}
+
+function treeRepulsion(
+  points: (Pt | undefined)[], ids: string[], fx: Float64Array, fy: Float64Array, strength: number,
+): void {
+  const root = repulsionTree(points)
+  if (!root) return
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]
+    if (!p) continue
+    const apply = (dx: number, dy: number, count: number) => {
+      const distance = Math.hypot(dx, dy)
+      const f = strength * count / (Math.max(1, distance) * distance)
+      fx[i] -= dx * f
+      fy[i] -= dy * f
+    }
+    const visit = (q: Quad) => {
+      if (q.indices) {
+        for (const j of q.indices) {
+          if (i === j) continue
+          const other = points[j]!
+          let dx = other.x - p.x, dy = other.y - p.y
+          if (Math.hypot(dx, dy) < 0.001) {
+            const direction = i < j ? 1 : -1
+            dx = (((hashId(ids[Math.min(i, j)]) + Math.max(i, j)) % 17) - 8) * direction
+            dy = 13 * direction
+          }
+          apply(dx, dy, 1)
+        }
+        return
+      }
+      const dx = q.cx - p.x, dy = q.cy - p.y
+      const contains = p.x >= q.x && p.x <= q.x + q.width && p.y >= q.y && p.y <= q.y + q.width
+      // theta=0.7；包含自身的象限始终展开，不能把自身质量算成斥力。
+      if (!contains && q.width * q.width < 0.49 * (dx * dx + dy * dy)) apply(dx, dy, q.count)
+      else for (const child of q.children ?? []) visit(child)
+    }
+    visit(root)
+  }
+}
+
 /**
  * 推进一帧统一力模型：库仑斥力 + 边弹簧 + 向心引力（无边界）。
  * 世界以原点为图心：向心力把全图收拢成圆形结构，外圈不会贴任何矩形边界。
@@ -148,7 +235,7 @@ export function physicsTick(
   st: PhysicsState,
   ids: string[],
   springs: { from: string; to: string }[],
-  opts: { centerId?: string | null; fixedId?: string | null } = {},
+  opts: { centerId?: string | null; fixedId?: string | null; fixedIds?: ReadonlySet<string> } = {},
 ): boolean {
   const n = ids.length
   if (n === 0 || st.alpha <= PHYS_ALPHA_MIN) return false
@@ -160,8 +247,9 @@ export function physicsTick(
   const fx = new Float64Array(n)
   const fy = new Float64Array(n)
 
-  // 斥力（全对库仑，1/d 衰减）
-  for (let i = 0; i < n; i++) {
+  // 小图精确计算；大图按空间簇近似远场，保持同一套 1/d 力模型。
+  if (n >= 180) treeRepulsion(ids.map(id => st.pos.get(id)), ids, fx, fy, k * k * repulsion * a)
+  else for (let i = 0; i < n; i++) {
     const pi = st.pos.get(ids[i])
     if (!pi) continue
     for (let j = i + 1; j < n; j++) {
@@ -220,7 +308,7 @@ export function physicsTick(
   let moved = false
   for (let i = 0; i < n; i++) {
     const id = ids[i]
-    if (id === opts.fixedId) {
+    if (id === opts.fixedId || opts.fixedIds?.has(id)) {
       st.vel.set(id, { x: 0, y: 0 })
       continue
     }

@@ -1,6 +1,6 @@
 /**
  * 品牌文案的唯一出口：读取仓库根目录 branding.json，派生出界面直接可用的字符串。
- * 改正式名称只需改根目录 branding.json（前端各处的标题/页脚/关于页文案随之统一）。
+ * 改正式名称只需改根目录 branding.json（前端各处的标题/页脚文案随之统一）。
  */
 import raw from '../../branding.json'
 

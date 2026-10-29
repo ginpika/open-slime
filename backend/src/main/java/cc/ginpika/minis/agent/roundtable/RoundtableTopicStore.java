@@ -72,12 +72,12 @@ public class RoundtableTopicStore {
     /** 某会话最近的话题（含已关闭的），新建话题时判断上一轮是否已经收束 */
     public Optional<TopicRow> latestBySession(String sessionId) {
         return jdbc.query("SELECT " + COLS + " FROM roundtable_topic WHERE session_id = ? "
-                        + "ORDER BY id DESC LIMIT 1", RoundtableTopicStore::map, sessionId)
+                        + "ORDER BY created_at DESC, rowid DESC LIMIT 1", RoundtableTopicStore::map, sessionId)
                 .stream().findFirst();
     }
 
     public List<TopicRow> topicsBySession(String sessionId) {
-        return jdbc.query("SELECT " + COLS + " FROM roundtable_topic WHERE session_id = ? ORDER BY id",
+        return jdbc.query("SELECT " + COLS + " FROM roundtable_topic WHERE session_id = ? ORDER BY created_at, rowid",
                 RoundtableTopicStore::map, sessionId);
     }
 

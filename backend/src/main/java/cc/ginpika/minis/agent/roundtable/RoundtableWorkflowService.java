@@ -8,6 +8,7 @@ import cc.ginpika.minis.agent.roundtable.TopicStateMachine.PeerState;
 import cc.ginpika.minis.ai.runtime.AgentActivitySource;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -41,12 +42,13 @@ public class RoundtableWorkflowService {
     private final RoundtableWorkRunStore workRuns;
     private final ObjectMapper om;
     private final List<AgentActivitySource> activitySources;
+    private final RoundtableActivity timeline;
 
     public RoundtableWorkflowService(RoundtableChatService chat, AgentDirectory directory,
                                      RoundtableTodoStore taskBoard, TopicStateMachine machine,
                                      RoundtableWorkRuntime workRuntime,
                                      RoundtableWorkRunStore workRuns, ObjectMapper om,
-                                     List<AgentActivitySource> activitySources) {
+                                     List<AgentActivitySource> activitySources, RoundtableActivity timeline) {
         this.chat = chat;
         this.directory = directory;
         this.taskBoard = taskBoard;
@@ -55,6 +57,7 @@ public class RoundtableWorkflowService {
         this.workRuns = workRuns;
         this.om = om;
         this.activitySources = activitySources;
+        this.timeline = timeline;
     }
 
     /**
@@ -67,7 +70,20 @@ public class RoundtableWorkflowService {
 
     private AgentDtos.WorkRunView toRun(RoundtableWorkRunStore.RunRow r) {
         return new AgentDtos.WorkRunView(r.id(), r.todoId(), r.peerId(), r.peerName(), r.status(),
-                r.output(), r.reasoning(), traces(r.trace()), r.error(), r.startedAt(), r.finishedAt());
+                r.output(), r.reasoning(), traces(r.trace()), r.error(), r.startedAt(), r.finishedAt(), toolRounds(r.toolRounds()));
+    }
+
+    private List<JsonNode> toolRounds(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            JsonNode value = om.readTree(json);
+            if (!value.isArray()) return List.of();
+            List<JsonNode> rounds = new ArrayList<>();
+            value.forEach(rounds::add);
+            return rounds;
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private List<ChatDtos.TraceSegment> traces(String json) {
@@ -96,7 +112,7 @@ public class RoundtableWorkflowService {
         AgentDtos.SessionView session = pick(sessionId);
         if (session == null) {
             return new AgentDtos.WorkflowView(null, null, null, null, null, false, false,
-                    List.of(), List.of());
+                    List.of(), List.of(), List.of());
         }
         String topicId = session.topicId();
         Map<String, PeerState> states = topicId == null || topicId.isBlank()
@@ -127,8 +143,8 @@ public class RoundtableWorkflowService {
                     continue;
                 }
                 switch (t.status()) {
-                    case RoundtableTodoStore.STATUS_PENDING -> pending++;
-                    case RoundtableTodoStore.STATUS_DOING -> doing++;
+                    case RoundtableTodoStore.STATUS_PENDING, RoundtableTodoStore.STATUS_REVIEWING -> pending++;
+                    case RoundtableTodoStore.STATUS_DOING, RoundtableTodoStore.STATUS_CHECKING -> doing++;
                     case RoundtableTodoStore.STATUS_DONE -> done++;
                     case RoundtableTodoStore.STATUS_BLOCKED -> blocked++;
                     default -> {
@@ -137,6 +153,8 @@ public class RoundtableWorkflowService {
             }
             for(var extra:activity){if(peerId.equals(extra.agentId())){pending+=extra.pending();doing+=extra.doing();done+=extra.done();}}
             boolean working = workRuntime.isWorking(session.id(), peerId)
+                    || chat.isConversing(session.id(), peerId)
+                    || peerId.equals(session.floorPeer())
                     || activity.stream().anyMatch(a->peerId.equals(a.agentId()) && a.working());
             /* 成员级「待推进」：自己没在跑、名下也没有未完条目、此刻也无活可领（含公共池），
                且这一轮确有人做完过、话题未收束——先做完的先到这里，等全桌集结 */
@@ -150,7 +168,7 @@ public class RoundtableWorkflowService {
             }
             AgentRow peerRow = directory.peer(peerId).orElse(null);
             agents.add(new AgentDtos.WorkflowAgent(peerId, nameOf(peerId),
-                    two.communication().name(), execution, working, pending, doing, done,
+                    chat.isConversing(session.id(), peerId) ? "SPEAKING" : two.communication().name(), execution, working, pending, doing, done,
                     peerRow == null ? null : peerRow.role(),
                     peerRow == null ? null : peerRow.roleColor()));
         }
@@ -158,7 +176,8 @@ public class RoundtableWorkflowService {
         boolean discussing = session.topicStatus() != null
                 && !RoundtableTopicStore.STATUS_CLOSED.equals(session.topicStatus());
         return new AgentDtos.WorkflowView(session.id(), session.title(), topicId, session.topicStatus(),
-                session.floorPeer(), discussing, advancing && activity.stream().noneMatch(AgentActivitySource.Activity::working), agents, todos);
+                session.floorPeer(), discussing, advancing && activity.stream().noneMatch(AgentActivitySource.Activity::working),
+                agents, todos, timeline.recent(session.id()));
     }
 
     /**
@@ -175,7 +194,8 @@ public class RoundtableWorkflowService {
 
     public AgentDtos.WorkflowView overview(String owner) {
         List<RoundtableTodoStore.TodoRow> board = new ArrayList<>();
-        for (AgentDtos.SessionView s : chat.sessions()) {
+        List<AgentDtos.SessionView> sessions = chat.sessions();
+        for (AgentDtos.SessionView s : sessions) {
             board.addAll(taskBoard.list(s.id()));
         }
         List<AgentDtos.WorkflowTodo> todos = board.stream().map(this::toTodo).toList();
@@ -192,8 +212,8 @@ public class RoundtableWorkflowService {
                     continue;
                 }
                 switch (t.status()) {
-                    case RoundtableTodoStore.STATUS_PENDING -> pending++;
-                    case RoundtableTodoStore.STATUS_DOING -> doing++;
+                    case RoundtableTodoStore.STATUS_PENDING, RoundtableTodoStore.STATUS_REVIEWING -> pending++;
+                    case RoundtableTodoStore.STATUS_DOING, RoundtableTodoStore.STATUS_CHECKING -> doing++;
                     case RoundtableTodoStore.STATUS_DONE -> done++;
                     default -> {
                     }
@@ -201,6 +221,8 @@ public class RoundtableWorkflowService {
             }
             for(var extra:activity){if(peerId.equals(extra.agentId())){pending+=extra.pending();doing+=extra.doing();done+=extra.done();}}
             boolean working = workRuntime.isWorkingAnywhere(peerId)
+                    || sessions.stream().anyMatch(s -> chat.isConversing(s.id(), peerId))
+                    || sessions.stream().anyMatch(s -> peerId.equals(s.floorPeer()))
                     || activity.stream().anyMatch(a->peerId.equals(a.agentId()) && a.working());
             /* 没有单一话题可挂，发言维度（communication）在全局视角下无意义 → 留空由页面略去；
                执行维度只由「此刻有没有在跑」给出就绪 / 执行中 */
@@ -209,7 +231,7 @@ public class RoundtableWorkflowService {
                             : PeerStatus.of(PeerState.INACTIVE).execution().name(),
                     working, pending, doing, done, peer.role(), peer.roleColor()));
         }
-        return new AgentDtos.WorkflowView(null, null, null, null, null, false, false, agents, todos);
+        return new AgentDtos.WorkflowView(null, null, null, null, null, false, false, agents, todos, List.of());
     }
 
     private List<AgentActivitySource.Activity> activities(String owner,String sessionId) {

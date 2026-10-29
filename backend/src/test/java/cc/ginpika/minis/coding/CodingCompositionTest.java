@@ -139,7 +139,7 @@ class CodingCompositionTest {
     @Test void parentWaitsForBackgroundReportThenContinuesRatherThanDeliveringAPrematureAnswer() throws Exception {
         var agent=mock(CodingAgent.class);when(agent.modelId(any())).thenReturn("m1");when(agent.instructions()).thenReturn("主协调者");
         var projects=mock(WorkspaceProjects.class);var processes=mock(CodingProcesses.class);
-        facade=new CodingFacade(props,store,files,processes,tools,context,new ModelLoop(client),settings,json,projects,agent);facade.setComposition(subagents,roles);
+        facade=new CodingFacade(props,store,files,processes,tools,context,new ModelLoop(client),settings,json,projects,agent,mock(cc.ginpika.minis.project.ProjectWorkspaceStore.class),mock(cc.ginpika.minis.project.ProjectWorkExecution.class));facade.setComposition(subagents,roles);
         AtomicInteger mainRequests=new AtomicInteger();
         CountDownLatch prematureAnswer=new CountDownLatch(1);
         when(client.chatRaw(any(),any(),any(),anyString(),any())).thenAnswer(inv->{
@@ -155,9 +155,65 @@ class CodingCompositionTest {
         assertEquals("DONE",subagents.list(created).getFirst().status());
         assertTrue(store.messages(created.id()).contains("最终核对完成"));
     }
+    @Test void excessRunsQueueAndAQueuedCancellationDoesNotConsumeAnotherRunsPermit() throws Exception {
+        props.setMaxConcurrentRuns(1);
+        var agent=mock(CodingAgent.class);when(agent.modelId(any())).thenReturn("m1");
+        facade=new CodingFacade(props,store,files,mock(CodingProcesses.class),tools,context,new ModelLoop(client),settings,json,mock(WorkspaceProjects.class),agent,mock(cc.ginpika.minis.project.ProjectWorkspaceStore.class),mock(cc.ginpika.minis.project.ProjectWorkExecution.class));
+        var entered=new CountDownLatch(1);var release=new CountDownLatch(1);var count=new AtomicInteger();
+        when(client.chatRaw(any(),any(),any(),anyString(),any())).thenAnswer(inv->{if(count.incrementAndGet()==1){entered.countDown();assertTrue(release.await(5,TimeUnit.SECONDS));}return answer("完成");});
+        Run first=facade.submit("alice",new StartRun(repo.id(),"first",null,Mode.PLAN,Runner.DOCKER,0));
+        assertTrue(entered.await(2,TimeUnit.SECONDS));
+        Run cancelled=facade.submit("alice",new StartRun(repo.id(),"cancelled",null,Mode.PLAN,Runner.DOCKER,0));
+        Run third=facade.submit("alice",new StartRun(repo.id(),"third",null,Mode.PLAN,Runner.DOCKER,0));
+        assertEquals("QUEUED",store.run(third.id(),"alice").status());assertEquals(1,count.get());
+        facade.cancel("alice",cancelled.id());release.countDown();
+        long until=System.currentTimeMillis()+6000;
+        while((!"REVIEWABLE".equals(store.run(third.id(),"alice").status()) || !"CANCELLED".equals(store.run(cancelled.id(),"alice").status())) && System.currentTimeMillis()<until)Thread.sleep(10);
+        assertEquals("REVIEWABLE",store.run(first.id(),"alice").status());assertEquals("REVIEWABLE",store.run(third.id(),"alice").status());
+        assertEquals("CANCELLED",store.run(cancelled.id(),"alice").status());assertEquals(2,count.get());
+        verify(files,never()).prepare(eq(cancelled.id()),any());
+    }
+    @Test void aPureSynchronousSpecialistBatchStartsBothLoopsBeforeWaiting() throws Exception {
+        var agent=mock(CodingAgent.class);when(agent.modelId(any())).thenReturn("m1");
+        facade=new CodingFacade(props,store,files,mock(CodingProcesses.class),tools,context,new ModelLoop(client),settings,json,mock(WorkspaceProjects.class),agent,mock(cc.ginpika.minis.project.ProjectWorkspaceStore.class),mock(cc.ginpika.minis.project.ProjectWorkExecution.class));facade.setComposition(subagents,roles);
+        var both=new CountDownLatch(2);var mainRequests=new AtomicInteger();
+        when(client.chatRaw(any(),any(),any(),anyString(),any())).thenAnswer(inv->{
+            if("coding-subagent".equals(inv.getArgument(3))) {both.countDown();assertTrue(both.await(3,TimeUnit.SECONDS),"同步委派批次不能逐一等待");return answer("独立调查完成");}
+            if(mainRequests.getAndIncrement()==0) {
+                var message=json.createObjectNode().put("role","assistant");var calls=message.putArray("tool_calls");
+                calls.add(call("delegate_agent",Map.of("role","explore","prompt","定位界面入口")).put("id","explore-call"));
+                calls.add(call("delegate_agent",Map.of("role","planner","prompt","核查接口约束")).put("id","planner-call"));
+                return new OpenAiChatClient.RawResult(message,"raw","tool_calls");
+            }
+            assertTrue(((ObjectNode)inv.getArgument(1)).path("messages").toString().contains("独立调查完成"));return answer("两项证据已核对");
+        });
+        Run created=facade.submit("alice",new StartRun(repo.id(),"核查两个模块",null,Mode.PLAN,Runner.DOCKER,0));
+        long until=System.currentTimeMillis()+6000;
+        while(store.events(created.id(),0,500).stream().noneMatch(e->e.type().equals("run.finished")) && System.currentTimeMillis()<until)Thread.sleep(10);
+        assertEquals("REVIEWABLE",store.run(created.id(),"alice").status());
+        assertEquals(2,subagents.list(created).size());assertTrue(subagents.list(created).stream().allMatch(c->"DONE".equals(c.status())));
+    }
+    @Test void optedInChangesAutomaticallyRunReadOnlyReviewerBeforeBecomingReviewable() throws Exception {
+        var agent=mock(CodingAgent.class);when(agent.modelId(any())).thenReturn("m1");
+        var processes=mock(CodingProcesses.class);
+        facade=new CodingFacade(props,store,files,processes,tools,context,new ModelLoop(client),settings,json,mock(WorkspaceProjects.class),agent,mock(cc.ginpika.minis.project.ProjectWorkspaceStore.class),mock(cc.ginpika.minis.project.ProjectWorkExecution.class));facade.setComposition(subagents,roles);
+        var change=new Change("src/App.tsx","MODIFIED","old","new",100,false,false);
+        when(files.diff(anyString())).thenReturn(new Diff("tree-1",List.of(change),"+"+"x".repeat(30000),false));
+        AtomicInteger reviewers=new AtomicInteger();
+        when(client.chatRaw(any(),any(),any(),anyString(),any())).thenAnswer(inv->{
+            if("coding-subagent".equals(inv.getArgument(3))){reviewers.incrementAndGet();var body=(ObjectNode)inv.getArgument(1);assertFalse(body.path("tools").toString().contains("apply_patch"));assertFalse(body.path("tools").toString().contains("start_process"));assertTrue(body.path("messages").toString().contains("差异预览已截断"));return answer("P2 src/App.tsx:12：请核查错误处理。");}
+            return answer("已完成修改");
+        });
+        Run created=facade.submit("alice",new StartRun(repo.id(),"修复界面",null,Mode.EDIT,Runner.DOCKER,10,null,true));
+        long until=System.currentTimeMillis()+5000;while(store.events(created.id(),0,500).stream().noneMatch(e->e.type().equals("run.finished")) && System.currentTimeMillis()<until){Thread.sleep(10);}
+        assertEquals("REVIEWABLE",store.run(created.id(),"alice").status());assertEquals(1,reviewers.get());
+        Event review=store.events(created.id(),0,500).stream().filter(e->e.type().equals("review.finished")).findFirst().orElseThrow();
+        JsonNode payload=json.readTree(review.payload());assertEquals("DONE",payload.path("status").asText());assertEquals("tree-1",payload.path("hash").asText());assertTrue(payload.path("answer").asText().contains("src/App.tsx:12"));
+        assertTrue(facade.permissions("alice",created.id()).get("autoReview"));verify(files,never()).accept(anyString(),any(),anyString());
+    }
     @Test void userCanApprovePlanAndImplementInTheSameRunAndHistoricalTurnsStayReadOnly() throws Exception {
         var agent=mock(CodingAgent.class);var projects=mock(WorkspaceProjects.class);
-        facade=new CodingFacade(props,store,files,mock(CodingProcesses.class),tools,context,new ModelLoop(client),settings,json,projects,agent);facade.setComposition(subagents,roles);
+        facade=new CodingFacade(props,store,files,mock(CodingProcesses.class),tools,context,new ModelLoop(client),settings,json,projects,agent,mock(cc.ginpika.minis.project.ProjectWorkspaceStore.class),mock(cc.ginpika.minis.project.ProjectWorkExecution.class));facade.setComposition(subagents,roles);
         store.mode(run.id(),Mode.PLAN);store.phase(run.id(),"REVIEWABLE",null);
         var previous=json.createArrayNode();previous.addObject().put("role","system").put("content","旧 PLAN 规则");previous.addObject().put("role","user").put("content","原始要求");store.checkpoint(run.id(),previous,0);
         when(client.chatRaw(any(),any(),any(),anyString(),any())).thenAnswer(inv->{

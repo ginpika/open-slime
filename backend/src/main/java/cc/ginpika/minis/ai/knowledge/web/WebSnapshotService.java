@@ -31,10 +31,16 @@ public class WebSnapshotService {
     public static String agentOwner() {
         var exec = MemoryScopeCtx.get();
         String agent = exec == null ? AgentScope.get() : exec.agentOrBuiltin();
-        return "agent:" + Objects.toString(agent,"builtin") + ":"
-                + (exec == null ? "unscoped" : Objects.toString(exec.sessionId(), Objects.toString(exec.taskId(),"background")));
+        return agentOwner(agent, exec == null ? "unscoped"
+                : Objects.toString(exec.sessionId(), Objects.toString(exec.taskId(),"background")));
+    }
+    public static String agentOwner(String agent, String scope) {
+        return "agent:" + (agent == null || agent.isBlank() ? "builtin" : agent) + ":" + scope;
     }
     public static String chatSession() { var exec = MemoryScopeCtx.get(); return exec == null ? null : exec.sessionId(); }
+
+    public WebDtos.Snapshot metadata(String id) { return store.metadata(id); }
+    public List<WebDtos.Paragraph> paragraphs(String id) { return store.paragraphs(id); }
 
     public WebDtos.SaveRequest distill(String owner, WebDtos.DistillRequest request) {
         var capture = browser.captured(owner, request.captureId());
@@ -96,20 +102,22 @@ public class WebSnapshotService {
     }
 
     public void index(String id) {
-        store.get(id);
+        long generation=store.memoryGeneration();
+        var original=store.get(id);
+        if("reset".equals(original.indexStatus()) && (original.docId()==null || chunks.rowsByDoc(original.docId()).isEmpty())) return;
         if (!indexing.add(id)) return;
-        store.indexStatus(id,"indexing");
+        store.indexStatus(id,"indexing",generation);
         indexer.submit(() -> {
             try {
                 var snapshot=store.get(id);
-                if (!snapshot.enabled() || snapshot.docId()==null) { store.indexStatus(id,"disabled"); return; }
-                if(!embedding.configured()) { store.indexStatus(id,"keyword-only"); return; }
+                if (!snapshot.enabled() || snapshot.docId()==null) { store.indexStatus(id,"disabled",generation); return; }
+                if(!embedding.configured()) { store.indexStatus(id,"keyword-only",generation); return; }
                 for (var chunk:chunks.rowsByDoc(snapshot.docId())) {
                     var vector=embedding.embed(chunk.content());
                     if(vector.isPresent()) store.saveEmbeddingIfEnabled(id,chunk.id(),embedding.model(),vector.get());
                 }
-                store.indexStatus(id,store.get(id).enabled() ? "ready" : "disabled");
-            } catch(Exception e) { store.indexStatus(id,"failed"); }
+                store.indexStatus(id,store.get(id).enabled() ? "ready" : "disabled",generation);
+            } catch(Exception e) { store.indexStatus(id,"failed",generation); }
             finally { indexing.remove(id); }
         });
     }

@@ -42,7 +42,7 @@ class RuntimeEventBusTest {
     @Test
     void repeatedDeliveryBroadcastsOnce() {
         RuntimeEventStore store = store();
-        RuntimeEventBus bus = new RuntimeEventBus(store);
+        RuntimeEventBus bus = bus(store);
         List<String> got = new ArrayList<>();
         bus.subscribe("s1", null, row -> {
             got.add(row.eventId());
@@ -60,7 +60,7 @@ class RuntimeEventBusTest {
     @Test
     void coalescesPlainNotificationsButKeepsThemInTheLog() {
         RuntimeEventStore store = store();
-        RuntimeEventBus bus = new RuntimeEventBus(store);
+        RuntimeEventBus bus = bus(store);
         List<String> got = new ArrayList<>();
         bus.subscribe("s1", null, row -> {
             got.add(row.eventId());
@@ -78,7 +78,7 @@ class RuntimeEventBusTest {
     @Test
     void neverCoalescesUserMessages() {
         RuntimeEventStore store = store();
-        RuntimeEventBus bus = new RuntimeEventBus(store);
+        RuntimeEventBus bus = bus(store);
         List<String> got = new ArrayList<>();
         bus.subscribe("s1", null, row -> {
             got.add(row.eventId());
@@ -94,7 +94,7 @@ class RuntimeEventBusTest {
     @Test
     void subscriptionIsScopedToItsSession() {
         RuntimeEventStore store = store();
-        RuntimeEventBus bus = new RuntimeEventBus(store);
+        RuntimeEventBus bus = bus(store);
         List<String> got = new ArrayList<>();
         bus.subscribe("s1", null, row -> {
             got.add(row.sessionId());
@@ -105,5 +105,8 @@ class RuntimeEventBusTest {
         assertEquals(0, got.size());
         bus.publish(RuntimeEvent.of(RuntimeEventType.AGENT_MESSAGE, "s1", "p1", null, Map.of()));
         assertEquals(1, got.size());
+    }
+    private static RuntimeEventBus bus(RuntimeEventStore store) {
+        return new RuntimeEventBus(store, org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 }

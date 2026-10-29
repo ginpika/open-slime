@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>顺序即标准：**先作用域收窄 → 再相关性打分 → 再 token 预算填充**（§6.1 按需读取）。
  * <ul>
- *   <li>受保护条目（pinned / 正式画像 / `open_issue` / 全局规则 `directive`）**豁免预算**——
+ *   <li>受保护条目（pinned / 正式画像 / `open_issue` / 全局规则 `directive`）**优先注入但受总预算约束**——
  *       这正是「全局规则实时生效」的机制：每轮重新读、恒定注入（I10、T24）；</li>
  *   <li>预算**按层分桶**（L1 共享 / L2 私有 / L3 任务 / L4 发布 / episode），替代 v5 的按 scope 分桶；</li>
  *   <li>工作集走 L3 的 task 桶——工作状态与长期记忆分表，但在同一份快照里呈现；</li>
@@ -121,17 +121,20 @@ public class MemorySnapshotBuilder {
         return fill(hits, b);
     }
 
-    /** token 预算内贪心填充（按层分桶）：受保护条目恒在（豁免预算），单条超长先截断 */
+    /** token 预算内贪心填充（按层分桶）：受保护条目优先但受总预算约束，单条超长先截断 */
     private List<MemoryItemStore.ItemRow> fill(List<MemoryItemRecall.Hit> hits, Budgets b) {
         int maxChars = Math.max(120, props.getBodyMaxChars());
         List<MemoryItemStore.ItemRow> kept = new ArrayList<>();
         int dropped = 0;
-        for (MemoryItemRecall.Hit h : hits) {
+        var ordered=new ArrayList<>(hits);
+        ordered.sort(java.util.Comparator.comparingInt((MemoryItemRecall.Hit h)->"directive".equals(h.item().scope())?0:h.item().pinned()?1:"USER".equals(h.item().owner())?2:3)
+                .thenComparing(java.util.Comparator.comparingDouble(MemoryItemRecall.Hit::score).reversed()));
+        for (MemoryItemRecall.Hit h : ordered) {
             MemoryItemStore.ItemRow it = h.item();
             int tokens = tokens(MemoryItemRecall.oneLine(it, maxChars));
             if (MemoryVocabulary.isProtected(it.owner(), it.scope(), it.pinned(), it.retention())) {
-                kept.add(it);
-                b.spend(tokens, true);
+                if(b.canSpend(tokens)) { kept.add(it); b.spend(tokens, false); }
+                else dropped++;
                 continue;
             }
             if (!b.canSpend(tokens, bucketOf(it))) {

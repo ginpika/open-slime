@@ -15,8 +15,11 @@ public class WebSnapshotStore {
     private final ChunkStore chunks;
     private final DocumentStore docs;
     private final ObjectMapper om;
-    public WebSnapshotStore(JdbcTemplate jdbc, ChunkStore chunks, DocumentStore docs, ObjectMapper om) {
+    private final SnapshotEvidenceStore evidence;
+    private static final String METADATA = "id,doc_id,url,title,author,published_at,captured_at,saved_at,content_hash,summary,rationale,claims,model,warnings,index_status,enabled";
+    public WebSnapshotStore(JdbcTemplate jdbc, ChunkStore chunks, DocumentStore docs, ObjectMapper om, SnapshotEvidenceStore evidence) {
         this.jdbc = jdbc; this.chunks = chunks; this.docs = docs; this.om = om;
+        this.evidence = evidence;
     }
 
     @Transactional
@@ -34,6 +37,7 @@ public class WebSnapshotStore {
                 """, id, docId, capture.url(), request.title(), capture.author(), capture.publishedAt(), capture.capturedAt(), now,
                 capture.contentHash(), capture.sourceHtml(), request.summary(), request.rationale(),
                 json(request.claims()), request.model(), json(capture.warnings()));
+        evidence.write(id, capture.paragraphs());
         // Only source evidence is indexed as factual content; generated claims remain a distinct view.
         int index = 0;
         StringBuilder block = new StringBuilder();
@@ -59,20 +63,30 @@ public class WebSnapshotStore {
     }
 
     public List<WebDtos.Snapshot> list(int page, int size) {
-        return jdbc.queryForList("SELECT id FROM web_snapshot ORDER BY saved_at DESC,id DESC LIMIT ? OFFSET ?",
-                String.class, size, (long) (page - 1) * size).stream().map(this::get)
-                .map(s -> new WebDtos.Snapshot(s.id(),s.docId(),s.url(),s.title(),s.author(),s.publishedAt(),s.capturedAt(),s.savedAt(),
-                        s.contentHash(),s.summary(),s.rationale(),s.claims(),s.model(),s.warnings(),s.indexStatus(),s.enabled(),"", "")).toList();
+        return jdbc.query("SELECT " + METADATA + ",'' AS source_html FROM web_snapshot ORDER BY saved_at DESC,id DESC LIMIT ? OFFSET ?",
+                this::snapshot, size, (long) (page - 1) * size);
     }
 
     public WebDtos.Snapshot get(String id) {
-        List<WebDtos.Snapshot> rows = jdbc.query("SELECT * FROM web_snapshot WHERE id=?", (r, i) -> new WebDtos.Snapshot(
+        return find(id, true);
+    }
+
+    public WebDtos.Snapshot metadata(String id) { return find(id, false); }
+    public List<WebDtos.Paragraph> paragraphs(String id) { return evidence.paragraphs(id); }
+
+    private WebDtos.Snapshot find(String id, boolean includeHtml) {
+        var rows = jdbc.query("SELECT " + METADATA + (includeHtml ? ",source_html" : ",'' AS source_html")
+                + " FROM web_snapshot WHERE id=?", this::snapshot, id);
+        if (rows.isEmpty()) throw new IllegalArgumentException("快照不存在");
+        return rows.getFirst();
+    }
+
+    private WebDtos.Snapshot snapshot(java.sql.ResultSet r, int i) throws java.sql.SQLException {
+        return new WebDtos.Snapshot(
                 r.getString("id"),r.getObject("doc_id") == null ? null : r.getLong("doc_id"),r.getString("url"),r.getString("title"),
                 r.getString("author"),r.getString("published_at"),r.getLong("captured_at"),r.getLong("saved_at"),r.getString("content_hash"),
                 r.getString("summary"),r.getString("rationale"),read(r.getString("claims"),WebDtos.Claim.class),r.getString("model"),
-                read(r.getString("warnings"),String.class),r.getString("index_status"),r.getBoolean("enabled"),r.getString("source_html"),""), id);
-        if (rows.isEmpty()) throw new IllegalArgumentException("快照不存在");
-        return rows.getFirst();
+                read(r.getString("warnings"),String.class),r.getString("index_status"),r.getBoolean("enabled"),r.getString("source_html"),"");
     }
 
     @Transactional
@@ -105,7 +119,7 @@ public class WebSnapshotStore {
                 chunks.updateStatus(chunk.id(), enabled ? DocumentStore.STATUS_UNANALYZED : DocumentStore.STATUS_DISABLED);
                 if (!enabled) {
                     jdbc.update("DELETE FROM chunk_embedding WHERE chunk_id=?",chunk.id());
-                    jdbc.update("DELETE FROM relations WHERE source_chunk=?",chunk.id());
+                    new cc.ginpika.minis.ai.memory.graph.MemoryGraphStore(jdbc).retractSources(List.of("chunk:"+chunk.id()));
                 }
             }
         }
@@ -116,6 +130,7 @@ public class WebSnapshotStore {
     @Transactional
     public void delete(String id) {
         WebDtos.Snapshot snapshot = get(id);
+        jdbc.update("DELETE FROM web_snapshot_paragraph WHERE snapshot_id=?", id);
         if (snapshot.docId() != null) {
             for (var chunk : chunks.rowsByDoc(snapshot.docId())) docs.deleteChunk(chunk.id());
             jdbc.update("DELETE FROM web_snapshot WHERE id=?", id);
@@ -124,6 +139,10 @@ public class WebSnapshotStore {
     }
 
     public void indexStatus(String id, String status) { jdbc.update("UPDATE web_snapshot SET index_status=? WHERE id=?", status, id); }
+    public long memoryGeneration() { return cc.ginpika.minis.ai.memory.MemoryResetBoundary.read(jdbc).generation(); }
+    public void indexStatus(String id,String status,long generation) {
+        jdbc.update("UPDATE web_snapshot SET index_status=? WHERE id=? AND COALESCE((SELECT last_event_id FROM memory_cursor WHERE session_id='reset:generation'),0)=?",status,id,generation);
+    }
     public List<String> unfinished() {
         return jdbc.queryForList("SELECT id FROM web_snapshot WHERE enabled=1 AND index_status IN ('pending','indexing')",String.class);
     }

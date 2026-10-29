@@ -7,8 +7,6 @@ public class CodingProps {
     private boolean enabled = true;
     private String dataDir = "";
     private String dockerHostDataDir = "";
-    private int maxRounds = 60;
-    private int contextChars = 180_000;
     private int maxFiles = 20_000;
     private long maxWorkspaceBytes = 256L * 1024 * 1024;
     private int maxFileBytes = 2 * 1024 * 1024;
@@ -17,7 +15,6 @@ public class CodingProps {
     private int maxRunMinutes = 30;
     private int maxConcurrentRuns = 2;
     private int maxConcurrentSubagents = 2;
-    private int maxSubagentRounds = 30;
     private long maxEstimatedTokens = 0;
     private int maxResponseTokens = 0;
     private int responseReserveTokens = 32_768;
@@ -31,10 +28,6 @@ public class CodingProps {
     public void setDataDir(String value) { dataDir = value; }
     public String getDockerHostDataDir() { return dockerHostDataDir; }
     public void setDockerHostDataDir(String value) { dockerHostDataDir=value; }
-    public int getMaxRounds() { return Math.max(1, Math.min(200, maxRounds)); }
-    public void setMaxRounds(int value) { maxRounds = value; }
-    public int getContextChars() { return Math.max(16_000, contextChars); }
-    public void setContextChars(int value) { contextChars = value; }
     public int getMaxFiles() { return maxFiles; }
     public void setMaxFiles(int value) { maxFiles = value; }
     public long getMaxWorkspaceBytes() { return maxWorkspaceBytes; }
@@ -51,9 +44,7 @@ public class CodingProps {
     public void setMaxConcurrentRuns(int value) { maxConcurrentRuns = value; }
     public int getMaxConcurrentSubagents(){return Math.max(1,Math.min(8,maxConcurrentSubagents));}
     public void setMaxConcurrentSubagents(int value){maxConcurrentSubagents=value;}
-    public int getMaxSubagentRounds(){return Math.max(1,Math.min(getMaxRounds(),maxSubagentRounds));}
-    public void setMaxSubagentRounds(int value){maxSubagentRounds=value;}
-    /** Zero disables the cumulative token cap; context, rounds and deadlines stay bounded. */
+    /** Zero disables the cumulative token cap; the model context window and deadlines still apply. */
     public long getMaxEstimatedTokens() { return Math.max(0,maxEstimatedTokens); }
     public void setMaxEstimatedTokens(long value) { maxEstimatedTokens=value; }
     /** Zero leaves the per-response output limit to the provider. Independent of total run budget. */

@@ -4,6 +4,10 @@ import cc.ginpika.minis.agent.member.AgentStore;
 import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.RoundtableSessionStore;
 import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.core.BuiltinAgents;
+import cc.ginpika.minis.ai.core.tool.AiTool;
+import cc.ginpika.minis.ai.core.tool.ToolManager;
+import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -27,6 +31,7 @@ import org.springframework.stereotype.Component;
  * （{@link #declaredTerminals}，即 {@code term_target.id} 名单）都挂在成员自己那一行上；
  * 绑定了工作空间才会授予 {@code run_command} / {@code list_terminals}，且只在绑定的目标上可用
  * （见 {@code RoundtableChatService}）。
+ * 内置主 Agent 是例外：按实时工具注册表和工作空间目录自动全量开放，不受上述成员名单限制。
  *
  * <p>名册由人配置（增删改都在这里），大模型只读——它没有「立一个成员」的工具：
  * 圆桌上坐着的人是产品配置，不是模型临时攒的编制。
@@ -43,7 +48,7 @@ public class AgentDirectory {
      * 即「单 Agent 架构」里那个靠人格提示词切换模拟出来的单 Agent，如今被落成一个真正的成员。
      * 它的提示词就是全局提示词（见 {@link AgentPromptService}），因此「改内置 Agent 的人设」= 改首页对话的人设。
      */
-    public static final String BUILTIN_ID = "builtin";
+    public static final String BUILTIN_ID = BuiltinAgents.CORE;
 
     /** 展示名长度上限（也是被 @ 时的名字） */
     private static final int NAME_MAX = 24;
@@ -59,14 +64,16 @@ public class AgentDirectory {
     private final AgentPromptService peerPrompts;
     /** 绑定工作空间时按 id 校验目标确实存在（删除的目标会自然失效，见 {@link #declaredTerminals}） */
     private final TerminalStore terminals;
+    private final ToolManager toolManager;
     private final ObjectMapper om;
 
     public AgentDirectory(AgentStore store, RoundtableSessionStore sessions, AgentPromptService peerPrompts,
-                         TerminalStore terminals, ObjectMapper om) {
+                         TerminalStore terminals, ObjectMapper om, ToolManager toolManager) {
         this.store = store;
         this.sessions = sessions;
         this.peerPrompts = peerPrompts;
         this.terminals = terminals;
+        this.toolManager = toolManager;
         this.om = om;
     }
 
@@ -137,18 +144,25 @@ public class AgentDirectory {
         return peer(peerId).map(AgentRow::name).orElse(peerId == null ? "" : peerId);
     }
 
-    /** 成员额外声明的工具名（JSON 数组文本解析；坏数据退化为空清单） */
+    /** 主 Agent 自动取得全部对话工具；其他成员解析各自声明的工具。 */
     public List<String> declaredTools(AgentRow peer) {
+        if (peer != null && isBuiltin(peer.id())) {
+            return toolManager.availableTools(ToolSurface.CHAT).stream().map(AiTool::name).toList();
+        }
         return readNames(peer == null ? null : peer.tools(), peer, "工具声明");
     }
 
     /**
      * 成员绑定的工作空间（{@code term_target.id} 名单，JSON 数组文本解析）。
+     * 主 Agent 始终返回实时目录中的全部工作空间，包括后来新增的目标。
      *
      * <p>已从工作空间页删掉的目标在这里自动失效：绑定串本身仍留着，但执行侧按 id 取不到目标、
      * 也不会出现在它看到的清单里——于是删目标不会留下一个「能调但调不动」的假象。
      */
     public List<String> declaredTerminals(AgentRow peer) {
+        if (peer != null && isBuiltin(peer.id())) {
+            return terminals.targets().stream().map(TerminalStore.TargetRow::id).toList();
+        }
         return readNames(peer == null ? null : peer.terminals(), peer, "工作空间绑定");
     }
 
@@ -200,8 +214,8 @@ public class AgentDirectory {
             });
         }
         AgentRow row = new AgentRow(current.id(), nextName, current.builtin(),
-                tools == null ? current.tools() : writeJsonList(tools),
-                terminals == null ? current.terminals()
+                isBuiltin(id) ? null : tools == null ? current.tools() : writeJsonList(tools),
+                isBuiltin(id) ? null : terminals == null ? current.terminals()
                         : writeJsonList(requireTerminals(terminals)),
                 modelId == null ? current.modelId() : blankToNull(modelId),
                 sort == null ? current.sort() : sort,

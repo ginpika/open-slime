@@ -51,6 +51,9 @@ public interface ChatExecution {
     /** 执行一次工具调用，返回要回给模型的 tool 消息内容 */
     String runTool(JsonNode call, String batchRunId, String hubId);
 
+    /** Stateful adapters can require dispatch on their current thread even for read-only tools. */
+    default boolean parallelToolCalls() { return true; }
+
     /** 这次工具调用来自哪条流（RAG 召回留痕的 source） */
     String toolSource();
 
@@ -78,4 +81,13 @@ public interface ChatExecution {
 
     /** 这次生成是否受「同一会话不并发」的在途锁约束 */
     boolean singleFlight();
+
+    /** A concurrent status conversation must not settle the worker's personal plan. */
+    default boolean settleTodosOnFinish() { return true; }
+
+    /** A partial cancelled work execution is not a successful result. */
+    default boolean keepPartialReplyOnCancel() { return true; }
+
+    /** Some surfaces collect published text through tools rather than content deltas. */
+    default String replyOnCancel(String partialContent) { return partialContent; }
 }

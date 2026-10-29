@@ -118,6 +118,7 @@ public class AgentController {
     private final RoundtableWorkRuntime workRuntime;
     /** 共享任务区：干预之后读回那一条（状态 + 优先级）给页面 */
     private final RoundtableTodoStore taskBoard;
+    private final cc.ginpika.minis.agent.roundtable.CollaborationTaskLifecycle lifecycle;
     private cc.ginpika.minis.coding.CodingFacade coding;
     @org.springframework.beans.factory.annotation.Autowired
     public void setCoding(@org.springframework.context.annotation.Lazy cc.ginpika.minis.coding.CodingFacade coding){this.coding=coding;}
@@ -129,7 +130,8 @@ public class AgentController {
                                 TaskStore tasks, SubagentService subagent, RagRecallStore ragRecalls,
                                 RoundtableDiscussionRuntime runtime, RoundtableLiveBus liveBus,
                                 RoundtableWorkflowService workflowFlow,
-                                RoundtableWorkRuntime workRuntime, RoundtableTodoStore taskBoard) {
+                                RoundtableWorkRuntime workRuntime, RoundtableTodoStore taskBoard,
+                                cc.ginpika.minis.agent.roundtable.CollaborationTaskLifecycle lifecycle) {
         this.peers = peers;
         this.chat = chat;
         this.topics = topics;
@@ -148,6 +150,7 @@ public class AgentController {
         this.workflowFlow = workflowFlow;
         this.workRuntime = workRuntime;
         this.taskBoard = taskBoard;
+        this.lifecycle=lifecycle;
     }
 
     // ---------- 名册（配置面） ----------
@@ -159,6 +162,7 @@ public class AgentController {
 
     /**
      * 可授予智能体的工具清单（成员页「可用工具」的候选）。
+     * 指定内置主 Agent 时返回全部对话工具（含管理与终端），且全部标记为默认开放。
      *
      * <p>只列「agent 能调、且属对话面」的工具——{@code run_command} / {@code list_terminals}
      * 不在其中：它们不由名字授予，而是绑定工作空间时连同授权名单一起给（见成员页「工作空间」）。
@@ -168,13 +172,14 @@ public class AgentController {
      * 「哪些是默认给的、哪些是自己加的」在配置面上一目了然。
      */
     @GetMapping("/tools")
-    public List<AgentDtos.ToolOption> tools() {
-        return tools.grantableTools(ToolSurface.CHAT).stream()
+    public List<AgentDtos.ToolOption> tools(@RequestParam(required = false) String peerId) {
+        boolean core = AgentDirectory.isBuiltin(peerId);
+        return (core ? tools.availableTools(ToolSurface.CHAT) : tools.grantableTools(ToolSurface.CHAT)).stream()
                 /* 先按业务领域（枚举序：文档 / 图谱 / 记忆 / 其他）、再按名字排序：
                    前端据此顺序即可分 Tab 归类，无需再排 */
                 .sorted(Comparator.comparing((AiTool t) -> t.domain().ordinal())
                         .thenComparing(AiTool::name))
-                .map(this::toTool)
+                .map(t -> toTool(t, core))
                 .toList();
     }
 
@@ -512,7 +517,7 @@ public class AgentController {
     @PostMapping("/sessions")
     public AgentDtos.NewSession createSession(
             @RequestBody(required = false) AgentDtos.NewSessionRequest req) {
-        return chat.createSession(req == null ? null : req.memberIds());
+        return chat.createSession(req == null ? null : req.memberIds(), req == null ? null : req.projectId());
     }
 
     @GetMapping("/sessions/{id}")
@@ -522,7 +527,7 @@ public class AgentController {
 
     @DeleteMapping("/sessions/{id}")
     public Map<String, String> deleteSession(@PathVariable String id) {
-        chat.deleteSession(id);
+        lifecycle.delete(id);
         return Map.of("sessionId", id);
     }
 
@@ -579,20 +584,26 @@ public class AgentController {
 
     /** 放弃一条：置 dropped（它的下游依赖随之解锁）。 */
     @PostMapping("/todos/{id}/drop")
-    public AgentDtos.TodoPatch dropTodo(@PathVariable String id) {
-        return todoPatch(id, workRuntime.drop(id));
+    public AgentDtos.TodoPatch dropTodo(@PathVariable String id,jakarta.servlet.http.HttpServletRequest request) {
+        try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(request))) {
+            return todoPatch(id, workRuntime.drop(id));
+        }
     }
 
     /** 暂时跳过：压到最低优先级（待办直接压；进行中的先放回队列，跑完不被收成完成、转而排最后）。 */
     @PostMapping("/todos/{id}/defer")
-    public AgentDtos.TodoPatch deferTodo(@PathVariable String id) {
-        return todoPatch(id, workRuntime.defer(id));
+    public AgentDtos.TodoPatch deferTodo(@PathVariable String id,jakarta.servlet.http.HttpServletRequest request) {
+        try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(request))) {
+            return todoPatch(id, workRuntime.defer(id));
+        }
     }
 
     /** 立刻检查：拉满优先级插到该成员队首并叫起它的执行线程（受阻的先放回待做，才跑得起来）。 */
     @PostMapping("/todos/{id}/check")
-    public AgentDtos.TodoPatch checkTodo(@PathVariable String id) {
-        return todoPatch(id, workRuntime.checkNow(id));
+    public AgentDtos.TodoPatch checkTodo(@PathVariable String id,jakarta.servlet.http.HttpServletRequest request) {
+        try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(request))) {
+            return todoPatch(id, workRuntime.checkNow(id));
+        }
     }
 
     /** 干预结果：读回那一条（不存在时状态为空、优先级为 0） */
@@ -627,6 +638,7 @@ public class AgentController {
                 : req.sessionId();
         /* 这一次交互的关联 id：本连接只转发它的事件——同会话并发的两条消息因此互不串台。
            它同时就是将来接上事件正本时的 correlation_id */
+        chat.requireDiscussable(sessionId);
         String runId = UUID.randomUUID().toString();
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         AtomicBoolean alive = new AtomicBoolean(true);
@@ -659,12 +671,11 @@ public class AgentController {
             unsubscribe.run();
         });
 
-        /* 把这一句作为 USER_MESSAGE 事件投进运行时：立即返回，执行在议程线程上跑。
-           运行时负责打断上一轮、把本轮排进会话议程、按序发布发言并在结束时推 done / error——
-           「人的新话打断上一轮」、推流出口与全部调度都收在协调器里（见 RoundtableDiscussionRuntime）。
-           控制器只做两件事：构造事件、订阅会话事件流。 */
+        /* 运行时按明确的调整意图区分普通对话与重新规划，按序发布并推 done / error。
+           控制器只负责构造事件及订阅本次交互的事件流。 */
         try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(request))){
-            runtime.submitUserMessage(sessionId, input, req.modelId(), req.speakerStrategy(), runId);
+            runtime.submitUserMessage(sessionId, input, req.modelId(), req.speakerStrategy(), runId,
+                    Boolean.TRUE.equals(req.redirectWork()));
         }
         return emitter;
     }
@@ -688,11 +699,10 @@ public class AgentController {
                 cc.ginpika.minis.ai.core.BuiltinAgents.CODING.equals(row.id())?"CODING":"CHAT");
     }
 
-    private AgentDtos.ToolOption toTool(AiTool tool) {
-        /* 默认订阅 = 只读检索那一批：与 readOnlyToolsOf(CHAT) 同一判定（本清单已限「CHAT 面 + 可被 agent 调用」，
-           于是「非写」即「默认就给」），页面据此把默认项显示成已勾选 */
+    private AgentDtos.ToolOption toTool(AiTool tool, boolean core) {
+        /* 主 Agent 全部默认开放；普通成员默认开放 READ 工具，与 readOnlyToolsOf(CHAT) 一致。 */
         return new AgentDtos.ToolOption(tool.name(), tool.description(), tool.writes(),
-                tool.risk()==cc.ginpika.minis.ai.core.tool.ToolRisk.READ, tool.domain().key(), tool.domain().label());
+                core || tool.risk()==cc.ginpika.minis.ai.core.tool.ToolRisk.READ, tool.domain().key(), tool.domain().label());
     }
 
     // ---------- 逐 Agent 后台的映射与快照 ----------

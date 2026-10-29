@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  * <p>「每个任务维护一个递增的 revision / generation。旧的生成即使稍后返回，也必须经过版本校验：
  * 版本不符就标记为过期，不允许直接覆盖当前决策。」
  *
- * <p>圆桌里的用法：人的每一句新话（{@code USER_MESSAGE}）都使该会话 revision +1；一次成员发言在
+ * <p>圆桌里的用法：用户明确调整工作或重新进入规划时使会话 revision +1；普通对话保留版本。一次成员发言在
  * <b>开始生成时</b>记下当时的 baseline，生成结束、准备提交时比对——
  * <ul>
  *   <li>一致：正常落成正式发言，进入本轮讨论上下文；</li>

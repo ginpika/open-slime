@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 /**
  * 记忆条目的召回读侧（STEP M3）：候选收敛 → 向量余弦打分 → scope 加权 → 门控过滤 → 排序。
  *
- * <p>与 {@link MemoryRecall}（事件层读侧）的分工：本类读的是「记忆条目」（memory_item），
+ * <p>与 {@link MemoryRecall}（事件层读侧）的分工：本类读的是「记忆条目」（graph_claim），
  * 也就是记忆 v2 默认召回与注入的对象；事件层只作下钻 / 审计。
  *
  * <p>两轴各司其职，沿用事件读侧的取舍：
@@ -57,10 +57,7 @@ public class MemoryItemRecall {
 
     /** 按 query 召回仍有效的条目（**无作用域**，管理页/内部流程用）；scope 可空（=全部）；limit 上限 50 */
     public List<Hit> recall(String query, String scope, int limit) {
-        List<MemoryItemStore.ItemRow> candidates = scope == null || scope.isBlank()
-                ? items.active(CANDIDATE_LIMIT)
-                : items.activeByScope(scope, CANDIDATE_LIMIT);
-        return score(query, candidates, limit);
+        return recall(MemoryExec.system(null),query,scope,limit);
     }
 
     /**
@@ -68,11 +65,29 @@ public class MemoryItemRecall {
      * 未经授权的条目根本不进候选池。注入与工具走这一条。
      */
     public List<Hit> recall(MemoryExec exec, String query, String scope, int limit) {
+        return recall(exec,query,scope,limit,null,null,null);
+    }
+
+    public List<Hit> recall(MemoryExec exec, String query, String scope, int limit, Long from, Long to, String kind) {
         java.util.LinkedHashMap<Long, MemoryItemStore.ItemRow> all = new java.util.LinkedHashMap<>();
-        items.protectedVisible(exec).stream().filter(it -> scope == null || scope.isBlank()
+        boolean timed=from!=null || to!=null || (kind!=null && !kind.isBlank());
+        float[] qvec=queryVector(query);
+        if(!timed) items.protectedVisible(exec).stream().filter(it -> scope == null || scope.isBlank()
                 || scope.equals(it.scope())).forEach(it -> all.put(it.id(), it));
-        items.visible(exec, scope, CANDIDATE_LIMIT).forEach(it -> all.putIfAbsent(it.id(), it));
-        return score(query, new ArrayList<>(all.values()), limit);
+        var lexical=items.keywordCandidates(exec,scope,query,CANDIDATE_LIMIT,from,to,kind);
+        var semantic=vectors.nearest(exec,scope,embedding.model(),qvec,CANDIDATE_LIMIT,from,to,kind);
+        lexical.forEach(it->all.putIfAbsent(it.id(),it));semantic.forEach(it->all.putIfAbsent(it.id(),it));
+        var seeds=java.util.stream.Stream.concat(lexical.stream(),semantic.stream()).map(MemoryItemStore.ItemRow::id).distinct().limit(8).toList();
+        var neighbors=timed?List.<MemoryItemStore.ItemRow>of():items.related(exec,seeds,40);
+        neighbors.forEach(it->all.putIfAbsent(it.id(),it));
+        java.util.Map<Long,Double> lexicalScores=new java.util.HashMap<>();
+        for(int i=0;i<lexical.size();i++) lexicalScores.put(lexical.get(i).id(),0.7/(1+i*0.05));
+        for(var item:neighbors) lexicalScores.putIfAbsent(item.id(),0.4);
+        if(timed && (query==null || query.isBlank())) {
+            var timeline=items.temporalCandidates(exec,scope,from,to,kind,Math.min(50,Math.max(1,limit)));
+            return timeline.stream().map(it->new Hit(it,1d)).toList();
+        }
+        return score(qvec,new ArrayList<>(all.values()),limit,lexicalScores);
     }
 
     /**
@@ -82,14 +97,18 @@ public class MemoryItemRecall {
     public List<MemoryItemStore.ItemRow> visible(MemoryExec exec, int limit) {
         return items.protectedVisible(exec);
     }
+    public Object evidence(MemoryExec exec,long id,int offset,int limit) { return items.evidence(exec,id,offset,limit); }
 
     /** 候选 → 向量余弦打分 → 三轴加权 → 门控 → 排序（无作用域与有作用域两条读路径共用） */
     private List<Hit> score(String query, List<MemoryItemStore.ItemRow> candidates, int limit) {
+        return score(queryVector(query),candidates,limit,Map.of());
+    }
+
+    private List<Hit> score(float[] qvec,List<MemoryItemStore.ItemRow> candidates,int limit,Map<Long,Double> lexical) {
         int cap = Math.max(1, Math.min(limit, LIMIT_MAX));
         if (candidates.isEmpty()) {
             return List.of();
         }
-        float[] qvec = queryVector(query);
         Map<Long, float[]> vecs = qvec == null ? Map.of()
                 : vectors.byItemIds(embedding.model(),
                         candidates.stream().map(MemoryItemStore.ItemRow::id).toList());
@@ -97,8 +116,8 @@ public class MemoryItemRecall {
         List<Hit> hits = new ArrayList<>();
         for (MemoryItemStore.ItemRow it : candidates) {
             float[] v = vecs.get(it.id());
-            double score = qvec == null || v == null ? 0d
-                    : Math.max(0d, MemoryVecMath.cosine(qvec, v)) * weight(it);
+            double score = Math.max(lexical.getOrDefault(it.id(),0d),qvec == null || v == null ? 0d
+                    : Math.max(0d, MemoryVecMath.cosine(qvec, v))) * weight(it);
             /* 门控：非固定条目低于阈值不返回——宁可不注入，也不给 system 灌噪声 */
             if (!cc.ginpika.minis.ai.memory.MemoryVocabulary.isProtected(it.owner(), it.scope(), it.pinned(), it.retention()) && score < min) {
                 continue;
@@ -159,13 +178,14 @@ public class MemoryItemRecall {
         if (maxChars > 0 && body.length() > maxChars) {
             body = body.substring(0, maxChars) + "…";
         }
-        StringBuilder sb = new StringBuilder("- 【").append(scopeLabel(it.scope()));
+        StringBuilder sb = new StringBuilder("- [id=").append(it.id()).append("]【").append(scopeLabel(it.scope()));
         String layer = layerLabel(it.layer());
         if (!layer.isBlank()) {
             sb.append(" · ").append(layer);
         }
         if ("FICTION".equals(it.identity())) { sb.append(" · 虚构项目"); }
         if ("inferred".equals(it.evidenceLevel())) { sb.append(" · 待验证"); }
+        sb.append(" · ").append(cc.ginpika.minis.ai.memory.MemoryTime.label(it.temporalJson()));
         sb.append("】");
         if (it.title() != null && !it.title().isBlank()) {
             sb.append(it.title().trim()).append("：");

@@ -44,7 +44,7 @@ public class SchemaMigrations {
     private static final Logger log = LoggerFactory.getLogger(SchemaMigrations.class);
 
     /** 目标版本：v2 归属 / v3 运行时 / v4 隔离与版本一致性 */
-    private static final int TARGET = 4;
+    private static final int TARGET = 5;
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
@@ -75,6 +75,7 @@ public class SchemaMigrations {
                         step.run();
                     }
                 }
+                verify();
                 jdbc.update("UPDATE _schema SET version = ?", TARGET);
             });
         } catch (RuntimeException e) {
@@ -92,13 +93,28 @@ public class SchemaMigrations {
         m.put(2, this::migrateV2MemoryScope);
         m.put(3, this::migrateV3MemoryRuntime);
         m.put(4, this::migrateV4MemoryBoundaries);
+        m.put(5, () -> {
+            jdbc.update("UPDATE graph_claim SET source_refs=replace(source_refs,'memory_item:','graph_claim:') WHERE source_refs IS NOT NULL");
+            var graph=new cc.ginpika.minis.ai.memory.graph.MemoryGraphStore(jdbc);
+            // Rehydrate original text in the migration layer; memory services never pull from Agent stores.
+            for(var event:jdbc.queryForList("SELECT e.*,CASE WHEN e.ref_type='chat_message' THEN (SELECT content FROM chat_message WHERE id=e.ref_id) "
+                    +"WHEN e.ref_type='task' THEN (SELECT group_concat(content,char(10)) FROM task_artifact WHERE task_id=e.ref_id AND kind='text') END AS original FROM memory_event e")) {
+                cc.ginpika.minis.ai.core.MemoryIdentity identity;
+                try { identity=cc.ginpika.minis.ai.core.MemoryIdentity.valueOf(java.util.Objects.toString(event.get("identity"),"INFERRED")); }
+                catch(IllegalArgumentException ignored) {identity=cc.ginpika.minis.ai.core.MemoryIdentity.INFERRED;}
+                var exec=new cc.ginpika.minis.ai.core.MemoryExec(null,(String)event.get("agent_id"),(String)event.get("project_id"),(String)event.get("session_id"),event.get("task_id") instanceof Number n?n.longValue():null,
+                        cc.ginpika.minis.ai.core.MemorySurface.SYSTEM,false,null,identity);
+                graph.episode(event.get("event_key").toString(),java.util.Objects.toString(event.get("original"),java.util.Objects.toString(event.get("payload"),"")),exec,((Number)event.get("created_at")).longValue());
+            }
+            graph.migrateLegacy();
+        });
         return m;
     }
 
     // ---------------------------------------------------------------- v2：memory-v5 历史回填
 
     /**
-     * 把既有 memory_item 从「扁平 scope」规范化为「owner × domain × layer」：
+     * 把既有 graph_claim 从「扁平 scope」规范化为「owner × domain × layer」：
      * <ul>
      *   <li>profile/directive + source=auto → 转<b>候选</b>（写 memory_candidate），原条目归档（不删）；</li>
      *   <li>profile/directive + explicit/manual → USER × USER_PROFILE × L1，active；</li>
@@ -115,12 +131,12 @@ public class SchemaMigrations {
                     source_kind, evidence_level, evidence_count, status, created_at, updated_at)
                 SELECT 'mig:' || id, NULL, 'USER', scope, title, body,
                     'inferred', 'inferred', 1, 'pending', created_at, updated_at
-                FROM memory_item
+                FROM graph_claim
                 WHERE scope IN ('profile','directive') AND source = 'auto'
-                  AND NOT EXISTS(SELECT 1 FROM memory_candidate c WHERE c.fingerprint = 'mig:' || memory_item.id)
+                  AND NOT EXISTS(SELECT 1 FROM memory_candidate c WHERE c.fingerprint = 'mig:' || graph_claim.id)
                 """);
         int arch = jdbc.update("""
-                UPDATE memory_item SET status = 'archived', owner = 'USER', domain = 'USER_PROFILE',
+                UPDATE graph_claim SET status = 'archived', owner = 'USER', domain = 'USER_PROFILE',
                     layer = 'L1', source_kind = 'inferred', evidence_level = 'inferred'
                 WHERE scope IN ('profile','directive') AND source = 'auto' AND (status IS NULL)
                 """);
@@ -130,27 +146,27 @@ public class SchemaMigrations {
 
         // 2) 其余历史行：按 scope 归类（保守，绝不升 USER）
         int projNoId = jdbc.update("""
-                UPDATE memory_item SET owner='AGENT', domain='AGENT', layer='L2',
+                UPDATE graph_claim SET owner='AGENT', domain='AGENT', layer='L2',
                     agent_id='builtin', source_kind='inferred', evidence_level='inferred'
                 WHERE status IS NULL AND scope='project' AND (project_id IS NULL OR project_id='')
                 """);
         jdbc.update("""
-                UPDATE memory_item SET owner='PROJECT', domain='PROJECT', layer='L1',
+                UPDATE graph_claim SET owner='PROJECT', domain='PROJECT', layer='L1',
                     source_kind='inferred', evidence_level='inferred'
                 WHERE status IS NULL AND scope='project' AND project_id IS NOT NULL AND project_id <> ''
                 """);
         jdbc.update("""
-                UPDATE memory_item SET owner='AGENT', domain='AGENT', layer='L2',
+                UPDATE graph_claim SET owner='AGENT', domain='AGENT', layer='L2',
                     agent_id='builtin', source_kind='inferred', evidence_level='inferred'
                 WHERE status IS NULL AND scope='episode' AND (agent_id IS NULL OR agent_id='')
                 """);
         jdbc.update("""
-                UPDATE memory_item SET owner='AGENT', domain='AGENT', layer='L2',
+                UPDATE graph_claim SET owner='AGENT', domain='AGENT', layer='L2',
                     source_kind='inferred', evidence_level='inferred'
                 WHERE status IS NULL AND scope='episode' AND agent_id IS NOT NULL AND agent_id <> ''
                 """);
         jdbc.update("""
-                UPDATE memory_item SET owner='AGENT', domain='AGENT', layer='L2',
+                UPDATE graph_claim SET owner='AGENT', domain='AGENT', layer='L2',
                     agent_id='builtin', source_kind='inferred', evidence_level='inferred'
                 WHERE status IS NULL
                 """);
@@ -161,14 +177,14 @@ public class SchemaMigrations {
 
         // 3) profile/directive 且 explicit/manual → 正式画像
         jdbc.update("""
-                UPDATE memory_item SET owner='USER', domain='USER_PROFILE', layer='L1',
+                UPDATE graph_claim SET owner='USER', domain='USER_PROFILE', layer='L1',
                     source_kind='inferred', evidence_level='explicit'
                 WHERE status IS NULL AND scope IN ('profile','directive')
                 """);
 
         // 4) 通用字段：status / retention / version / 指纹 / 双时态
         jdbc.update("""
-                UPDATE memory_item SET
+                UPDATE graph_claim SET
                     status = CASE
                         WHEN superseded_by IS NOT NULL THEN 'superseded'
                         WHEN valid_until IS NOT NULL AND valid_until <= CAST(strftime('%s','now') AS INTEGER)*1000
@@ -199,15 +215,15 @@ public class SchemaMigrations {
     private void migrateV3MemoryRuntime() {
         // 1) identity 回填
         int fiction = jdbc.update("""
-                UPDATE memory_item SET identity = 'FICTION'
+                UPDATE graph_claim SET identity = 'FICTION'
                 WHERE identity IS NULL AND source_kind = 'fiction'
                 """);
         int pref = jdbc.update("""
-                UPDATE memory_item SET identity = 'PROJECT_PREF'
+                UPDATE graph_claim SET identity = 'PROJECT_PREF'
                 WHERE identity IS NULL AND source_kind = 'project_pref'
                 """);
         jdbc.update("""
-                UPDATE memory_item SET identity = CASE
+                UPDATE graph_claim SET identity = CASE
                     WHEN source = 'explicit' OR source = 'manual' OR evidence_level = 'explicit' THEN 'REAL'
                     ELSE 'INFERRED' END
                 WHERE identity IS NULL
@@ -215,20 +231,20 @@ public class SchemaMigrations {
 
         // 2) L3 绑定修正：无会话 / 任务绑定的 L3 历史行降为 L2（保守，不臆造归属）
         int demoted = jdbc.update("""
-                UPDATE memory_item SET layer = 'L2'
+                UPDATE graph_claim SET layer = 'L2'
                 WHERE layer = 'L3' AND (session_id IS NULL OR session_id = '')
                   AND (task_id IS NULL)
                 """);
         // owner=TASK 却无任何绑定 → 归 AGENT('builtin')（TASK 归属必须有绑定，I4）
         int taskOrphan = jdbc.update("""
-                UPDATE memory_item SET owner = 'AGENT', domain = 'AGENT', layer = 'L2',
+                UPDATE graph_claim SET owner = 'AGENT', domain = 'AGENT', layer = 'L2',
                     agent_id = COALESCE(NULLIF(agent_id, ''), 'builtin')
                 WHERE owner = 'TASK' AND (session_id IS NULL OR session_id = '') AND task_id IS NULL
                 """);
 
         // 3) AGENT 归属规范化
         int builtin = jdbc.update("""
-                UPDATE memory_item SET agent_id = 'builtin'
+                UPDATE graph_claim SET agent_id = 'builtin'
                 WHERE owner = 'AGENT' AND (agent_id IS NULL OR agent_id = '')
                 """);
 
@@ -244,13 +260,13 @@ public class SchemaMigrations {
 
     private void migrateV4MemoryBoundaries() {
         // 不能从“最后一次会话绑定”臆造历史事件权限；无作用域旧事件继续只供人工审计。
-        jdbc.update("UPDATE memory_item SET agent_id=producer_agent WHERE owner='PROJECT' AND layer='L2' "
+        jdbc.update("UPDATE graph_claim SET agent_id=producer_agent WHERE owner='PROJECT' AND layer='L2' "
                 + "AND agent_id IS NULL AND producer_agent IS NOT NULL");
-        jdbc.update("UPDATE memory_item SET status='archived' WHERE owner='PROJECT' AND layer='L2' "
+        jdbc.update("UPDATE graph_claim SET status='archived' WHERE owner='PROJECT' AND layer='L2' "
                 + "AND (agent_id IS NULL OR agent_id='')");
-        jdbc.update("UPDATE memory_item SET layer='L3' WHERE owner='PROJECT' AND layer='L1' "
+        jdbc.update("UPDATE graph_claim SET layer='L3' WHERE owner='PROJECT' AND layer='L1' "
                 + "AND source <> 'manual' AND (session_id IS NOT NULL OR task_id IS NOT NULL)");
-        jdbc.update("UPDATE memory_item SET status='archived' WHERE owner='PROJECT' AND layer='L1' "
+        jdbc.update("UPDATE graph_claim SET status='archived' WHERE owner='PROJECT' AND layer='L1' "
                 + "AND source <> 'manual' AND session_id IS NULL AND task_id IS NULL");
         var store = new cc.ginpika.minis.ai.memory.store.MemoryItemStore(jdbc);
         for (var it : store.listAll()) {
@@ -259,9 +275,9 @@ public class SchemaMigrations {
             if (java.util.Objects.equals(fp, it.fingerprint())) { continue; }
             var duplicate = store.findByFingerprint(fp).orElse(null);
             if (duplicate != null && duplicate.id() != it.id()) {
-                jdbc.update("UPDATE memory_item SET status='archived' WHERE id=?", it.id());
+                jdbc.update("UPDATE graph_claim SET status='archived' WHERE id=?", it.id());
             }
-            jdbc.update("UPDATE memory_item SET fingerprint=? WHERE id=?", fp, it.id());
+            jdbc.update("UPDATE graph_claim SET fingerprint=? WHERE id=?", fp, it.id());
             jdbc.update("UPDATE memory_revocation SET fingerprint=? WHERE fingerprint=?", fp, it.fingerprint());
         }
         // 老快照没有版本正文，保留并明确为历史引用；老向量在补齐任务中按版本重算。
@@ -273,12 +289,12 @@ public class SchemaMigrations {
     /** 迁移后校验：owner/status 不得有 NULL；矩阵违例（USER 带 project_id / PROJECT 无 project_id）计数 */
     private void verify() {
         Integer nulls = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM memory_item WHERE owner IS NULL OR status IS NULL", Integer.class);
+                "SELECT COUNT(*) FROM graph_claim WHERE owner IS NULL OR status IS NULL", Integer.class);
         if (nulls != null && nulls > 0) {
             throw new IllegalStateException("迁移后校验失败：仍有 " + nulls + " 条记忆 owner/status 为空");
         }
         Integer bad = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM memory_item
+                SELECT COUNT(*) FROM graph_claim
                 WHERE (owner='USER' AND (project_id IS NOT NULL OR agent_id IS NOT NULL) AND status='active')
                    OR (owner='PROJECT' AND (project_id IS NULL OR project_id='') AND status='active')
                 """, Integer.class);
@@ -287,7 +303,7 @@ public class SchemaMigrations {
         }
         /* memory-v6 不变量抽查：L3 必须绑定会话/任务；L4 必须有发布来源（memory_share 或提升记录） */
         Integer l3 = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM memory_item
+                SELECT COUNT(*) FROM graph_claim
                 WHERE status = 'active' AND layer = 'L3'
                   AND (session_id IS NULL OR session_id = '') AND task_id IS NULL
                 """, Integer.class);
@@ -295,7 +311,7 @@ public class SchemaMigrations {
             throw new IllegalStateException("迁移后校验失败：仍有 " + l3 + " 条 L3 记忆缺少会话/任务绑定（违反 I5）");
         }
         Integer l4 = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM memory_item m
+                SELECT COUNT(*) FROM graph_claim m
                 WHERE m.status = 'active' AND m.layer = 'L4'
                   AND NOT EXISTS(SELECT 1 FROM memory_share s WHERE s.item_id = m.id)
                   AND NOT EXISTS(SELECT 1 FROM memory_promotion p WHERE p.item_id = m.id AND p.state = 'applied')

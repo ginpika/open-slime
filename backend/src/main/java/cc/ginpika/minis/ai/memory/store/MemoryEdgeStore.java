@@ -1,127 +1,60 @@
 package cc.ginpika.minis.ai.memory.store;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.List;
-import java.util.UUID;
+import cc.ginpika.minis.ai.core.*;
+import cc.ginpika.minis.ai.memory.*;
+import cc.ginpika.minis.ai.memory.graph.MemoryGraphStore;
+import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
-/**
- * 双时态知识边（memory_edge，memory-v5 §7.1 · P4）：记忆的「关系轴」，借鉴 Zep/Graphiti。
- *
- * <p>每条边带四个时间戳（{@code valid_at / invalid_at / learned_at / expired_at}）。核心语义：
- * <b>新事实与旧事实矛盾时，关闭旧边有效期而非删除</b>（{@link #add} 内自动失效同域同主谓的旧边），
- * 于是历史始终可点查「某时刻系统知道什么」。
- *
- * <p>作用域与条目一致（owner × project × agent）：跨域绝不互相失效。
- */
+/** Compatibility API for temporal edges; all facts and their validity now live in graph_claim. */
 @Repository
 public class MemoryEdgeStore {
-
-    /** 一条知识边 */
-    public record EdgeRow(String id, String userId, String owner, String projectId, String agentId,
-                          String subject, String predicate, String object, double confidence,
-                          Long validAt, Long invalidAt, long learnedAt, Long expiredAt,
-                          Long sourceItem, long createdAt) {
-    }
-
-    private static final String COLS = "id, user_id, owner, project_id, agent_id, subject, predicate, "
-            + "object, confidence, valid_at, invalid_at, learned_at, expired_at, source_item, created_at";
-
+    public record EdgeRow(String id,String userId,String owner,String projectId,String agentId,String subject,
+                          String predicate,String object,double confidence,Long validAt,Long invalidAt,long learnedAt,
+                          Long expiredAt,Long sourceItem,long createdAt) {}
     private final JdbcTemplate jdbc;
+    private final MemoryGraphStore graph;
+    public MemoryEdgeStore(JdbcTemplate jdbc) { this.jdbc=jdbc;this.graph=new MemoryGraphStore(jdbc); }
 
-    public MemoryEdgeStore(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
-
-    /**
-     * 加一条边并做双时态矛盾处理：同域同 (subject, predicate) 的仍有效旧边，若 object 不同（矛盾），
-     * 关闭其有效期（{@code invalid_at = 本边 valid_at}，{@code expired_at = now}）。
-     *
-     * @param validAt 事实在世界中成立的时间（可空 = 未知，取现在）
-     * @return 新边 id
-     */
-    public String add(String userId, String owner, String projectId, String agentId, String subject,
-                      String predicate, String object, double confidence, Long validAt,
-                      Long sourceItem) {
-        long now = System.currentTimeMillis();
-        long effectiveValidAt = validAt == null ? now : validAt;
-        /* 双时态失效：同域同主谓、仍有效、且 object 不同 → 关闭其有效期（不删） */
-        jdbc.update("UPDATE memory_edge SET invalid_at = ?, expired_at = ? "
-                        + "WHERE owner = ? AND " + nzEq("project_id") + " AND " + nzEq("agent_id")
-                        + " AND subject = ? AND predicate = ? AND invalid_at IS NULL AND object <> ? "
-                        + "AND (valid_at IS NULL OR valid_at <= ?)",
-                effectiveValidAt, now, owner, projectId, agentId, subject, predicate, object,
-                effectiveValidAt);
-        String id = UUID.randomUUID().toString();
-        jdbc.update("INSERT INTO memory_edge(id, user_id, owner, project_id, agent_id, subject, "
-                        + "predicate, object, confidence, valid_at, invalid_at, learned_at, expired_at, "
-                        + "source_item, created_at) VALUES(?,?,?,?,?,?,?,?,?,?, NULL, ?, NULL, ?, ?)",
-                id, userId, owner, projectId, agentId, subject, predicate, object, confidence,
-                effectiveValidAt, now, sourceItem, now);
+    /** Multiple objects coexist. A new object alone is not evidence that an old fact became false. */
+    @Transactional
+    public String add(String userId,String owner,String project,String agent,String subject,String predicate,String object,
+                      double confidence,Long validAt,Long sourceItem) {
+        var source=sourceItem==null?null:graph.claims().findById(sourceItem).orElseThrow();
+        var own=source==null?new MemoryItemStore.Ownership(userId,owner,
+                "USER".equals(owner)?"USER_PROFILE":"PROJECT".equals(owner)?"PROJECT":"AGENT",
+                "USER".equals(owner)||"PROJECT".equals(owner)?"L1":"L2",project,null,null,agent)
+                :new MemoryItemStore.Ownership(source.userId(),source.owner(),source.domain(),source.layer(),source.projectId(),source.sessionId(),source.taskId(),source.agentId());
+        String refs=source==null?null:MemoryEvidence.merge(source.sourceRefs(),"[{\"ref\":\"graph_claim:"+sourceItem+"\"}]");
+        long claim=graph.claims().insert(own,new MemoryItemStore.Governance(agent,"inferred","inferred","long",MemoryIdentity.INFERRED),
+                "fact",predicate,subject+" —["+predicate+"]→ "+object,confidence,"manual",null,refs);
+        if(validAt!=null) jdbc.update("UPDATE graph_claim SET valid_at=? WHERE id=?",validAt,claim);
+        String ns=MemoryGraphStore.namespace(graph.claims().findById(claim).orElseThrow());
+        String s=graph.entity(ns,subject,"CONCEPT",null,null),o=graph.entity(ns,object,"CONCEPT",null,null);
+        graph.relation(claim,s,predicate,o,null);
+        String id=MemoryGraphStore.digest(claim+"\u0000"+s+"\u0000"+predicate+"\u0000"+o);
+        jdbc.update("UPDATE graph_relation SET source_claim=? WHERE id=?",sourceItem,id);
         return id;
     }
 
-    /** 某主谓在给定作用域下仍有效的边（invalid_at 为空），可点查「此刻成立的事实」 */
-    public List<EdgeRow> activeBySubject(String owner, String projectId, String agentId, String subject) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_edge WHERE owner = ? AND "
-                        + nzEq("project_id") + " AND " + nzEq("agent_id")
-                        + " AND subject = ? AND invalid_at IS NULL ORDER BY learned_at DESC",
-                (rs, n) -> map(rs), owner, projectId, agentId, subject);
+    public List<EdgeRow> activeBySubject(String owner,String project,String agent,String subject) {
+        List<Object> args=new ArrayList<>(List.of(owner));args.add(project);args.add(agent);args.add(subject);
+        return rows("c.owner=? AND c.project_id IS ? AND c.agent_id IS ? AND s.name=? AND c.invalid_at IS NULL AND c.status='active'",args,1000);
     }
-
-    /** 全部仍有效的边（管理页 / 导出），新学到在前 */
-    public List<EdgeRow> activeAll(int limit) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_edge WHERE invalid_at IS NULL "
-                + "ORDER BY learned_at DESC LIMIT ?", (rs, n) -> map(rs), limit);
+    public List<EdgeRow> activeAll(int limit) { return rows("c.invalid_at IS NULL AND c.status='active'",new ArrayList<>(),limit); }
+    public List<EdgeRow> asOf(long at,int limit) { return rows("COALESCE(c.valid_at,c.learned_at)<=? AND (c.invalid_at IS NULL OR c.invalid_at>?)",new ArrayList<>(List.of(at,at)),limit); }
+    private List<EdgeRow> rows(String filter,List<Object> args,int limit) {
+        args.add(Math.max(1,limit));
+        return jdbc.query("SELECT r.id,c.user_id,c.owner,c.project_id,c.agent_id,s.name AS subject,r.predicate,o.name AS object,c.confidence,c.valid_at,c.invalid_at,c.learned_at,c.expired_at,r.source_claim,c.created_at "
+                        +"FROM graph_relation r JOIN graph_claim c ON c.id=r.claim_id JOIN graph_entity s ON s.id=r.subject_id JOIN graph_entity o ON o.id=r.object_id "
+                        +"WHERE o.type<>'STATEMENT' AND "+filter+" ORDER BY c.learned_at DESC LIMIT ?",(r,n)->new EdgeRow(r.getString(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getString(8),r.getDouble(9),nullable(r,10),nullable(r,11),r.getLong(12),nullable(r,13),nullable(r,14),r.getLong(15)),args.toArray());
     }
-
-    /**
-     * 点查「{@code at} 时刻仍有效」的边（双时态，memory-v6 §12.4）：事实世界里成立的区间
-     * {@code [valid_at, invalid_at)} 覆盖该时刻即算有效——矛盾时只关闭有效期，历史照查。
-     */
-    public List<EdgeRow> asOf(long at, int limit) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_edge "
-                        + "WHERE COALESCE(valid_at, learned_at) <= ? AND (invalid_at IS NULL OR invalid_at > ?) "
-                        + "ORDER BY learned_at DESC LIMIT ?",
-                (rs, n) -> map(rs), at, at, Math.max(1, limit));
+    public int invalidateBySourceItem(long item) {
+        long now=System.currentTimeMillis();
+        return jdbc.update("UPDATE graph_claim SET invalid_at=COALESCE(invalid_at,?),expired_at=?,status='superseded' WHERE id IN (SELECT claim_id FROM graph_relation WHERE source_claim=?) AND invalid_at IS NULL",now,now,item);
     }
-
-    /** 某条目的支撑边全部失效（当支撑条目被取代 / 撤销时调用），保留历史 */
-    public int invalidateBySourceItem(long itemId) {
-        long now = System.currentTimeMillis();
-        return jdbc.update("UPDATE memory_edge SET invalid_at = COALESCE(invalid_at, ?), expired_at = ? "
-                + "WHERE source_item = ? AND invalid_at IS NULL", now, now, itemId);
-    }
-
-    /** 清空全部知识边（设置页「重置知识库」连带清除记忆时用） */
-    public int clearAll() {
-        return jdbc.update("DELETE FROM memory_edge");
-    }
-
-    /**
-     * 用于「NULL 安全的列等值比较」：两列都为 NULL 视为相等（跨域失效保护）。
-     *
-     * <p>注意：这里**不能用 NUL（{@code \u0000}）当哨兵**——JDBC/SQLite 解析含 NUL 字节的 SQL 会直接
-     * 报 {@code unrecognized token}（曾因此让「加知识边」整条路走不通）。本项目里 project_id / agent_id
-     * 不会写成空串，故用空串做哨兵即可。
-     */
-    private static String nzEq(String col) {
-        return "COALESCE(" + col + ", '') = COALESCE(?, '')";
-    }
-
-    private static EdgeRow map(ResultSet rs) throws SQLException {
-        return new EdgeRow(rs.getString("id"), rs.getString("user_id"), rs.getString("owner"),
-                rs.getString("project_id"), rs.getString("agent_id"), rs.getString("subject"),
-                rs.getString("predicate"), rs.getString("object"), rs.getDouble("confidence"),
-                nullableLong(rs, "valid_at"), nullableLong(rs, "invalid_at"), rs.getLong("learned_at"),
-                nullableLong(rs, "expired_at"), nullableLong(rs, "source_item"),
-                rs.getLong("created_at"));
-    }
-
-    private static Long nullableLong(ResultSet rs, String col) throws SQLException {
-        long v = rs.getLong(col);
-        return rs.wasNull() ? null : v;
-    }
+    public int clearAll() { return jdbc.update("DELETE FROM graph_relation WHERE source_claim IS NOT NULL"); }
+    private static Long nullable(java.sql.ResultSet r,int column) throws java.sql.SQLException {long value=r.getLong(column);return r.wasNull()?null:value;}
 }

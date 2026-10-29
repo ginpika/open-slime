@@ -66,11 +66,12 @@ public final class SettingsDtos {
      * 重置知识库结果：删除的 chunk / 实体 / 关系 / 记忆条数。
      *   memories      = 记忆总数（时序事件 + 记忆条目）
      *   memoryEvents  = 其中时序事件（memory_event）
-     *   memoryItems   = 其中记忆条目（memory_item）
+     *   memoryItems   = 其中记忆条目（graph_claim）
      *   candidates / shares = 一并清除的画像候选 / 共享记录
      */
     public record ResetResult(int chunks, int entities, int relations, int memories, int memoryEvents,
-                              int memoryItems, int candidates, int shares) {
+                              int memoryItems, int candidates, int shares, int episodes, int ingestJobs,
+                              int checkpoints, int recallTraces, int deletedProjectDocuments, int retainedProjectDocuments) {
     }
 
     private SettingsDtos() {

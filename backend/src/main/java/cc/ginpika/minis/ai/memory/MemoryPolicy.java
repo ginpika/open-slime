@@ -39,13 +39,25 @@ public final class MemoryPolicy {
      * R6 exec.human                                                     管理页全量（含归档）
      * </pre>
      *
-     * @param itemTable 条目表名（当前恒为 {@code memory_item}；保留参数便于测试与后续视图）
+     * @param itemTable 条目表名（当前恒为 {@code graph_claim}；保留参数便于测试与后续视图）
      */
     public static String visibleSql(String itemTable) {
-        return "superseded_by IS NULL AND (valid_until IS NULL OR valid_until > ?) "
-                + "AND (expires_soft IS NULL OR expires_soft > ?) "
-                + "AND (status = 'active' OR (? = 1 AND status = 'archived')) AND ("
+        return visibleSql(itemTable, false);
+    }
+
+    /** Historical reads keep authorization and retraction rules, but may inspect expired/archived versions. */
+    public static String visibleSql(String itemTable, boolean historical) {
+        String lifetime = historical ? "(? IS NOT NULL) AND (? IS NOT NULL) "
+                : "superseded_by IS NULL AND (valid_until IS NULL OR valid_until > ?) AND (expires_soft IS NULL OR expires_soft > ?) "
+                + "AND (COALESCE(json_extract(temporal_json,'$.kind'),'')<>'state' OR "
+                + "((json_extract(temporal_json,'$.start') IS NULL OR json_extract(temporal_json,'$.start')<=unixepoch('now')*1000) "
+                + "AND (invalid_at IS NULL OR invalid_at>unixepoch('now')*1000))) ";
+        return lifetime
+                + "AND (identity IS NULL OR identity<>'FICTION' OR ?='FICTION' OR ?=1) "
+                + (historical ? "AND (status IN ('active','archived','superseded','expired') OR (? = 1 AND status = 'archived')) AND ("
+                        : "AND (status = 'active' OR (? = 1 AND status = 'archived')) AND (")
                 + "(owner = 'USER' AND domain = 'USER_PROFILE') "
+                + "OR (owner = 'KNOWLEDGE' AND domain = 'KNOWLEDGE' AND layer = 'L1') "
                 + "OR (owner = 'PROJECT' AND project_id = ? AND (layer = 'L1' "
                 + "    OR (layer = 'L2' AND agent_id = ?) "
                 + "    OR (layer = 'L3' AND (session_id = ? OR task_id = ?)))) "
@@ -68,6 +80,8 @@ public final class MemoryPolicy {
         List<Object> args = new ArrayList<>(17);
         args.add(now);              // valid_until
         args.add(now);              // expires_soft
+        args.add(e.identityOrInferred().name());
+        args.add(human);
         args.add(human);            // status（archived 仅人工可见）
         args.add(e.projectId());    // R2
         args.add(agent);            // PROJECT L2
@@ -95,6 +109,9 @@ public final class MemoryPolicy {
         }
         if ("USER".equals(owner)) {
             return "USER_PROFILE".equals(domain);
+        }
+        if ("KNOWLEDGE".equals(owner)) {
+            return "KNOWLEDGE".equals(domain) && "L1".equals(layer);
         }
         if ("PROJECT".equals(owner)) {
             return eq(e.projectId(), projectId) && ("L1".equals(layer)
@@ -137,6 +154,11 @@ public final class MemoryPolicy {
         boolean hasSession = notBlank(sessionId);
         boolean hasTask = taskId != null;
         switch (o) {
+            case "KNOWLEDGE" -> {
+                if (!"KNOWLEDGE".equals(d) || !"L1".equals(l) || hasProject || hasAgent || hasSession || hasTask) {
+                    return "共享文档知识必须为 KNOWLEDGE × KNOWLEDGE × L1，不得绑定私有作用域";
+                }
+            }
             case "USER" -> {
                 if (!"USER_PROFILE".equals(d)) {
                     return "owner=USER 只能承载 domain=USER_PROFILE（得到 " + d + "）";

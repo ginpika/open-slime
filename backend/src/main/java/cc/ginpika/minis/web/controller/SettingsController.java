@@ -85,7 +85,8 @@ public class SettingsController {
 
     /** 重置知识库（设置页「危险操作」）：删除全部 chunk、图谱实体与关系，并移除相关 embedding */
     @PostMapping("/knowledge-base/reset")
-    public SettingsDtos.ResetResult resetKnowledgeBase() {
-        return settings.resetKnowledgeBase();
+    public SettingsDtos.ResetResult resetKnowledgeBase(@org.springframework.web.bind.annotation.RequestBody(required=false) ResetRequest request) {
+        return settings.resetKnowledgeBase(request!=null && Boolean.TRUE.equals(request.deleteProjectKnowledge()));
     }
+    public record ResetRequest(Boolean deleteProjectKnowledge) {}
 }

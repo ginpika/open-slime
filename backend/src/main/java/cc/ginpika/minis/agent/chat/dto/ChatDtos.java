@@ -64,7 +64,7 @@ public final class ChatDtos {
 
     /** 会话配置（「…」菜单在该会话的选择）：modelId/promptId=null 回退设置页默认项；
      *  agentId=null 跟内置 Agent 对话（用全局提示词）；
-     *  contextTrace=是否把历史思考与工具调用回灌上下文；maxRounds=单次提问的工具调用轮数上限；
+     *  contextTrace=是否把历史思考与工具调用回灌上下文；maxRounds=兼容旧客户端的废弃字段，恒为 0，不限制轮数；
      *  showRounds=思维链分段是否在右侧标轮次 */
     public record SessionConfig(String id, String modelId, String promptId, String agentId, Boolean showCot,
                                 Boolean contextTrace, Integer maxRounds, Boolean showRounds) {
@@ -112,7 +112,7 @@ public final class ChatDtos {
 
     /** 一次 LLM 调用的完整留痕：round=该 Turn 内的第几轮（0 基）；request=当时真正发出的请求体 JSON
      *  （含 model / messages / tools / stream）；response=收到的响应体 JSON（该轮失败为 null）；
-     *  withTools=该轮是否带工具面（被强制收尾的末轮撤掉 tools 为 false） */
+     *  withTools=该轮是否带工具面（无可用工具时为 false） */
     public record LlmCall(int round, String request, String response, boolean withTools) {
     }
 

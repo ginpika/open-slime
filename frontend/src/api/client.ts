@@ -111,7 +111,11 @@ export type SearchResponse = {
   query: string
   hits: SearchHit[]
   graph: SearchGraph
-  web: { enabled: boolean; results: string[] }
+  web: {
+    enabled: boolean; error?: string | null; warnings?: string[]
+    results: { title: string; url: string; snippet: string; summary: string; content: string
+      siteName: string; date: string; score: number; authority: number }[]
+  }
 }
 
 /** rag=true：RAG 检索模式（测试暗门）——全量召回且只返回 chunk 命中 */
@@ -135,7 +139,7 @@ export type ChatReply = {
   error: string | null
 }
 
-/** 会话列表项；modelId/promptId/showCot/maxRounds 为「…」菜单在该会话的配置
+/** 会话列表项；modelId/promptId/showCot 为「…」菜单在该会话的配置
  *  （modelId/promptId 为 null 表示未指定、回退设置页默认项） */
 export type SessionItem = {
   id: string
@@ -147,8 +151,6 @@ export type SessionItem = {
   /** 本会话所属项目（memory-v6）：项目决定记忆归属与跨项目隔离；null = 无项目（个人工作域） */
   projectId: string | null
   showCot: boolean | null
-  /** 本会话单次提问的工具调用轮数上限（「…」菜单可改，缺省 30） */
-  maxRounds: number | null
   /** 思维链分段是否在右侧标轮次计数（「…」菜单开关，缺省不显示） */
   showRounds: boolean | null
   /** 潜意识子体往这个会话投过新消息且用户还没打开过（列表里打未读点）；打开会话即清零 */
@@ -590,14 +592,13 @@ export function sessionTurnCalls(
 }
 
 /** 会话配置（「…」菜单在该会话的选择）：null=未设置（回退设置页默认 / CoT 默认显示；
- *  maxRounds 为 null 时后端保持原值，缺省 30） */
+ *  未传的配置保持原值） */
 export type SessionConfig = {
   modelId: string | null
   promptId: string | null
   /** 跟哪位 Agent 对话（agent.id）；null / 空串 = 内置 Agent */
   agentId: string | null
   showCot: boolean | null
-  maxRounds: number | null
   showRounds: boolean | null
 }
 
@@ -1299,11 +1300,17 @@ export type ResetResult = {
   memoryItems: number
   candidates: number
   shares: number
+  episodes: number
+  ingestJobs: number
+  checkpoints: number
+  recallTraces: number
+  deletedProjectDocuments: number
+  retainedProjectDocuments: number
 }
 
 /** 重置知识库（危险操作）：清空全部 chunk、图谱实体与关系，并连带清除整个记忆子系统及相关 embedding，不可恢复 */
-export function resetKnowledgeBase(): Promise<ResetResult> {
-  return requestJson<ResetResult>('/api/settings/knowledge-base/reset', { method: 'POST' })
+export function resetKnowledgeBase(deleteProjectKnowledge = false): Promise<ResetResult> {
+  return requestJson<ResetResult>('/api/settings/knowledge-base/reset', { method: 'POST', body: JSON.stringify({deleteProjectKnowledge}) })
 }
 
 /* ---------- 命令行终端（让模型直接控制目标环境） ---------- */
@@ -1323,6 +1330,7 @@ export type TerminalTarget = {
   denyPatterns: string[]
   /* docker */
   dockerHost: string | null
+  hostWorkdir: string | null
   image: string | null
   container: string | null
   /* ssh */
@@ -1882,14 +1890,15 @@ export function systemStream(
 /* ---- RAG 召回留痕（三路召回：工具调用 + 记忆自动注入） ---- */
 
 /** 三路召回：vector=向量 / graph=图 / memory=记忆（含 recall_memory 工具与每轮自动注入） */
-export type SubRagChannel = 'vector' | 'graph' | 'memory'
+export type SubRagChannel = 'vector' | 'graph' | 'memory' | 'web'
 
-export const SUB_RAG_CHANNELS: SubRagChannel[] = ['vector', 'graph', 'memory']
+export const SUB_RAG_CHANNELS: SubRagChannel[] = ['vector', 'graph', 'memory', 'web']
 
 export const SUB_RAG_CHANNEL_LABELS: Record<SubRagChannel, string> = {
   vector: '向量',
   graph: '图',
   memory: '记忆',
+  web: '网页',
 }
 
 /** 召回来源：这条检索发生在哪条流（对话 / 智能体群聊 / 心跳 / 职责 / 子代理） */
@@ -1988,7 +1997,7 @@ export type MaPeer = {
   modelId: string | null
   sort: number
   note: string | null
-  /** 角色：展示用的一句话岗位（如「产品经理」）；只在执行态卡片右上角的小标签上露面 */
+  /** 展示用岗位（如「产品经理」），智能体页与执行态共用。 */
   role: string | null
   /** 角色标签的颜色（#RRGGBB）；null=用默认灰 */
   roleColor: string | null
@@ -2009,13 +2018,13 @@ export type MaPeerRequest = {
   avatar?: string | null
 }
 
-/** 可授予智能体的工具（成员页「可用工具」的候选）；终端工具由绑定工作空间单独授予，不在此列 */
+/** 智能体的工具候选；主 Agent 包含全部对话工具，普通成员的终端工具由工作空间绑定授予。 */
 export type MaToolOption = {
   name: string
   description: string
   /** 会写知识库（文档 / 图谱）的工具，页面上给出提醒 */
   writes: boolean
-  /** 默认订阅（只读检索那一批）：无需勾选就始终可用；页面把它显示成已勾选并锁定 */
+  /** 无需勾选就始终可用；主 Agent 全部为 true，普通成员仅默认的只读工具为 true。 */
   defaultGranted: boolean
   /** 业务领域 key（doc / graph / memory / general），页面按它分 Tab */
   domain: string
@@ -2035,6 +2044,7 @@ export type MaPeerAnchor = {
 /** 多智能体会话：与首页对话完全隔离的一套会话（不带当前话题时为 null） */
 export type MaSession = {
   id: string
+  projectId: string | null
   title: string | null
   modelId: string | null
   topicId: string | null
@@ -2135,8 +2145,8 @@ export function listMaPeers(): Promise<MaPeer[]> {
 }
 
 /** 可授予智能体的工具清单（成员页「可用工具」的候选） */
-export function listMaTools(): Promise<MaToolOption[]> {
-  return requestJson<MaToolOption[]>('/api/agents/tools')
+export function listMaTools(peerId?: string): Promise<MaToolOption[]> {
+  return requestJson<MaToolOption[]>('/api/agents/tools' + (peerId ? `?peerId=${encodeURIComponent(peerId)}` : ''))
 }
 
 export function createMaPeer(req: MaPeerRequest): Promise<MaPeer> {
@@ -2256,10 +2266,10 @@ export function listMaSessions(): Promise<MaSession[]> {
 }
 
 /** 新建会话：memberIds 是勾选上桌的成员；空数组 = 全体名册 */
-export function createMaSession(memberIds: string[] = []): Promise<{ sessionId: string }> {
+export function createMaSession(memberIds: string[] = [], projectId?: string): Promise<{ sessionId: string }> {
   return requestJson<{ sessionId: string }>('/api/agents/sessions', {
     method: 'POST',
-    body: JSON.stringify({ memberIds }),
+    body: JSON.stringify({ memberIds, projectId }),
   })
 }
 
@@ -2273,11 +2283,11 @@ export function deleteMaSession(id: string): Promise<{ sessionId: string }> {
 /** 会话的消息；带 topicId 时只看那一次话题 */
 export function maMessages(id: string, topicId?: string): Promise<MaMessage[]> {
   const q = topicId ? `?topicId=${encodeURIComponent(topicId)}` : ''
-  return requestJson<MaMessage[]>(`/api/agents/sessions/${encodeURIComponent(id)}/messages${q}`)
+  return requestJson<MaMessage[]>(`/api/agents/sessions/${encodeURIComponent(id)}/messages${q}`, undefined, 15000)
 }
 
 export function maTopics(id: string): Promise<MaTopic[]> {
-  return requestJson<MaTopic[]>(`/api/agents/sessions/${encodeURIComponent(id)}/topics`)
+  return requestJson<MaTopic[]>(`/api/agents/sessions/${encodeURIComponent(id)}/topics`, undefined, 15000)
 }
 
 /** 一个智能体此刻的执行态（讨论态 × 执行态 + 名下任务计数） */
@@ -2328,6 +2338,17 @@ export type MaWorkflow = {
   advancing: boolean
   agents: MaWorkflowAgent[]
   todos: MaWorkflowTodo[]
+  events: MaWorkflowEvent[]
+}
+
+export type MaWorkflowEvent = {
+  id: string
+  kind: string | null
+  source: string | null
+  targets: string[]
+  taskId: string | null
+  text: string
+  createdAt: number
 }
 
 /**
@@ -2335,13 +2356,13 @@ export type MaWorkflow = {
  * 成员是否在跑跨会话取并集，任务计数跨会话聚合。
  */
 export function maWorkflowOverview(): Promise<MaWorkflow> {
-  return requestJson<MaWorkflow>('/api/agents/workflow')
+  return requestJson<MaWorkflow>('/api/agents/workflow', undefined, 15000)
 }
 
 /** 执行态图（任务视角）：某会话的编排全貌；sessionId 缺省时后端返回全局总览 */
 export function maWorkflow(sessionId?: string): Promise<MaWorkflow> {
   const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''
-  return requestJson<MaWorkflow>(`/api/agents/workflow${q}`)
+  return requestJson<MaWorkflow>(`/api/agents/workflow${q}`, undefined, 15000)
 }
 
 /** 一次执行的过程留痕（点开一条任务时回放：Agent 到底在干嘛） */
@@ -2358,6 +2379,8 @@ export type MaWorkRun = {
   error: string | null
   startedAt: number
   finishedAt: number | null
+  /** 持久化的工具往返消息，按 tool_call_id 关联参数与返回内容。 */
+  toolRounds?: unknown[]
 }
 
 /** 某条待办的执行历史（含思考链与过程分段） */
@@ -2438,13 +2461,14 @@ export async function maChatStream(
   speakerStrategy: string | undefined,
   handlers: MaStreamHandlers,
   signal?: AbortSignal,
+  redirectWork = false,
 ): Promise<MaTurnResult> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   const res = await apiFetch('/api/agents/chat/stream', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId, input, modelId, speakerStrategy }),
+    body: JSON.stringify({ sessionId, input, modelId, speakerStrategy, redirectWork }),
     signal,
   })
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''))
@@ -2560,6 +2584,7 @@ export type MemoryItem = {
   promotedFrom?: number | null
   learnedAt?: number | null
   invalidAt?: number | null
+  temporalJson?: string | null
 }
 
 export type MemoryScopeGroup = { scope: string; label: string; count: number; items: MemoryItem[] }

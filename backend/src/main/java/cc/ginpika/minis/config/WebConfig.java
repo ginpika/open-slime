@@ -26,6 +26,9 @@ public class WebConfig implements WebMvcConfigurer {
                         "/*.svg", "/*.png", "/*.ico", "/*.js", "/*.css",
                         // 登出需在未登录（或 token 已过期）时也可调用
                         "/api/auth/logout",
+                        // Only a short-lived, single-use ticket from an authenticated REST request
+                        // can authorize this socket; its handshake also validates the exact Origin.
+                        "/ws/coding/terminals/**",
                         // Spring 错误页
                         "/error");
     }

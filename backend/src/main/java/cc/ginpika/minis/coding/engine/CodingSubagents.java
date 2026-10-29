@@ -59,7 +59,7 @@ public class CodingSubagents {
         ArrayNode types=fields.putObject("role").put("type","string").putArray("enum");roles.list(owner).forEach(r->types.add(r.id()));
         fields.putObject("prompt").put("type","string");fields.putObject("title").put("type","string");fields.putObject("background").put("type","boolean");
         params.putArray("required").add("role").add("prompt");
-        add(result,"delegate_agent","按需委派只读专家：explore 定位搜索，planner 规划方案，reviewer 独立审阅。提供自足目标与范围；默认等待结果，background=true 返回执行 ID，可用 read_agent 等待。简单工作直接完成，不强制流水线。",params);
+        add(result,"delegate_agent","按需委派只读专家：explore 定位搜索，planner 规划方案，reviewer 独立审阅。提供自足目标与范围；默认等待结果，同一批多个专家委派会并发执行；background=true 返回执行 ID，可与主线工作重叠，用 read_agent 等待。简单工作直接完成，不强制流水线。",params);
         for(String name:List.of("read_agent","resume_agent","stop_agent")){
             ObjectNode p=json.createObjectNode().put("type","object"),f=p.putObject("properties");f.putObject("executionId").put("type","string");
             f.putObject("waitSeconds").put("type","integer");if(name.equals("resume_agent")){f.putObject("input").put("type","string");}
@@ -140,12 +140,12 @@ public class CodingSubagents {
                 @Override public void beforeTools(){check(job);}
                 @Override public void progress(){executions.checkpoint(child.id(),messages,require(run,child.id()).round());}
             };
-            ModelLoop.Result result=loop.run(new ModelLoop.Spec(settings.resolveChatModel(child.modelId()),"coding-subagent",body,props.getMaxSubagentRounds(),false,
+            ModelLoop.Result result=loop.run(new ModelLoop.Spec(settings.resolveChatModel(child.modelId()),"coding-subagent",body,false,
                     calls->{List<String> results=new ArrayList<>();for(JsonNode call:calls){if(allowed.contains(call.path("function").path("name").asText())){results.addAll(tools.execute(run,repo,List.of(call),job.stopped));}else{String denied="{\"status\":\"DENIED\",\"error\":\"该角色未授权此工具\"}";store.event(run.id(),"tool.denied",Map.of("tool",call.path("function").path("name").asText(),"args",call.path("function").path("arguments").asText("{}"),"status","DENIED","result",denied));results.add(denied);}}return results;},hooks,job.control));
             check(job);
             if(result.content()!=null){messages.add(result.message().deepCopy());executions.answer(child.id(),output.answer(result.content()));}
             executions.checkpoint(child.id(),messages,result.round());String end=hash(run.id());executions.hashes(child.id(),base,end);
-            String status=result.end()==ModelLoop.End.ROUNDS_EXHAUSTED?"PARTIAL":result.end()==ModelLoop.End.EMPTY_CONTENT?"FAILED":base.equals(end)?"DONE":"STALE";
+            String status=result.end()==ModelLoop.End.EMPTY_CONTENT?"FAILED":base.equals(end)?"DONE":"STALE";
             executions.phase(child.id(),status,status.equals("STALE")?"工作期间代码版本发生变化，结论需重新核验":status.equals("PARTIAL")?"本轮未完成，可继续该子 Agent":null);
         }catch(Exception error){executions.phase(child.id(),job.stopped.get() || job.parentStopped.get()?"CANCELLED":error instanceof CodingContext.ContextOverflow?"PARTIAL":"FAILED",String.valueOf(error.getMessage()));}
         finally{try{stream.flush();}finally{if(acquired){slots.release();}}}

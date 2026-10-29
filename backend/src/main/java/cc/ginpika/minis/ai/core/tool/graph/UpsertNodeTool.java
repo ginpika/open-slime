@@ -46,6 +46,7 @@ public class UpsertNodeTool implements AiTool {
         params.put("type", "object");
         ObjectNode props = params.putObject("properties");
         props.putObject("name").put("type", "string").put("description", "实体名（原文表述）");
+        props.putObject("identity_key").put("type","string").put("description","同名实体的稳定身份键；确认它们是不同对象时分别使用不同键，更新时复用该键");
         props.putObject("type").put("type", "string")
                 .put("description", "实体类型，缺省 CONCEPT；实体可兼具多类身份，多类型用逗号分隔（如 PERSON,CHARACTER）");
         props.putObject("summary").put("type", "string").put("description", "一句话摘要（可选）");

@@ -7,6 +7,7 @@ import cc.ginpika.minis.ai.llm.RerankClient;
 import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
 import cc.ginpika.minis.ai.knowledge.store.DocumentStore;
 import cc.ginpika.minis.ai.knowledge.store.GraphStore;
+import cc.ginpika.minis.ai.knowledge.web.WebRetrievalService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Service;
  * 搜索栏编排：两路召回（关键词/实体图谱展开）→ RRF 合并 → chunk 命中聚合为文档命中。
  * 返回范围只有文档与实体，不返回 chunk（散装 chunk 也不进结果）；
  * 向量召回（VectorRecaller）属 RAG 检索，不在搜索栏流程内。
- * 联网补充段（web）M0 恒 disabled。
+ * 联网补充独立返回，不参与本地 chunk 的 RRF 与文档聚合。
  *
  * <p>测试暗门：rag=true 走 RAG 检索模式（前端由首页滑块「搜索」按钮双击进入）——
  * 全量召回（关键词+向量+图谱）且只返回 chunk 命中，供 RAG 检索链路联调验证。
@@ -37,9 +38,11 @@ public class FastSearchService {
     private final KeywordRecaller kw;
     private final VectorRecaller vec;
     private final Reranker reranker;
+    private final WebRetrievalService web;
 
     public FastSearchService(ChunkStore chunks, DocumentStore docs, GraphStore graph,
-                             EmbeddingClient embedding, RerankClient rerank, FastProps props) {
+                             EmbeddingClient embedding, RerankClient rerank, FastProps props,
+                             WebRetrievalService web) {
         this.chunks = chunks;
         this.docs = docs;
         this.graph = graph;
@@ -48,6 +51,7 @@ public class FastSearchService {
         this.kw = new KeywordRecaller(chunks, props.getKeywordTopK());
         this.vec = new VectorRecaller(chunks, props.getVectorTopK());
         this.reranker = new Reranker(rerank, props.getRerankCandidate());
+        this.web = web;
     }
 
     public SearchDtos.SearchResponse search(String raw) {
@@ -80,7 +84,7 @@ public class FastSearchService {
                         scores.getOrDefault(row.id(), 0d), matched, row.status()));
             }
             return new SearchDtos.SearchResponse(raw, hits,
-                    SearchDtos.Graph.EMPTY, SearchDtos.Web.DISABLED);
+                    SearchDtos.Graph.EMPTY, web.search(raw, true));
         }
 
         List<SearchDtos.Hit> hits = new ArrayList<>();
@@ -95,7 +99,7 @@ public class FastSearchService {
         hits.addAll(docHits(merged, scoresOf(sources), matched));
 
         SearchDtos.Graph graphDto = buildGraph(enrich);
-        return new SearchDtos.SearchResponse(raw, hits, graphDto, SearchDtos.Web.DISABLED);
+        return new SearchDtos.SearchResponse(raw, hits, graphDto, web.search(raw, false));
     }
 
     /** RAG 召回结果（chat 工具用）：RRF 序的 chunk 行 + 图谱结构证据（锚点实体/子图边，可能为空） */

@@ -22,6 +22,10 @@ import {
 } from '../api/client'
 import FloatWindow from '../components/FloatWindow'
 import TtsPanel from '../components/TtsPanel'
+import ComfyUiPanel from '../components/ComfyUiPanel'
+import DeepSeekWebPanel from '../components/DeepSeekWebPanel'
+import DeepSeekBalance from '../components/DeepSeekBalance'
+import { isOfficialDeepSeek } from '../api/deepseekBalance'
 import SettingsDirectory from '../components/SettingsDirectory'
 import Toast from '../components/Toast'
 import { btnDanger, btnPrimary, btnQuiet, miniBtn } from '../components/ui'
@@ -168,6 +172,9 @@ function ModelDialog({
     <FloatWindow title={initial ? '编辑模型' : '添加模型'} onClose={onClose} width={480}>
       <form onSubmit={submit} className="space-y-3">
         <DraftNotice dirty={modelDraftState.dirty} onDiscard={modelDraftState.discard} disabled={busy} />
+        <button type="button" className={btnQuiet()} disabled={busy} onClick={() => setModelDraft(current => ({
+          ...current, baseUrl: 'https://api.deepseek.com', name: current.name || 'DeepSeek', model: current.model || 'deepseek-flash',
+        }))}>使用 DeepSeek 官方端点</button>
         <kit.Field label="名称" hint="用于在列表中区分，例如 GPT-4o / 本地 vLLM">
           <input
             value={name}
@@ -176,7 +183,7 @@ function ModelDialog({
             autoFocus
           />
         </kit.Field>
-        <kit.Field label="Base URL" hint="OpenAI Compatible 接口根地址，通常以 /v1 结尾">
+        <kit.Field label="Base URL" hint={isOfficialDeepSeek(baseUrl) ? '已识别 DeepSeek 官方端点；保存后自动查询账户余额。支持根地址或 /v1。' : 'OpenAI Compatible 接口根地址，通常以 /v1 结尾'}>
           <input
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -187,6 +194,7 @@ function ModelDialog({
         </kit.Field>
         <kit.Field label="API Key">
           <input
+            type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             className="font-mono"
@@ -252,26 +260,32 @@ function ResetKnowledgeDialog({
 }: {
   busy: boolean
   onClose: () => void
-  onSubmit: () => void
+  onSubmit: (deleteProjectKnowledge: boolean) => void
 }) {
   const kit = usePageKit()
   const [text, setText] = useState('')
+  const [deleteProjectKnowledge, setDeleteProjectKnowledge] = useState(false)
   const confirmed = text.trim() === '确认'
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!confirmed || busy) return
-    onSubmit()
+    onSubmit(deleteProjectKnowledge)
   }
 
   return (
-    <FloatWindow title="重置知识库" onClose={onClose} width={440}>
+    <FloatWindow title="重置知识库与记忆" onClose={() => { if(!busy) onClose() }} width={540}>
       <form onSubmit={submit} className="space-y-3">
         <p className="text-base leading-relaxed text-fg">
-          此操作将永久删除全部 chunk、知识图谱内的所有实体与关系，并<b>连带清除整个记忆子系统</b>
-          （时序记忆、记忆条目、画像候选、共享、知识边与提炼水位），移除所有相关的 embedding，
-          <span className="font-semibold text-danger">且不可恢复</span>。文档条目与模型配置不受影响。
+          此操作将删除知识索引与图谱学习内容，并清除派生记忆、用户画像与候选、共享授权、
+          工作集、记忆快照、召回留痕、提炼队列及原始经历副本。任务记忆检查点和相关向量一并清除。
+          <span className="font-semibold text-danger">此操作不可恢复。</span>
         </p>
+        <label className="flex items-start gap-3 rounded-md border border-line p-3 text-base leading-relaxed">
+          <input type="checkbox" className="mt-1 h-4 w-4 shrink-0" checked={deleteProjectKnowledge} disabled={busy} onChange={e=>setDeleteProjectKnowledge(e.target.checked)} />
+          <span>同时删除项目知识文档及全部历史版本<span className="mt-1 block text-sm text-muted">这是项目积累的成果。未勾选时正文与版本会保留，相关项目文档仍会出现在记忆目录。</span></span>
+        </label>
+        <p className="text-sm leading-relaxed text-muted">聊天与执行记录、文档原件、项目协作记录、模型配置保留；旧会话仍含历史内容。系统基础锚点会重建，防止旧任务回写的无正文标记会保留。请先结束正在运行的 Agent 执行。</p>
         <kit.Field label="输入「确认」二字以继续">
           <input
             value={text}
@@ -283,7 +297,7 @@ function ResetKnowledgeDialog({
           />
         </kit.Field>
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" className={btnQuiet('rounded-md')} onClick={onClose}>
+          <button type="button" className={btnQuiet('rounded-md')} disabled={busy} onClick={onClose}>
             取消
           </button>
           <button type="submit" className={btnDanger('rounded-md')} disabled={!confirmed || busy}>
@@ -536,17 +550,20 @@ export default function Settings() {
     (!rnk.model.trim() || (rnk.mode === 'custom' && (!rnk.baseUrl.trim() || !rnk.apiKey.trim())))
 
   /** 重置知识库：清空全部 chunk、图谱实体与关系，并连带清除整个记忆子系统及相关 embedding（二次确认弹窗内提交） */
-  const doReset = async () => {
+  const doReset = async (deleteProjectKnowledge: boolean) => {
     setBusy(true)
     try {
-      const r = await resetKnowledgeBase()
+      const r = await resetKnowledgeBase(deleteProjectKnowledge)
       resetWindowStates('analyze:', 'extract:', 'enhance:')
+      window.dispatchEvent(new Event('minis:memory-reset'))
       setToast({
         kind: 'success',
         msg:
           `知识库已重置：删除 ${r.chunks} 个 chunk、${r.entities} 个实体、${r.relations} 条关系、` +
           `${r.memories} 条记忆（时序 ${r.memoryEvents} + 条目 ${r.memoryItems}）、` +
-          `${r.candidates} 条画像候选、${r.shares} 条共享`,
+          `${r.candidates} 条画像候选、${r.shares} 条共享；清理 ${r.episodes ?? 0} 份经历、${r.ingestJobs ?? 0} 段提炼材料、` +
+          `${r.checkpoints ?? 0} 个记忆检查点、${r.recallTraces ?? 0} 条召回留痕。` +
+          (deleteProjectKnowledge ? `删除 ${r.deletedProjectDocuments ?? 0} 个项目文档版本。` : `保留 ${r.retainedProjectDocuments ?? 0} 个项目文档版本。`),
       })
       setResetOpen(false)
     } catch (e) {
@@ -567,7 +584,7 @@ export default function Settings() {
       <LoadState loading={loading} error={loadErr} hasData={!!data} label="设置" onRetry={() => setRetry(v => v + 1)} />
       <DraftNotice dirty={embDraft.dirty || rnkDraft.dirty} disabled={busy} onDiscard={() => { embDraft.discard(); rnkDraft.discard() }} />
       {data && <details className="settings-mobile-directory"><summary>跳到设置项</summary><nav aria-label="设置目录">{[
-        ['settings-models', '大模型'], ['settings-embedding', 'Embedding'], ['settings-rerank', 'Rerank'], ['settings-tts', 'TTS 语音'], ['settings-danger', '危险操作'],
+        ['settings-models', '大模型'], ['settings-embedding', 'Embedding'], ['settings-rerank', 'Rerank'], ['settings-deepseek-web', 'Deepseek Search'], ['settings-tts', 'TTS 语音'], ['settings-comfyui', 'ComfyUI 绘图'], ['settings-danger', '危险操作'],
       ].map(([id, label]) => <a key={id} href={`#${id}`} onClick={event => { event.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }}>{label}</a>)}</nav></details>}
       <div className="settings-layout">
       <div ref={contentRef} className="flex w-full min-w-0 max-w-3xl flex-col gap-6">
@@ -654,6 +671,7 @@ export default function Settings() {
                         </>
                       )}
                     </div>
+                    {isOfficialDeepSeek(m.baseUrl) && <div className="w-full basis-full"><DeepSeekBalance path={`/api/settings/models/${encodeURIComponent(m.id)}/balance`} revision={m} /></div>}
                   </kit.Row>
                 ))}
               </div>
@@ -874,7 +892,9 @@ export default function Settings() {
 
             {/* ---------- 危险操作（Danger Zone） ---------- */}
             </section>
+            <section id="settings-deepseek-web" className="scroll-mt-6"><DeepSeekWebPanel /></section>
             <section id="settings-tts" className="scroll-mt-6"><TtsPanel /></section>
+            <section id="settings-comfyui" className="scroll-mt-6"><ComfyUiPanel /></section>
             <section id="settings-danger" className="scroll-mt-6">
             <kit.Panel title="危险操作">
               <p className="text-sm leading-relaxed text-muted">以下操作不可撤销，请谨慎执行。</p>
@@ -883,8 +903,8 @@ export default function Settings() {
                   <div className="min-w-0">
                     <p className="text-base font-semibold text-fg">重置知识库</p>
                     <p className="mt-1 text-xs leading-relaxed text-faint">
-                      删除全部 chunk、知识图谱内的实体与关系，并<b>连带清除整个记忆子系统</b>
-                      （含时序记忆、记忆条目、画像候选与共享），移除所有相关的 embedding。
+                      清除知识索引、图谱学习内容、派生记忆、提炼队列、记忆检查点与召回留痕。
+                      可选择一并删除项目知识文档；聊天与执行记录、文档原件保留。
                     </p>
                   </div>
                   <button
@@ -906,7 +926,9 @@ export default function Settings() {
         { id: 'settings-models', text: '大模型' },
         { id: 'settings-embedding', text: 'Embedding' },
         { id: 'settings-rerank', text: 'Rerank' },
+        { id: 'settings-deepseek-web', text: 'Deepseek Search' },
         { id: 'settings-tts', text: 'TTS 语音' },
+        { id: 'settings-comfyui', text: 'ComfyUI 绘图' },
         { id: 'settings-danger', text: '危险操作' },
       ]} />
       </div>
@@ -924,7 +946,7 @@ export default function Settings() {
         <ResetKnowledgeDialog
           busy={busy}
           onClose={() => setResetOpen(false)}
-          onSubmit={() => void doReset()}
+          onSubmit={deleteProjectKnowledge => void doReset(deleteProjectKnowledge)}
         />
       )}
     </kit.Page>

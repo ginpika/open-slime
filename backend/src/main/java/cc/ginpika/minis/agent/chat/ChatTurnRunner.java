@@ -12,6 +12,7 @@ import cc.ginpika.minis.ai.core.MemoryIdentity;
 import cc.ginpika.minis.ai.core.MemoryScopeCtx;
 import cc.ginpika.minis.ai.memory.MemoryStage;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
+import cc.ginpika.minis.ai.core.tool.chat.RequestUserInputTool;
 import cc.ginpika.minis.ai.core.MemoryExec;
 import cc.ginpika.minis.ai.core.tool.subagent.DelegateSubagentTool;
 import cc.ginpika.minis.ai.core.tool.subagent.ReadSubagentRunTool;
@@ -75,6 +76,7 @@ public class ChatTurnRunner implements ChatExecution {
        （工具往返、trace、停止标志）一字不改地复用。 */
 
     private final ConcurrentHashMap<String, Set<AtomicBoolean>> activeStops = new ConcurrentHashMap<>();
+    private final ThreadLocal<AtomicBoolean> currentStop = new ThreadLocal<>();
 
     public ChatTurnRunner(AgentRuntime runtime,
             ToolExecutionRecorder toolExecs,
@@ -145,6 +147,14 @@ public class ChatTurnRunner implements ChatExecution {
         return flag;
     }
 
+    /** Pause the other executions while allowing the caller to persist its question normally. */
+    public void requestStopOthers(String hubId) {
+        Set<AtomicBoolean> flags = activeStops.get(hubId);
+        if (flags != null) for (AtomicBoolean flag : flags) {
+            if (flag != currentStop.get()) flag.set(true);
+        }
+    }
+
     private static void ensureRunning(AtomicBoolean stopFlag) {
         if (stopFlag != null && stopFlag.get()) {
             throw new ChatCancelledException();
@@ -179,7 +189,9 @@ public class ChatTurnRunner implements ChatExecution {
             /* 生成收尾（成功 / 取消 / 异常都走这里）：把该会话遗留的「进行中」收敛为「未开始」，
                于是清单不会因中断 / 超限长期卡在 in_progress（见 TodoService#settle）。
                归属口径与写入侧一致：圆桌在外层设了成员作用域就用它，否则按会话绑定的 Agent */
-            todo.settle(row.id(), AgentScope.get() != null ? AgentScope.get() : agentOf(row));
+            if (exec.settleTodosOnFinish()) {
+                todo.settle(row.id(), AgentScope.get() != null ? AgentScope.get() : agentOf(row));
+            }
         }
     }
 
@@ -191,8 +203,6 @@ public class ChatTurnRunner implements ChatExecution {
         AtomicBoolean stopFlag = sink == null ? null : registerStop(row.id());
         /* 记住本次使用的模型/提示词（会话级「…」菜单配置），下次进入该会话自动回显 */
         exec.rememberConfig(row, requestedModel, promptId);
-        /* 本次提问的工具往返上限：会话级「…」菜单配置（缺省 30），超限后撤掉 tools 强制出最终回答 */
-        int maxRounds = Math.max(ChatSessionService.MIN_MAX_ROUNDS, row.maxRounds());
 
         /* 这次生成落一条任务：有了身份与状态，进程重启打断时它才会被收成「已中断」而不是凭空消失。
            不跟踪任务的流拿到 0，{@link ChatTaskRunner} 的收尾方法对非正数一律空转。
@@ -303,16 +313,16 @@ public class ChatTurnRunner implements ChatExecution {
                 /* 供应商拒收时把「这次到底发了什么」记一行结构摘要（不含正文）：
                    思考模式的 reasoning_content 缺失那类 400 只给一句模糊错误，
                    没有出站形态根本无从下手（踩过两次） */
-                log.warn("补全被拒：session={} round={}/{} 带工具={} error={}｜出站形态={}",
-                        row.id(), round, maxRounds, round < maxRounds, e.getMessage(),
+                log.warn("补全被拒：session={} round={} 带工具={} error={}｜出站形态={}",
+                        row.id(), round, rejectedBody.has("tools"), e.getMessage(),
                         digest(rejectedBody));
             }
 
             @Override
             public void fallbackToReasoning(int round, int chars, String raw) {
-                log.warn("模型未返回 content，回退用 reasoning_content 作为回答：session={} round={}/{} "
+                log.warn("模型未返回 content，回退用 reasoning_content 作为回答：session={} round={} "
                                 + "chars={} raw={}",
-                        row.id(), round, maxRounds, chars, raw);
+                        row.id(), round, chars, raw);
             }
         };
 
@@ -324,6 +334,15 @@ public class ChatTurnRunner implements ChatExecution {
                 new AgentRuntime.ToolDispatch() {
                     @Override
                     public String run(JsonNode call) {
+                        // A question must be alone: reject the whole mixed batch before any side effects.
+                        JsonNode batch = msgs.get(msgs.size() - 1).path("tool_calls");
+                        if (exec == ChatTurnRunner.this && batch.size() > 1) {
+                            for (JsonNode item : batch) {
+                                if (RequestUserInputTool.NAME.equals(item.path("function").path("name").asText())) {
+                                    return "request_user_input 必须单独调用；本批工具均未执行，请分开重试。";
+                                }
+                            }
+                        }
                         /* 每次工具调用都落一条生命周期记录（running → done/failed）并发事件：
                            工具的副作用因此可查、可审计，而不只是塞回模型上下文（设计一 §五-2） */
                         return toolExecs.record(row.id(), null, subagentBatch[0], call,
@@ -332,23 +351,36 @@ public class ChatTurnRunner implements ChatExecution {
 
                     @Override
                     public boolean parallelizable(String name) {
-                        return tools.isParallelizable(name);
+                        return exec.parallelToolCalls() && tools.isParallelizable(name);
+                    }
+
+                    @Override
+                    public String answerAfterTools(List<JsonNode> calls, List<String> results) {
+                        if (exec != ChatTurnRunner.this || calls.size() != 1
+                                || !RequestUserInputTool.NAME.equals(calls.getFirst().path("function").path("name").asText())) return null;
+                        try {
+                            JsonNode result = om.readTree(results.getFirst());
+                            if (!"waiting_for_user".equals(result.path("status").asText())) return null;
+                            return RequestUserInputTool.content(RequestUserInputTool.read(om, result.toString()));
+                        } catch (Exception invalid) { return null; }
                     }
                 },
-                maxRounds, listener, state);
+                listener, state);
         /* memory-v6 §4.4：开启轮内写缓冲——本轮工具内的记忆写入（如 publish_knowledge）推到轮末提交，
            本轮注入仍用轮首快照；轮末在 finally 统一提交（被取消也提交：已经发生的发布不该丢） */
         MemoryStage.begin();
+        AtomicBoolean previousStop = currentStop.get();
+        currentStop.set(stopFlag);
         try {
             result = MemoryScopeCtx.run(memScope,
                     () -> AgentScope.run(scopeAgent, () -> runtime.run(spec)));
         } catch (ChatCancelledException cancelled) {
             /* 用户停止：已有部分正文则以部分回答落库（思维链与工具轮留痕一并带上），
                刷新后对话完整保留；尚无任何正文则原样上抛，由 Controller 静默收尾 */
-            String partial = partialContent.toString();
+            String partial = exec.replyOnCancel(partialContent.toString());
             /* 会话任务也跟着落定：停下的这轮是 cancelled（有部分正文就留成产物） */
             chatTasks.cancelled(taskId, partial);
-            if (partial.isBlank()) {
+            if (partial.isBlank() || !exec.keepPartialReplyOnCancel()) {
                 throw cancelled;
             }
             String partialReason = partialReasoning.toString();
@@ -383,25 +415,28 @@ public class ChatTurnRunner implements ChatExecution {
                     return flags.isEmpty() ? null : flags;
                 });
             }
+            if (previousStop == null) currentStop.remove();
+            else currentStop.set(previousStop);
             /* 收批：派出去的子代理还在后台跑，这里只挂个账，等它们各自回报完才真正收——
                收批同时触发一次整体总结（见 SubagentService#settle / SubagentDeliveryService#onSubagentBatchDone） */
             if (subagentBatch[0] != null) {
                 subagent.closeRun(subagentBatch[0]);
             }
         }
+        {
+            String withImages = cc.ginpika.minis.ai.comfyui.integration.GeneratedImageReply.appendMissing(result.content(), state.toolRounds(), om);
+            if (!withImages.equals(result.content()) && !withImages.isBlank()) {
+                if (sink != null) sink.delta(null, withImages.substring(result.content() == null ? 0 : result.content().length()));
+                result = new AgentRuntime.Result(withImages, result.rawResponse(), AgentRuntime.End.ANSWERED, result.round());
+            }
+        }
         if (result.end() == AgentRuntime.End.EMPTY_CONTENT) {
-            log.error("模型返回空 content（本轮无 tool_calls）：session={} round={}/{} messages={} "
+            log.error("模型返回空 content（本轮无 tool_calls）：session={} round={} messages={} "
                             + "requestChars={} raw={}",
-                    row.id(), result.round(), maxRounds, msgs.size(),
+                    row.id(), result.round(), msgs.size(),
                     body.toString().length(), state.lastRawResponse());
             chatTasks.failed(taskId);
             throw new IllegalStateException("响应无 choices[0].message.content");
-        }
-        if (result.end() != AgentRuntime.End.ANSWERED) {
-            log.error("工具调用轮数超限：session={} messages={} requestChars={} lastRaw={}",
-                    row.id(), msgs.size(), body.toString().length(), state.lastRawResponse());
-            chatTasks.failed(taskId);
-            throw new IllegalStateException("工具调用轮数超限（" + maxRounds + "）");
         }
 
         long replyId = exec.recordReply(row, result.content(), state.reasoning(),

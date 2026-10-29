@@ -46,6 +46,7 @@ export function FlatShell({
 }: ShellProps & { variant: FlatVariant; hideChrome: boolean }) {
   const active = activePath || activePathOf(route)
   const pageNav = pageNavOf(route)
+  const mobileTopNavigation = route === '/coding' || active === '/economy'
 
   /* --------------------------------------- Tailwind Mono · 默认顶部横排 */
   if (variant === 'minimal') {
@@ -108,9 +109,9 @@ export function FlatShell({
   /* ------------------------------------------- Tailwind Mono · 侧边栏档 */
   if (variant === 'sidebar') {
     return (
-      <div className={`flex h-screen overflow-hidden bg-bg text-fg${route === '/coding' ? ' flex-col md:flex-row' : ''}`}>
+      <div className={`flex h-screen overflow-hidden bg-bg text-fg${mobileTopNavigation ? ' flex-col md:flex-row' : ''}`}>
         {/* 侧栏：品牌 + 分组导航 */}
-        <aside className={`${route === '/coding' ? 'hidden md:flex' : 'flex'} w-60 shrink-0 flex-col border-r border-line`}>
+        <aside className={`${mobileTopNavigation ? 'hidden md:flex' : 'flex'} w-60 shrink-0 flex-col border-r border-line`}>
           <div className="flex items-center gap-2.5 px-4 py-4">
             <img
               src="/icon-64x64.png"
@@ -167,7 +168,7 @@ export function FlatShell({
 
         {/* 右列：工具条 + 内容 */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {route === '/coding' && !hideChrome && <nav aria-label="主导航" className="scrollbar-hide flex shrink-0 items-center gap-4 overflow-x-auto border-b border-line px-4 py-3 md:hidden">{NAV.map(item => <a key={item.path} href={`#${item.path}`} aria-current={active === item.path ? 'page' : undefined} className={`shrink-0 whitespace-nowrap text-xs ${active === item.path ? 'font-semibold text-fg' : 'text-muted'}`}>{item.label}</a>)}</nav>}
+          {mobileTopNavigation && !hideChrome && <nav aria-label="主导航" className="scrollbar-hide flex shrink-0 items-center gap-4 overflow-x-auto border-b border-line px-4 py-3 md:hidden">{NAV.map(item => <a key={item.path} href={`#${item.path}`} aria-current={active === item.path ? 'page' : undefined} className={`shrink-0 whitespace-nowrap text-sm ${active === item.path ? 'font-semibold text-fg' : 'text-muted'}`}>{item.label}</a>)}</nav>}
           {!hideChrome && (
             <header className="relative z-30 flex shrink-0 items-center gap-3 border-b border-line px-6 py-2.5">
               <span className="text-sm font-semibold">
@@ -176,7 +177,7 @@ export function FlatShell({
               <span className="ui-label">{pageNav?.en}</span>
               <span className="flex-1" />
               {tools}
-              {route === '/coding' && <div className="md:hidden">{userSlot({ placement: 'down', withName: false })}</div>}
+              {mobileTopNavigation && <div className="md:hidden">{userSlot({ placement: 'down', withName: false })}</div>}
             </header>
           )}
           <main

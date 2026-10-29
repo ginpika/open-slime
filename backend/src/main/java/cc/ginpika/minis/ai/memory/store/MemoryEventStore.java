@@ -24,6 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Repository
 public class MemoryEventStore {
+    public boolean sourceAllowed(String refType,long refId) {
+        return cc.ginpika.minis.ai.memory.MemoryResetBoundary.read(jdbc).allows("[\""+refType+":"+refId+"\"]");
+    }
 
     /** 一条记忆事件：kind/actor 见 schema.sql 注释，ref 指回正本行 */
     public record EventRow(long id, String eventKey, String kind, String actor, String title,
@@ -94,6 +97,12 @@ public class MemoryEventStore {
 
     public List<EventRow> window(MemoryExec exec, Long sinceMs, Long untilMs, String kind, String actor,
                                 Collection<String> excludeActors, int limit) {
+        return queryWindow(exec,sinceMs,untilMs,kind,actor,excludeActors,limit,null);
+    }
+    public List<EventRow> page(MemoryExec exec,Long since,Long until,String kind,String actor,Collection<String> excluded,long after,int limit) {
+        return queryWindow(exec,since,until,kind,actor,excluded,limit,after);
+    }
+    private List<EventRow> queryWindow(MemoryExec exec,Long sinceMs,Long untilMs,String kind,String actor,Collection<String> excludeActors,int limit,Long after) {
         StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM memory_event WHERE 1=1");
         List<Object> args = new ArrayList<>();
         if (exec == null || !exec.human()) {
@@ -127,7 +136,8 @@ public class MemoryEventStore {
                     .append("))");
             args.addAll(excludeActors);
         }
-        sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
+        if(after!=null) {sql.append(" AND id>?");args.add(after);}
+        sql.append(after==null?" ORDER BY created_at DESC, id DESC LIMIT ?":" ORDER BY id LIMIT ?");
         args.add(limit);
         return jdbc.query(sql.toString(), (rs, rowNum) -> map(rs), args.toArray());
     }

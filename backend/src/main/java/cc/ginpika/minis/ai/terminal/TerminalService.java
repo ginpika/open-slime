@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import org.slf4j.Logger;
@@ -112,16 +113,28 @@ public class TerminalService {
      * 多智能体成员用它把「这个智能体能碰哪几台」收在它自己绑定的工作空间里。
      */
     public ToolResult run(JsonNode call, String source, Set<String> allowedTargetIds) {
+        return runScoped(call,source,allowedTargetIds,null,null);
+    }
+
+    /** A caller-selected project directory is an execution start location, not a shell filesystem sandbox. */
+    public ToolResult runScoped(JsonNode call, String source, Set<String> allowedTargetIds, String targetId, String directory) {
         String name = call.path("function").path("name").asText("");
         String args = call.path("function").path("arguments").asText("");
         JsonNode parsed = LlmJson.readTree(args);
         String content = switch (name) {
-            case RunCommandTool.NAME -> runCommand(parsed, source, allowedTargetIds);
-            case ListTerminalsTool.NAME -> listTargetsText(allowedTargetIds);
+            case RunCommandTool.NAME -> runCommand(parsed, source, allowedTargetIds,targetId,directory);
+            case ListTerminalsTool.NAME -> targetId==null ? listTargetsText(allowedTargetIds) : scopedTargetText(allowedTargetIds,targetId,directory);
             default -> "未知工具: " + name;
         };
         /* writes()=false：命令不改知识库，故不进写库清单；它的留痕在 term_command 自己那张表里 */
         return new ToolResult(name, args, content, false);
+    }
+
+    private String scopedTargetText(Set<String> allowed,String id,String directory) {
+        if(allowed==null || !allowed.contains(id)) return "项目工作空间不在当前成员获准的工作空间内，请用户调整成员配置。";
+        return store.targetById(id).filter(TerminalStore.TargetRow::enabled)
+                .map(t -> "本项目唯一工作空间："+t.name()+" ["+t.kind()+"]；项目工作目录："+directory+"。不得切换到其他项目。")
+                .orElse("项目工作空间未启用或已删除，请用户检查绑定。");
     }
 
     /** 可用目标清单（不限目标的那份，给首页对话与心跳用） */
@@ -147,7 +160,7 @@ public class TerminalService {
 
     // ---------- 模型侧：执行 ----------
 
-    private String runCommand(JsonNode args, String source, Set<String> allowedTargetIds) {
+    private String runCommand(JsonNode args, String source, Set<String> allowedTargetIds,String scopedTarget,String directory) {
         String targetName = args.path("target").asText("").trim();
         if (targetName.isEmpty()) {
             return "参数缺少 target：先调用 " + ListTerminalsTool.NAME + " 看看有哪些目标。";
@@ -158,22 +171,27 @@ public class TerminalService {
         }
         TerminalStore.TargetRow target = store.targetByName(targetName).orElse(null);
         if (target == null) {
-            return "没有名为「" + targetName + "」的工作空间。\n" + listTargetsText(allowedTargetIds);
+            return "没有名为「" + targetName + "」的工作空间。\n" + (scopedTarget==null ? listTargetsText(allowedTargetIds) : scopedTargetText(allowedTargetIds,scopedTarget,directory));
         }
+        if(scopedTarget!=null && !scopedTarget.equals(target.id())) return "此目标不是本项目绑定的工作空间，未执行。";
         /* 授权边界先于一切：不在名单里的目标连「启用没启用」都不该透露，也不该被执行 */
         if (allowedTargetIds != null && !allowedTargetIds.contains(target.id())) {
             return "工作空间「" + targetName + "」不在你被授权的工作空间内，未执行。\n"
-                    + listTargetsText(allowedTargetIds);
+                    + (scopedTarget==null ? listTargetsText(allowedTargetIds) : scopedTargetText(allowedTargetIds,scopedTarget,directory));
         }
         if (!target.enabled()) {
             return "工作空间「" + targetName + "」未启用（逐目标开关），未执行。\n"
-                    + listTargetsText(allowedTargetIds);
+                    + (scopedTarget==null ? listTargetsText(allowedTargetIds) : scopedTargetText(allowedTargetIds,scopedTarget,directory));
         }
         ExecTarget impl = impls.get(target.kind());
         if (impl == null) {
             return "未知的目标类型：" + target.kind() + "（只支持 docker / ssh）";
         }
         ExecTarget.ExecOptions options = options(target);
+        if(scopedTarget!=null) {
+            if(directory==null || directory.isBlank()) return "项目工作目录未设置，未执行。";
+            options=new ExecTarget.ExecOptions(directory,options.timeoutMs(),options.maxOutputChars());
+        }
 
         String rejected = guard(target, command);
         if (rejected != null) {
@@ -183,7 +201,8 @@ public class TerminalService {
             return rejected;
         }
         try {
-            ExecTarget.ExecOutcome outcome = impl.run(target, command, options);
+            String executable=scopedTarget==null ? command : "test \"$(pwd -P)\" = "+ExecTarget.quote(directory)+" || exit 73; "+command;
+            ExecTarget.ExecOutcome outcome = impl.run(target, executable, options);
             audit(target, command, options.workdir(), outcome, source);
             return render(target, command, outcome);
         } catch (RuntimeException e) {
@@ -393,10 +412,6 @@ public class TerminalService {
         if (req == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请求体不能为空");
         }
-        String name = trim(req.name());
-        if (name.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name 不能为空");
-        }
         /* kind 用实现注册表校验：以后加实现时这里自动认得，不必再改一处 switch */
         String kind = trim(req.kind());
         if (!impls.containsKey(kind)) {
@@ -404,6 +419,17 @@ public class TerminalService {
                     "kind 只能是 " + String.join(" / ", impls.keySet()));
         }
         boolean isDocker = DockerExecTarget.KIND.equals(kind);
+        String name = trim(req.name());
+        if (name.isEmpty() && isDocker && id == null) {
+            name = "docker-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+        if (name.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name 不能为空");
+        }
+        String image = blankToNull(req.image());
+        String container = blankToNull(req.container());
+        String hostWorkdir = isDocker ? blankToNull(req.hostWorkdir()) : null;
+        String workdir = blankToNull(req.workdir());
         List<String> allow = clean(req.allowPatterns());
         List<String> deny = clean(req.denyPatterns());
         for (String rule : allow) {
@@ -423,9 +449,20 @@ public class TerminalService {
         String hostKeyCheck = SshExecTarget.HOST_KEY_ACCEPT_ALL.equals(trim(req.hostKeyCheck()))
                 ? SshExecTarget.HOST_KEY_ACCEPT_ALL : SshExecTarget.HOST_KEY_KNOWN;
         if (isDocker) {
-            if (trim(req.container()).isEmpty() && trim(req.image()).isEmpty()) {
+            if (container == null && image == null) image = "ubuntu:24.04";
+            if (hostWorkdir != null && container != null) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "docker 目标需指定 container（既有容器）或 image（自动起会话容器）其一");
+                        "已有容器不能追加目录绑定，请使用容器已有的挂载，或从镜像新建工作空间");
+            }
+            if (hostWorkdir != null && !(hostWorkdir.startsWith("/")
+                    || hostWorkdir.matches("^[A-Za-z]:[\\\\/].*") || hostWorkdir.startsWith("\\\\"))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "宿主机目录必须是绝对路径");
+            }
+            if (container == null && workdir == null) workdir = "/workspace";
+            if (hostWorkdir != null && (!workdir.startsWith("/")
+                    || List.of(workdir.split("/")).stream().allMatch(part -> part.isEmpty() || part.equals("."))
+                    || workdir.contains("\\") || List.of(workdir.split("/")).contains(".."))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "绑定路径须为容器内绝对路径，不能为根目录或包含 ..");
             }
         } else {
             if (trim(req.sshHost()).isEmpty()) {
@@ -439,11 +476,11 @@ public class TerminalService {
             }
         }
         return new TerminalStore.TargetRow(id, name, kind, Boolean.TRUE.equals(req.enabled()),
-                blankToNull(req.workdir()), req.timeoutMs(), req.maxOutput(),
+                workdir, req.timeoutMs(), req.maxOutput(),
                 write(allow), write(deny),
                 isDocker ? blankToNull(req.dockerHost()) : null,
-                isDocker ? blankToNull(req.image()) : null,
-                isDocker ? blankToNull(req.container()) : null,
+                isDocker && container == null ? image : null,
+                isDocker ? container : null,
                 isDocker ? null : blankToNull(req.sshHost()),
                 isDocker ? null : req.sshPort(),
                 isDocker ? null : blankToNull(req.sshUser()),
@@ -453,6 +490,7 @@ public class TerminalService {
                 isDocker ? null : blankToNull(req.sshPassphrase()),
                 isDocker ? null : hostKeyCheck,
                 blankToNull(req.note()),
+                hostWorkdir,
                 0L, 0L);
     }
 
@@ -490,7 +528,7 @@ public class TerminalService {
                 row.workdir(), row.timeoutMs(), row.maxOutput(), read(row.allowPatterns()),
                 read(row.denyPatterns()), row.dockerHost(), row.image(), row.container(),
                 row.sshHost(), row.sshPort(), row.sshUser(), row.sshAuth(), row.sshPassword(),
-                row.sshPrivateKey(), row.sshPassphrase(), row.hostKeyCheck(), row.note());
+                row.sshPrivateKey(), row.sshPassphrase(), row.hostKeyCheck(), row.note(), row.hostWorkdir());
     }
 
     private static TerminalDtos.CommandView toView(TerminalStore.CommandRow row) {

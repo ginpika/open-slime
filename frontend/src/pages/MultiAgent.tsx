@@ -20,7 +20,8 @@ import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, getSettings, listMaPeers, type MaPeer } from '../api/client'
 import PageBoundary from '../components/PageBoundary'
-import PeerAvatar from '../components/PeerAvatar'
+import { AgentAvatar, AgentRole } from '../components/AgentPresence'
+import { presenceLabel, useAgentOverview } from '../api/agentPresence'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
 import SystemPanel from './SystemPanel'
@@ -68,6 +69,8 @@ function agentHref(id: string): string {
  */
 function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: Option[] }) {
   const kit = usePageKit()
+  const { data: overview, stale } = useAgentOverview(true)
+  const activity = new Map(overview?.agents.map(a => [a.id, a]))
   return (
     <>
       <kit.Toolbar left="统一管理智能体的模型、提示词与能力。内置编码 Agent 与编程工作台共用项目和任务。" />
@@ -80,31 +83,38 @@ function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: 
           lg:grid-cols-3 覆盖它，统一三列是产品决定，不是遗漏。
         */}
         <div className={`${kit.panelGrid} lg:grid-cols-3`}>
-          <kit.Tile href={agentHref('new')} dashed>
+          {/* 跨行、跨主题统一高度；文字放大或调整间距时仍可滚动访问内容。 */}
+          <kit.Tile href={agentHref('new')} dashed className="h-48 overflow-y-auto">
             <AppIcon name="plus" className="h-5 w-5" />
-            新建成员
+            <span className="text-[1rem] sm:text-[0.875rem]">新建成员</span>
           </kit.Tile>
 
           {peers.map((p) => (
-            <kit.Tile key={p.id} href={agentHref(p.id)}>
+            <kit.Tile key={p.id} href={agentHref(p.id)} className="h-48 overflow-y-auto">
               <div className="flex items-start gap-3.5">
-                <PeerAvatar
+                <AgentAvatar
                   name={p.name}
                   avatar={p.avatar}
                   size="h-12 w-12"
                   textClass="text-md"
+                  working={activity.get(p.id)?.working}
+                  stale={stale}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <p className="ui-heading truncate text-md">{p.name}</p>
-                    {p.builtin && <kit.Badge>内置</kit.Badge>}
+                    <p className="ui-heading min-w-0 truncate text-md" title={p.name}>{p.name}</p>
+                    {p.builtin && <span className="shrink-0"><kit.Badge>内置</kit.Badge></span>}
                   </div>
-                  <p className="mt-1 truncate text-2xs text-hint">{isCodingAgent(p) ? '编码工作台 · 项目与任务共用' : '提示词 · 每位成员独立一套'}</p>
-                  <p className="mt-0.5 truncate text-2xs text-hint">
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <AgentRole role={p.role} color={p.roleColor} />
+                    <span className="text-xs leading-4 text-muted">{presenceLabel(activity.get(p.id)?.working, stale)}</span>
+                  </div>
+                  <p className="mt-1 truncate text-[0.75rem] leading-[1.125rem] text-hint">{isCodingAgent(p) ? '编码工作台 · 项目与任务共用' : '提示词 · 每位成员独立一套'}</p>
+                  <p className="mt-0.5 truncate text-[0.75rem] leading-[1.125rem] text-hint" title={labelOf(modelOptions, p.modelId ?? '')}>
                     模型 · {labelOf(modelOptions, p.modelId ?? '')}
                   </p>
                   {p.note && (
-                    <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted">
+                    <p className="mt-1.5 line-clamp-2 text-[1rem] leading-[1.375rem] text-muted sm:text-[0.875rem]" title={p.note}>
                       {p.note}
                     </p>
                   )}

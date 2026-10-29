@@ -43,7 +43,9 @@ flowchart TD
 | `ai/core` | 提示词、工具协议、参数校验、作用域与公共值类型 |
 | `ai/llm` | 模型 HTTP 协议与流式解析 |
 | `ai/knowledge`、`ai/memory`、`ai/terminal` | 各自的能力与存储，不回调 Agent 编排层 |
+| `ai/comfyui` | 独立的远程工作流绘图能力：端点与档案配置、提交与等待、图片持久化；工具适配位于 `integration`，其他功能直接调用 `ComfyUiService` |
 | `project` | 项目与跨会话进度数据；用户与 Agent 的项目操作共用 ProjectWorkflowService |
+| `todo` | 个人事项、真实投入、每日回顾和历史统计；按登录用户隔离，仅关联已有项目标签，不复用 Agent 执行任务或会话进度 |
 
 ## 抽象的取舍
 
@@ -65,11 +67,11 @@ flowchart TD
 | 单聊工具路由 | ChatToolDispatcher；工具本身仍负责授权 |
 | 轮末记忆归属与任务检查点 | ChatTurnCompletion |
 | 圆桌公开记录裁剪和当前局面 | RoundtableContextBuilder |
-| 圆桌共享任务、依赖、遇阻找谁 | RoundtableTaskTools |
+| 主控权限、共享任务与依赖、单项派工、整体验收 | RoundtableTaskTools、CollaborationPlan |
 | 谁运行、插话、中断和过期结果 | RoundtableDiscussionRuntime、RoundtableWorkRuntime、RoundtableRevision |
 | 模型往返和原生工具消息协议 | AgentRuntime、ChatProtocol |
 
-改动必须保留以下协作行为：停止后保存已经产生的部分答复；失败任务可观测、会话可继续发送；原始上下文预览与实际发送共用组装路径；工具授权与记忆隔离仍在原能力边界执行；圆桌的受阻决定可以定向给成员或请用户拍板。
+改动必须保留以下协作行为：停止后保存已经产生的部分答复；失败任务可观测、会话可继续发送；原始上下文预览与实际发送共用组装路径；工具授权与记忆隔离仍在原能力边界执行；主控统一处理执行受阻，按需请求相关成员讨论或等待用户拍板。
 
 `LayeringTest` 检查能力域不反向依赖编排，以及编排不依赖 Web 控制器、上下文组装不执行模型或工具。执行内核、历史窗口、任务状态、记忆与项目续接由各自回归测试验证。测试使用模型替身，不代表真实供应商接口或浏览器端到端验证。
 

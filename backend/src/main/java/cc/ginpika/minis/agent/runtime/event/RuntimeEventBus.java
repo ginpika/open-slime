@@ -26,6 +26,7 @@ import org.springframework.stereotype.Component;
 public class RuntimeEventBus {
 
     private static final Logger log = LoggerFactory.getLogger(RuntimeEventBus.class);
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
     /** 普通通知的合并窗口（毫秒）：窗口内的同类通知只广播一次 */
     private static final long COALESCE_WINDOW_MS = 300L;
@@ -44,6 +45,7 @@ public class RuntimeEventBus {
     }
 
     private final RuntimeEventStore store;
+    private final org.springframework.transaction.support.TransactionTemplate deliveryTransaction;
     /** 会话 id → 订阅者集合 */
     private final Map<String, Set<Listener>> listeners = new ConcurrentHashMap<>();
     /** 全局订阅者：收到<b>所有会话</b>的事件（协调器 / 执行运行时据此把控制信号转成动作） */
@@ -51,8 +53,10 @@ public class RuntimeEventBus {
     /** 合并窗口水位：{@code sessionId|target|type} → 上次广播时间 */
     private final Map<String, Long> lastBroadcast = new ConcurrentHashMap<>();
 
-    public RuntimeEventBus(RuntimeEventStore store) {
+    public RuntimeEventBus(RuntimeEventStore store, org.springframework.transaction.PlatformTransactionManager transactions) {
         this.store = store;
+        deliveryTransaction = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        deliveryTransaction.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -97,8 +101,16 @@ public class RuntimeEventBus {
         }
         EventRow row = new EventRow(id, event.eventId(), event.sessionId(), event.type().name(),
                 event.source(), event.target(), event.taskId(), event.priority(),
-                event.correlationId(), null, event.createdAt());
-        broadcast(row);
+                event.correlationId(), payloadJson(event), event.createdAt());
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() {
+                            // Listener writes must not join the already committed publishing transaction.
+                            deliveryTransaction.executeWithoutResult(status -> broadcast(row));
+                        }
+                    });
+        } else broadcast(row);
         return id;
     }
 
@@ -125,13 +137,21 @@ public class RuntimeEventBus {
     public void broadcast(EventRow row) {
         Set<Listener> set = listeners.get(row.sessionId());
         if (set != null && !set.isEmpty()) {
-            set.removeIf(listener -> !listener.onEvent(row));
+            set.removeIf(listener -> !deliver(listener, row));
             if (set.isEmpty()) {
                 listeners.remove(row.sessionId(), set);
             }
         }
         if (!global.isEmpty()) {
-            global.removeIf(listener -> !listener.onEvent(row));
+            global.removeIf(listener -> !deliver(listener, row));
+        }
+    }
+
+    private boolean deliver(Listener listener, EventRow row) {
+        try { return listener.onEvent(row); }
+        catch (RuntimeException error) {
+            log.warn("运行时事件订阅者处理失败：event={} type={} error={}", row.eventId(), row.type(), error.toString());
+            return true;
         }
     }
 
@@ -146,5 +166,19 @@ public class RuntimeEventBus {
         Long last = lastBroadcast.get(key);
         lastBroadcast.put(key, now);
         return last != null && now - last < COALESCE_WINDOW_MS;
+    }
+
+    private static String payloadJson(RuntimeEvent event) {
+        try { return JSON.writeValueAsString(event.payload()); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalArgumentException(e); }
+    }
+
+    public static RuntimeEvent event(EventRow row) {
+        try {
+            Map<String, Object> payload = row.payload() == null ? Map.of() : JSON.readValue(row.payload(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            return new RuntimeEvent(row.eventId(), RuntimeEventType.valueOf(row.type()), row.sessionId(),
+                    row.source(), row.target(), row.taskId(), row.priority(), row.correlationId(), row.createdAt(), payload);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalArgumentException(e); }
     }
 }

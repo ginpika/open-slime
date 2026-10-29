@@ -9,12 +9,17 @@ public final class CodingDtos {
     public record Workspace(String id, String name, String kind, boolean enabled, String workdir) {}
     public record OpenProject(String workspaceId, String directory, String name, boolean create, String validationCommand) {}
     public record CodingProject(String id, String name, String workspaceId, String workspaceName,
-                                String kind, String directory, String validationCommand, boolean enabled, long createdAt) {}
+                                String kind, String directory, String validationCommand, boolean enabled, long createdAt, boolean recentHidden) {
+        public CodingProject(String id,String name,String workspaceId,String workspaceName,String kind,String directory,String validationCommand,boolean enabled,long createdAt){this(id,name,workspaceId,workspaceName,kind,directory,validationCommand,enabled,createdAt,false);}
+    }
     public record RegisterRepository(String name, String path, String projectId, String validationCommand) {}
-    public record StartRun(String repositoryId, String prompt, String modelId, Mode mode, Runner runner, Integer maxRounds, String sessionId) {
+    /** maxRounds is an ignored legacy field retained for older clients. */
+    public record StartRun(String repositoryId, String prompt, String modelId, Mode mode, Runner runner, Integer maxRounds, String sessionId, Boolean autoReview) {
+        public StartRun(String repositoryId,String prompt,String modelId,Mode mode,Runner runner,Integer maxRounds,String sessionId){this(repositoryId,prompt,modelId,mode,runner,maxRounds,sessionId,null);}
         public StartRun(String repositoryId,String prompt,String modelId,Mode mode,Runner runner,Integer maxRounds){this(repositoryId,prompt,modelId,mode,runner,maxRounds,null);}
     }
-    public record ResumeRun(String input, boolean acknowledgeUnknownOperations, Mode mode) {
+    public record ResumeRun(String input, boolean acknowledgeUnknownOperations, Mode mode, Boolean autoReview) {
+        public ResumeRun(String input,boolean acknowledgeUnknownOperations,Mode mode){this(input,acknowledgeUnknownOperations,mode,null);}
         public ResumeRun(String input,boolean acknowledgeUnknownOperations){this(input,acknowledgeUnknownOperations,null);}
     }
     public record Session(String id,String repositoryId,String title,String lastRunId,long createdAt,long updatedAt) {}
@@ -35,7 +40,10 @@ public final class CodingDtos {
     public record Event(long id, String runId, String type, String payload, long createdAt) {}
     public record Change(String path, String kind, String beforeHash, String afterHash, long size, boolean binary, boolean executable) {}
     public record Diff(String artifactHash, List<Change> changes, String patch, boolean truncated) {}
-    public record Agent(String id, String name, String modelId) {}
+    public record Agent(String id, String name, String modelId, String avatar) {
+        public Agent(String id, String name, String modelId) { this(id, name, modelId, null); }
+    }
+    /** maxRounds is always zero: tool use has no round limit. */
     public record Capabilities(boolean enabled, boolean localExecutionAllowed, String dockerImage,
                                int maxRounds, int maxRunMinutes, String isolation, Agent agent) {
         public Capabilities(boolean enabled, boolean localExecutionAllowed, String dockerImage,

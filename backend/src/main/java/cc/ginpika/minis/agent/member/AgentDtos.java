@@ -2,6 +2,7 @@ package cc.ginpika.minis.agent.member;
 
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 import cc.ginpika.minis.ai.knowledge.dto.SearchDtos;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.Map;
 
@@ -33,7 +34,7 @@ public final class AgentDtos {
     /**
      * 一个可授予智能体的工具（成员页「可用工具」的候选；终端工具由绑定工作空间单独授予，不在此列）。
      *
-     * <p>{@code defaultGranted} 指该工具<b>已默认订阅</b>（只读检索那一批，无需人勾选就始终可用）——
+     * <p>{@code defaultGranted} 指该工具<b>已默认开放</b>（主 Agent 全部开放，普通成员为只读检索那一批）——
      * 页面据此把它显示成已勾选并标注，好让「默认给哪些」这件事在配置面上可见。
      * {@code domain} / {@code domainLabel} 是工具的业务领域（{@code ToolDomain}）：页面按它分 Tab 归类展示。
      */
@@ -55,11 +56,16 @@ public final class AgentDtos {
     /** 多智能体会话：带上当前话题与谁在说话，页面据此显示「讨论到哪了」 */
     public record SessionView(String id, String title, String modelId, String topicId,
                               String topicStatus, String floorPeer, List<String> memberIds,
-                              long createdAt, Long updatedAt) {
+                              long createdAt, Long updatedAt, String projectId) {
+        public SessionView(String id, String title, String modelId, String topicId,
+                           String topicStatus, String floorPeer, List<String> memberIds,
+                           long createdAt, Long updatedAt) {
+            this(id, title, modelId, topicId, topicStatus, floorPeer, memberIds, createdAt, updatedAt, null);
+        }
     }
 
     /** 建会话时可以挑成员：不传 / 传空 = 全体名册（首页直接开说的那条路就是这种） */
-    public record NewSessionRequest(List<String> memberIds) {
+    public record NewSessionRequest(List<String> memberIds, String projectId) {
     }
 
     public record NewSession(String sessionId) {
@@ -82,7 +88,10 @@ public final class AgentDtos {
      * 如 {@code rotation} / {@code desire}）；空 / 不认识就用服务端缺省。
      */
     public record SendRequest(String sessionId, String input, String modelId,
-                              String speakerStrategy) {
+                              String speakerStrategy, Boolean redirectWork) {
+        public SendRequest(String sessionId, String input, String modelId, String speakerStrategy) {
+            this(sessionId, input, modelId, speakerStrategy, false);
+        }
     }
 
     /** 一次「人说话 + 成员轮流应答」的结果摘要（正文由 SSE 逐段推） */
@@ -128,7 +137,13 @@ public final class AgentDtos {
     /** 一张桌子当前的编排全貌：讨论节点 + 各成员的执行态 + 共享任务区 */
     public record WorkflowView(String sessionId, String title, String topicId, String topicStatus,
                                String floorPeer, boolean discussing, boolean advancing,
-                               List<WorkflowAgent> agents, List<WorkflowTodo> todos) {
+                               List<WorkflowAgent> agents, List<WorkflowTodo> todos,
+                               List<WorkflowEvent> events) {
+    }
+
+    /** 执行态只读动态：定向目标来自事件记录，不从发言顺序推测沟通关系。 */
+    public record WorkflowEvent(String id, String kind, String source, List<String> targets,
+                                String taskId, String text, long createdAt) {
     }
 
     /**
@@ -138,6 +153,6 @@ public final class AgentDtos {
      */
     public record WorkRunView(long id, String todoId, String peerId, String peerName, String status,
                               String output, String reasoning, List<ChatDtos.TraceSegment> trace,
-                              String error, long startedAt, Long finishedAt) {
+                              String error, long startedAt, Long finishedAt, List<JsonNode> toolRounds) {
     }
 }

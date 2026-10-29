@@ -6,8 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 多智能体模块配置（圆桌的规模、护栏与选人规则）。
  *
  * <p>圆桌上「说些什么」是成员自己按信号决定的，不是代码排的班；所以规模相关的旋钮都是
- * <b>上限</b>——用来兜住跑飞与死循环，而不是用来编排内容。三处上限各管一件事：
- * 单次发言的工具往返（一次发言能查多少）、一轮推进的发言次数（人说完一句话后最多自动接几轮）、
+ * <b>上限</b>——用来兜住跑飞与死循环，而不是用来编排内容。其中包括一轮推进的发言次数（人说完一句话后最多自动接几轮）、
  * 重开次数（「沉默者发言 → 全员重新决策」这条回路最多转几圈）。
  *
  * <p>两处例外，都不编排内容，只改<b>呈现</b>：
@@ -31,14 +30,6 @@ public class RoundtableProps {
      * 每位成员说完报一个下一轮发言欲望（0~10），欲望高的先开口，平手随机。
      */
     private String speakerStrategy = "rotation";
-
-    /**
-     * 单次发言的工具往返上限：超过后撤掉 tools 强制成员把话说出来。
-     *
-     * <p>说话（speak）本身也占轮次——「说一句、查一下、再说一句」才像在聊天，所以这里的额度
-     * 要容得下边说边想，而不只是查资料。
-     */
-    private int maxToolRounds = 16;
 
     /**
      * 人一次发言之后，最多自动推进几轮成员发言（每一轮都是一次完整的 LLM 往返）。
@@ -82,14 +73,6 @@ public class RoundtableProps {
 
     public void setSpeakerStrategy(String speakerStrategy) {
         this.speakerStrategy = speakerStrategy;
-    }
-
-    public int getMaxToolRounds() {
-        return maxToolRounds;
-    }
-
-    public void setMaxToolRounds(int maxToolRounds) {
-        this.maxToolRounds = maxToolRounds;
     }
 
     public int getMaxSpeechesPerTurn() {

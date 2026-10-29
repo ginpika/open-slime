@@ -39,7 +39,7 @@ public class CodingTools {
             schema(tools,"start_process","在已授权任务执行环境中启动命令，返回 processId。默认 Docker 无网络、无宿主凭证。使用 read_process 查看进展，避免反复启动同一命令。",Map.of("command","string","timeoutSeconds","integer"),List.of("command"));
             schema(tools,"read_process","读取一个本任务进程的累计或增量输出，offset 默认 0；running=true 时应继续检查而非宣称通过。",Map.of("processId","string","offset","integer"),List.of("processId"));
             schema(tools,"stop_process","停止任务进程。Docker 模式停止整个任务沙箱中的全部进程，代码副本保留。",Map.of("processId","string"),List.of("processId"));
-            schema(tools,"run_validation","运行用户为仓库配置的验证命令，等待退出并将证据绑定当前代码版本。若代码在验证期间变化或无验证入口，如实返回未通过/阻塞。",Map.of(),List.of());
+            schema(tools,"run_validation","运行验证并绑定当前代码版本。普通任务使用项目固定命令；协作派工在项目未配置命令时可提供 command（例如构建并运行本步测试）。独立检查会重新执行同一命令。",Map.of("command","string"),List.of());
         }
         return tools;
     }
@@ -75,7 +75,11 @@ public class CodingTools {
                     case "start_process" -> { store.validation(run.id(),"NOT_RUN"); yield processes.start(run,input.path("command").asText(),input.path("timeoutSeconds").asInt(120)); }
                     case "read_process" -> processes.read(run.id(),input.path("processId").asText(),input.path("offset").asInt(0));
                     case "stop_process" -> processes.stop(run,input.path("processId").asText());
-                    case "run_validation" -> validate(run,repository,stopped);
+                    case "run_validation" -> {
+                        if(input.hasNonNull("command") && (repository.validationCommand()==null || repository.validationCommand().isBlank()))
+                            store.taskValidationCommand(run.id(),input.path("command").asText());
+                        yield validate(run,repository,stopped);
+                    }
                     default -> throw new IllegalArgumentException("工具不存在");
                 };
                 String result=encode(output); if(result.length()>170_000){ result=encode(Map.of("status","OUTPUT_TOO_LARGE","message","请分段读取，结果未完整发送")); }
@@ -86,32 +90,40 @@ public class CodingTools {
         return results;
     }
     public Map<String,Object> validate(Run run,Repository repository,AtomicBoolean stopped) {
-        if(run.mode()!=Mode.EXECUTE || repository.validationCommand()==null || repository.validationCommand().isBlank()) {
-            store.validation(run.id(),"BLOCKED"); return Map.of("status","BLOCKED","message","未授权执行或仓库未配置验证命令");
+        return validate(run,repository,stopped,false);
+    }
+    public String validationCommand(Run run,Repository repository){
+        return repository.validationCommand()!=null && !repository.validationCommand().isBlank()?repository.validationCommand():store.taskValidationCommand(run.id());
+    }
+    public Map<String,Object> validate(Run run,Repository repository,AtomicBoolean stopped,boolean force) {
+        String command=validationCommand(run,repository);
+        if(run.mode()!=Mode.EXECUTE || command==null || command.isBlank()) {
+            store.validation(run.id(),"BLOCKED"); return Map.of("status","BLOCKED","message","未授权执行或尚未指定实际验证命令；协作执行者可用 run_validation(command=构建与测试命令)");
         }
         String current=files.treeHash(run.id());
         Run state=store.run(run.id(),run.ownerId());
-        if(!processes.running(run.id()) && Objects.equals(current,store.validationHash(run.id())) && Set.of("PASSED","FAILED").contains(state.validationStatus())){
-            return Map.of("status",state.validationStatus(),"treeHash",current,"cached",true,"message","同一代码版本已验证，本次未重复运行命令；修改或新的进程执行会使验证证据失效");
+        var evidence=store.validationEvidence(run.id());
+        if(!force && evidence!=null && command.equals(evidence.path("command").asText()) && !processes.running(run.id()) && Objects.equals(current,store.validationHash(run.id())) && Set.of("PASSED","FAILED").contains(state.validationStatus())){
+            return Map.of("status",state.validationStatus(),"treeHash",current,"command",command,"cached",true,"message","同一代码版本和验证命令已有结果；修改、新的进程执行或验证命令变化会使证据失效");
         }
         store.validation(run.id(),"NOT_RUN");
         String tree=files.treeHash(run.id());
         Map<String,Object> output;
         try{
             processes.stopAll(run);
-            Map<String,Object> started=processes.start(run,repository.validationCommand(),600);
+            Map<String,Object> started=processes.start(run,command,600);
             output=processes.await(run,started.get("processId").toString(),stopped);
             processes.stopAll(run);
         }catch(CancellationException error){throw error;}
         catch(RuntimeException error){
             store.validation(run.id(),"BLOCKED");
-            Map<String,Object> report=Map.of("status","BLOCKED","treeHash",tree,"command",repository.validationCommand(),"error",String.valueOf(error.getMessage()));
+            Map<String,Object> report=Map.of("status","BLOCKED","treeHash",tree,"command",command,"error",String.valueOf(error.getMessage()));
             store.event(run.id(),"validation.finished",report);return report;
         }
         boolean stable=tree.equals(files.treeHash(run.id()));
         String status=stable && Objects.equals(output.get("exitCode"),0)?"PASSED":stable?"FAILED":"STALE";
         store.validation(run.id(),status,tree);
-        Map<String,Object> report=Map.of("status",status,"treeHash",tree,"command",repository.validationCommand(),"process",output);
+        Map<String,Object> report=Map.of("status",status,"treeHash",tree,"command",command,"process",output);
         store.event(run.id(),"validation.finished",report); return report;
     }
     private String encode(Object value){ try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalArgumentException(e);} }

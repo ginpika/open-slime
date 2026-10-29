@@ -40,16 +40,19 @@ public class RoundtableContextBuilder {
     private final RoundtableMessageStore maMessages;
     private final RoundtableTodoStore taskBoard;
     private final RoundtableProps props;
+    private final cc.ginpika.minis.project.ProjectKnowledgeStore knowledge;
 
     public RoundtableContextBuilder(AgentDirectory directory, AgentPromptService peerPrompts,
                               TopicStateMachine machine, RoundtableMessageStore maMessages,
-                              RoundtableTodoStore taskBoard, RoundtableProps props) {
+                              RoundtableTodoStore taskBoard, RoundtableProps props,
+                              cc.ginpika.minis.project.ProjectKnowledgeStore knowledge) {
         this.directory = directory;
         this.peerPrompts = peerPrompts;
         this.machine = machine;
         this.maMessages = maMessages;
         this.taskBoard = taskBoard;
         this.props = props;
+        this.knowledge = knowledge;
     }
 
     /**
@@ -157,8 +160,10 @@ public class RoundtableContextBuilder {
      */
     public String dispatch(String sessionId, int budget, TopicRow topic, String peerId) {
         StringBuilder sb = new StringBuilder(RoundtablePrompts.DISPATCH_HEAD).append('\n');
+        String pinned=pinnedContext(sessionId);
+        sb.append(pinned);
         sb.append(RoundtablePrompts.TRANSCRIPT_HEAD).append('\n');
-        for (String line : transcriptLines(sessionId, budget)) {
+        for (String line : transcriptLines(sessionId, Math.max(0,budget-(int)TokenUsageService.estimateTokens(pinned)))) {
             sb.append(line).append('\n');
         }
         sb.append(RoundtablePrompts.TRANSCRIPT_TAIL).append('\n');
@@ -175,7 +180,7 @@ public class RoundtableContextBuilder {
     }
 
     /**
-     * 共享任务区的快照（只列没做完的条目）：贴在局面之后，让讨论看得见全桌的活。
+     * 共享任务区的快照：包括已结束与放弃的条目，主控才能在新要求下复用原条目。
      *
      * <p>受阻条目会带上原因——那正是这轮讨论要处理的事。
      */
@@ -185,23 +190,39 @@ public class RoundtableContextBuilder {
         }
         StringBuilder sb = new StringBuilder(RoundtablePrompts.BOARD_HEAD).append('\n');
         boolean any = false;
-        for (RoundtableTodoStore.TodoRow t : taskBoard.openOnes(sessionId)) {
-            if (RoundtableTodoStore.STATUS_DROPPED.equals(t.status())) {
-                continue;
-            }
+        for (RoundtableTodoStore.TodoRow t : taskBoard.list(sessionId)) {
             any = true;
             sb.append("  <todo id=\"").append(t.id()).append("\" status=\"").append(t.status()).append('"');
             if (t.ownerPeer() != null) {
                 sb.append(" owner=\"").append(nameOr(t.ownerPeer())).append('"');
             }
             sb.append('>').append(t.title());
-            if (RoundtableTodoStore.STATUS_BLOCKED.equals(t.status())
-                    && t.blockReason() != null && !t.blockReason().isBlank()) {
-                sb.append("（受阻：").append(t.blockReason()).append('）');
+            if (t.detail() != null) sb.append("（要求：").append(t.detail()).append('）');
+            if (t.dependsOn() != null) sb.append("（前置ID：").append(t.dependsOn()).append('）');
+            if (t.result() != null) sb.append("（产出：").append(t.result()).append('）');
+            if (t.blockReason() != null && !t.blockReason().isBlank()) {
+                sb.append("（检查或受阻意见：").append(t.blockReason()).append('）');
             }
             sb.append("</todo>\n");
         }
         return any ? sb.append(RoundtablePrompts.BOARD_TAIL).toString() : "";
+    }
+
+    /** Durable goal and latest issue conclusions survive the rolling transcript window. */
+    public String pinnedContext(String sessionId) {
+        var rows = maMessages.bySession(sessionId);
+        StringBuilder out = new StringBuilder("<task_context>\n");
+        var seed = rows.stream().filter(m -> "task_context".equals(m.eventKind()) || "issue_context".equals(m.eventKind())).findFirst();
+        var users = rows.stream().filter(m -> "user".equals(m.role())).toList();
+        seed.or(() -> users.stream().findFirst()).ifPresent(m -> out.append(m.content()).append('\n'));
+        out.append("最近的用户要求（在原目标之上生效）：\n");
+        users.stream().skip(Math.max(0, users.size() - 2)).forEach(m -> out.append(m.content()).append('\n'));
+        var conclusions = rows.stream().filter(m -> "issue_resolved".equals(m.eventKind())).toList();
+        rows.stream().filter(m -> "workspace_binding".equals(m.eventKind())).reduce((a,b) -> b)
+                .ifPresent(m -> out.append(m.content()).append('\n'));
+        conclusions.stream().skip(Math.max(0, conclusions.size() - 4))
+                .forEach(m -> out.append(m.content()).append('\n'));
+        return out.append("</task_context>\n").append(knowledge.context(sessionId)).toString();
     }
 
     /**
@@ -210,6 +231,11 @@ public class RoundtableContextBuilder {
      * <p>「从最新往回」是关键：圆桌的记录里既有人的话、也有各成员的发言与状态动作，
      * 越靠后越相关。窗口的选取规则抽在 {@link #windowOf}（纯函数，便于单测）。
      */
+    public String conversationTranscript(String sessionId, int budget) {
+        String pinned=pinnedContext(sessionId);
+        return pinned + "\n" + String.join("\n", transcriptLines(sessionId, Math.max(0,budget-(int)TokenUsageService.estimateTokens(pinned))));
+    }
+
     private List<String> transcriptLines(String sessionId, int budget) {
         List<RoundtableMessageStore.MessageRow> all = maMessages.bySession(sessionId);
         if (all.isEmpty()) {

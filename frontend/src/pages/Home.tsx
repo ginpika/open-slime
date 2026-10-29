@@ -1,6 +1,9 @@
 import { AppIcon } from '../components/AppIcon'
 import { ModelBrandIcon } from '../components/ModelBrandIcon'
 import SpeechButton from '../components/SpeechButton'
+import ChatMarkdown from '../components/ChatMarkdown'
+import UserQuestionCard from '../components/UserQuestionCard'
+import { questionContent, userQuestion } from '../components/userQuestion'
 import ConversationBrowser from '../components/ConversationBrowser'
 import { OrbitalSeal } from '../shell/AstrolabeShell'
 import { backfillSettledReply } from '../components/settledChat'
@@ -17,8 +20,6 @@ import {
   useState,
   type FormEvent,
 } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import {
   bindSessionProject,
   branchSession,
@@ -178,112 +179,6 @@ function tocText(content: string): string {
   return s.length > 60 ? `${s.slice(0, 60)}…` : s
 }
 
-/** 聊天气泡内的 markdown 组件映射：比文章页更紧凑的排版以贴合气泡。
- *  onBubble = 位于用户深色气泡内（bg-fg），行内代码底色、引用/表格边框等叠加层
- *  改用前景色 primary-fg 的半透明变体，保证气泡内对比度。
- *  两套映射在模块级构建一次（普通 / 深色气泡），避免每次渲染重建映射对象——否则
- *  ReactMarkdown 每次父级重渲染都要全量重新解析 markdown，是长会话打字卡顿的主因之一 */
-const makeMdComponents = (onBubble: boolean): Components => ({
-  h1: (p: object) => (
-    <h1 className="my-2 text-lg font-semibold first:mt-0 last:mb-0" {...p} />
-  ),
-  h2: (p: object) => (
-    <h2 className="my-2 text-md font-semibold first:mt-0 last:mb-0" {...p} />
-  ),
-  h3: (p: object) => (
-    <h3 className="my-2 text-base font-semibold first:mt-0 last:mb-0" {...p} />
-  ),
-  p: (p: object) => <p className="my-1.5 first:mt-0 last:mb-0" {...p} />,
-  a: (p: object) => (
-    <a
-      className={
-        onBubble
-          ? 'underline decoration-primary-fg/50 underline-offset-2'
-          : 'text-accent underline decoration-accent/40 underline-offset-2 transition hover:decoration-accent'
-      }
-      target="_blank"
-      rel="noreferrer"
-      {...p}
-    />
-  ),
-  ul: (p: object) => (
-    <ul className="my-1.5 list-disc space-y-0.5 pl-5 first:mt-0 last:mb-0" {...p} />
-  ),
-  ol: (p: object) => (
-    <ol className="my-1.5 list-decimal space-y-0.5 pl-5 first:mt-0 last:mb-0" {...p} />
-  ),
-  blockquote: (p: object) => (
-    <blockquote
-      className={`my-1.5 border-l pl-3 first:mt-0 last:mb-0 ${
-        onBubble ? 'border-primary-fg/30' : 'border-line'
-      }`}
-      {...p}
-    />
-  ),
-  code: ({ className, children, ...rest }: { className?: string; children?: React.ReactNode }) =>
-    className?.includes('language-') ? (
-      <code className="font-mono text-sm leading-6" {...rest}>
-        {children}
-      </code>
-    ) : (
-      <code
-        className={`rounded px-1 py-0.5 font-mono text-sm ${
-          onBubble ? 'bg-primary-fg/15' : 'bg-fg/5'
-        }`}
-        {...rest}
-      >
-        {children}
-      </code>
-    ),
-  pre: (p: object) => (
-    <pre
-      className={`scrollbar-slim my-2 overflow-x-auto rounded-lg border p-3 font-mono text-sm leading-6 first:mt-0 last:mb-0 ${
-        onBubble ? 'border-primary-fg/20 bg-primary-fg/5' : 'border-line bg-fg/[0.03]'
-      }`}
-      {...p}
-    />
-  ),
-  table: (p: object) => (
-    <table className="my-2 w-full border-collapse text-base first:mt-0 last:mb-0" {...p} />
-  ),
-  th: (p: object) => (
-    <th
-      className={`border px-2 py-1 text-left font-semibold ${
-        onBubble ? 'border-primary-fg/25 bg-primary-fg/10' : 'border-line bg-fg/5'
-      }`}
-      {...p} />
-  ),
-  td: (p: object) => (
-    <td
-      className={`border px-2 py-1 ${onBubble ? 'border-primary-fg/25' : 'border-line'}`}
-      {...p} />
-  ),
-  hr: () => <hr className={`my-3 border-t ${onBubble ? 'border-primary-fg/25' : 'border-line'}`} />,
-})
-
-const MD_COMPONENTS = { plain: makeMdComponents(false), bubble: makeMdComponents(true) }
-
-/** remark 插件列表（模块级常量，保持引用稳定） */
-const REMARK_PLUGINS = [remarkGfm]
-
-/** 聊天气泡内的 markdown 渲染：memo 化，content 与气泡态都不变时跳过解析 */
-const BubbleMd = memo(function BubbleMd({
-  content,
-  onBubble = false,
-}: {
-  content: string
-  onBubble?: boolean
-}) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={REMARK_PLUGINS}
-      components={onBubble ? MD_COMPONENTS.bubble : MD_COMPONENTS.plain}
-    >
-      {content}
-    </ReactMarkdown>
-  )
-})
-
 /** 工具调用参数的可读展示：能解析为 JSON 时缩进输出，否则原样返回 */
 function prettyArgs(args: string | null): string {
   if (!args) return ''
@@ -374,7 +269,7 @@ const CotBlock = memo(function CotBlock({
           ) : plain ? (
             <div className="whitespace-pre-wrap break-words">{text ?? ''}</div>
           ) : (
-            <BubbleMd content={text ?? ''} />
+            <ChatMarkdown content={text ?? ''} />
           )}
         </div>
       )}
@@ -508,7 +403,7 @@ const UserRow = memo(function UserRow({
     /* id=会话目录的锚点（点目录项 scrollIntoView 落到这条提问）；scroll-mt-6 给锚点留顶距 */
     <div id={userAnchorId(msg)} className="group relative flex scroll-mt-6 justify-end">
       <div className="max-w-[85%] break-words rounded-2xl rounded-br-sm bg-fg px-4 py-2.5 text-md leading-relaxed text-primary-fg">
-        <BubbleMd content={msg.content} onBubble />
+        <ChatMarkdown content={msg.content} onBubble />
       </div>
       {/* hover 气泡时浮现在其下方消息间隙里的回退按钮：删掉这条提问及其后的对话，
           内容放回底部输入框的未发送状态（不占排版，绝对定位在 space-y-5 的间隙内） */}
@@ -538,6 +433,8 @@ const AssistantRow = memo(function AssistantRow({
   onBranch,
   speechAgentId,
   speechEnabled,
+  canAnswer,
+  onAnswer,
 }: {
   msg: ChatMsg
   showCot: boolean
@@ -547,16 +444,22 @@ const AssistantRow = memo(function AssistantRow({
   onBranch: (msg: ChatMsg) => void
   speechAgentId: string
   speechEnabled: boolean
+  canAnswer: boolean
+  onAnswer: (text: string) => Promise<void>
 }) {
+  const question = userQuestion(msg)
   return (
     <div className="group break-words border-l border-line pl-4 text-md leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
       {/* 正在流式生成的这条默认展开跟随输出；历史回放的默认收起 */}
       {showCot && <TraceBlocks msg={msg} live={!!msg.streaming} showRounds={showRounds} />}
-      {msg.streaming ? (
+      {question ? <>
+        <UserQuestionCard key={JSON.stringify(question)} question={question} active={canAnswer} onAnswer={onAnswer} />
+        <ChatMarkdown content={msg.content.slice(questionContent(question).length)} />
+      </> : msg.streaming ? (
         /* 流式生成中按纯文本渲染：逐 token 期间不解析 markdown，结束后再切正式渲染 */
         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
       ) : (
-        <BubbleMd content={msg.content} />
+        <ChatMarkdown content={msg.content} />
       )}
       {/* 回复下方的一排操作按钮（悬停浮现，与提问气泡的「回退」同一套克制手感）：
           目前只有「分支」——以到这里为止的内容新建一个副本会话 */}
@@ -786,6 +689,7 @@ export default function Home({ connErr }: Props) {
     () => (live ? [...dropTrailingDupUser(msgs, live), ...livePair(live)] : msgs),
     [msgs, live],
   )
+  const lastConversationIndex = view.findLastIndex(message => message.kind !== 'subagent')
 
   /** 正在弹窗查看完整结论的子代理气泡（null=未打开）：气泡只显示标题+摘要，全文在这里看 */
   const [reportView, setReportView] = useState<ChatMsg | null>(null)
@@ -794,7 +698,7 @@ export default function Home({ connErr }: Props) {
    *  sessionId 供回看某个 Turn 的调用留痕（用 Turn 感知的 JSON 预览器 RawContextView 展示） */
   const [rawView, setRawView] = useState<{ sessionId: string; ctx: RawContext } | null>(null)
 
-  /* 本次会话使用的模型 / 系统提示词 / 是否显示 CoT / 工具轮数上限 / 思维链轮次计数：
+  /* 本次会话使用的模型 / 系统提示词 / 是否显示 CoT / 思维链轮次计数：
      属会话级配置（「…」菜单），随会话存取——进入历史会话时从后端恢复，菜单变更时回写后端 */
   const [settings, setSettings] = useState<SettingsView | null>(null)
   const [speechEnabled, setSpeechEnabled] = useState(false)
@@ -824,9 +728,6 @@ export default function Home({ connErr }: Props) {
 
   /** 是否显示思维链（默认显示）；开关在「…」菜单里，按会话存储 */
   const [showCot, setShowCot] = useState(true)
-
-  /** 单次提问的工具调用轮数上限（默认 30）；数字框在「…」菜单里，按会话存储 */
-  const [maxRounds, setMaxRounds] = useState(30)
 
   /** 思维链分段是否在右侧标轮次计数（默认不显示）；开关在「…」菜单里，按会话存储 */
   const [showRounds, setShowRounds] = useState(false)
@@ -1287,7 +1188,6 @@ export default function Home({ connErr }: Props) {
       promptId?: string | null
       agentId?: string | null
       showCot?: boolean
-      maxRounds?: number
       showRounds?: boolean
     },
   ): Promise<void> => {
@@ -1298,7 +1198,6 @@ export default function Home({ connErr }: Props) {
         /* undefined=不改；空串=清除所选 Agent、回到内置 Agent（后端把它落成 NULL）；否则=所选成员 id */
         agentId: cfg.agentId === undefined ? null : cfg.agentId,
         showCot: cfg.showCot ?? null,
-        maxRounds: cfg.maxRounds ?? null,
         showRounds: cfg.showRounds ?? null,
       })
     } catch (e) {
@@ -1374,7 +1273,6 @@ export default function Home({ connErr }: Props) {
         setAgentId(item.agentId ?? '')
         setProjectId(item.projectId ?? '')
         setShowCot(item.showCot ?? true)
-        setMaxRounds(item.maxRounds ?? 30)
         setShowRounds(item.showRounds ?? false)
       }
       setPanelOpen(false)
@@ -1476,13 +1374,12 @@ export default function Home({ connErr }: Props) {
       setSessionActive(true)
       setMsgs([])
       setPanelOpen(false)
-      /* 新会话延续模型 / Agent / CoT / 轮数上限 / 轮次计数显示选择；身份提示词不延续——新会话默认跟随提示词页的「对话身份」绑定 */
+      /* 新会话延续模型 / Agent / CoT / 轮次计数显示选择；身份提示词不延续——新会话默认跟随提示词页的「对话身份」绑定 */
       setPromptId('')
       await saveConfig(s.id, {
         modelId: modelId || null,
         agentId: agentId || null,
         showCot,
-        maxRounds,
         showRounds,
       })
       void refreshSessions()
@@ -1558,8 +1455,8 @@ export default function Home({ connErr }: Props) {
         sid = s.id
         setSessionId(s.id)
         setSessionActive(true)
-        /* 模型/提示词随本次请求落库，这里补记 Agent 选择、CoT 显示、轮数上限与轮次计数，便于再次进入该会话时回显 */
-        await saveConfig(s.id, { agentId: agentId || null, showCot, maxRounds, showRounds })
+        /* 模型/提示词随本次请求落库，这里补记 Agent 选择、CoT 显示与轮次计数，便于再次进入该会话时回显 */
+        await saveConfig(s.id, { agentId: agentId || null, showCot, showRounds })
       }
       startChat({
         sessionId: sid,
@@ -1875,7 +1772,7 @@ export default function Home({ connErr }: Props) {
                     那边就是一张空桌——发出第一句时后端按全体名册开一桌） */}
                 <button
                   type="button"
-                  onClick={() => window.location.assign('#/roundtable')}
+                  onClick={() => window.location.assign('#/collaboration')}
                   title="打开最近一次群聊"
                   className="ba-home-slider-btn flex cursor-pointer items-center gap-1.5 rounded-full px-4 py-1.5 text-base font-medium text-muted transition hover:text-fg"
                 >
@@ -1955,6 +1852,8 @@ export default function Home({ connErr }: Props) {
                     onBranch={onBranch}
                     speechAgentId={agentId || 'builtin'}
                     speechEnabled={speechEnabled}
+                    canAnswer={!busy && !live?.error && i === lastConversationIndex}
+                    onAnswer={send}
                   />
                 ),
               )}
@@ -2244,27 +2143,6 @@ export default function Home({ connErr }: Props) {
                           </span>
                         </button>
                         <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
-                          生成
-                        </p>
-                        <label
-                          title="单次提问最多允许多少轮工具调用；超限后撤掉工具、强制模型给出最终回答（缺省 30）"
-                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted transition hover:bg-fg/5 hover:text-fg"
-                        >
-                          <span className="flex-1 truncate">最大轮数</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={maxRounds}
-                            onChange={(e) => {
-                              const n = Math.min(100, Math.max(1, Number(e.target.value) || 1))
-                              setMaxRounds(n)
-                              if (sessionId !== null) void saveConfig(sessionId, { maxRounds: n })
-                            }}
-                            className="w-14 shrink-0 rounded-md border border-line bg-bg px-2 py-1 text-right text-sm text-fg outline-none focus:border-accent"
-                          />
-                        </label>
-                        <p className="mt-1 border-t border-line px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-[0.18em] text-faint">
                           检索
                         </p>
                         <button
@@ -2480,7 +2358,7 @@ export default function Home({ connErr }: Props) {
                 {reportView.subagent.summary}
               </p>
             )}
-            <BubbleMd content={reportView.content} />
+            <ChatMarkdown content={reportView.content} />
           </div>
         </FloatWindow>
       )}
@@ -2490,9 +2368,10 @@ export default function Home({ connErr }: Props) {
           messages 按 Turn 切片、每条消息默认折叠；每个 Turn 右侧可回看它每一轮的请求体 / 响应体（可拖动） */}
       {rawView && (
         <FloatWindow
-          title={`原始上下文 · ${rawView.ctx.body.model}`}
+          title="原始上下文"
           onClose={() => setRawView(null)}
-          width={880}
+          width={960}
+          contentClassName="raw-context-window-body"
         >
           <RawContextView ctx={rawView.ctx} sessionId={rawView.sessionId} />
         </FloatWindow>

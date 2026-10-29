@@ -1,0 +1,23 @@
+.workspace-dialog {
+  --ui-btn-fs: var(--ui-fs-base);
+  font-size: var(--ui-fs-base);
+  line-height: 1.5;
+}
+
+.workspace-dialog .text-sm {
+  font-size: var(--ui-fs-base);
+}
+
+@media (max-width: 600px) {
+  .workspace-dialog {
+    --ui-btn-fs: var(--ui-fs-md);
+    font-size: var(--ui-fs-md);
+  }
+
+  .workspace-dialog .text-base,
+  .workspace-dialog .text-sm,
+  .workspace-dialog input,
+  .workspace-dialog textarea {
+    font-size: var(--ui-fs-md);
+  }
+}

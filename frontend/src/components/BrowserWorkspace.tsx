@@ -6,6 +6,7 @@ import {
 import { navigationUrl, readableUrl } from '../api/readableUrl'
 import { loginUrlOf } from '../api/client'
 import SnapshotReader from './SnapshotReader'
+import { Select } from './Select'
 import { bindBrowserWheel, type BrowserWheel } from './browserWheel'
 
 export const WEB_FIELD = 'w-full rounded-lg border border-line bg-bg px-3 py-2.5 text-sm text-fg outline-none placeholder:text-hint focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50'
@@ -145,10 +146,7 @@ export default function BrowserWorkspace({ chatSessionId, onSaved }: { chatSessi
         <details className="rounded-lg border border-line p-3">
           <summary className="cursor-pointer text-sm font-medium text-fg">页面操作 · 链接与输入框</summary>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <select aria-label="网页元素" className={`${WEB_FIELD} sm:w-1/2`} value={ref} onChange={e => setRef(e.target.value)} disabled={!!busy}>
-              <option value="">选择可操作元素</option>
-              {view.elements.map(e => <option key={e.ref} value={e.ref}>{e.tag} · {e.label || readableUrl(e.href) || e.ref}</option>)}
-            </select>
+            <Select label="网页元素" className="w-full sm:w-1/2" value={ref} onChange={setRef} disabled={!!busy} searchable size="compact" options={[{ value: '', label: '选择可操作元素' }, ...view.elements.map(e => ({ value: e.ref, label: `${e.tag} · ${e.label || readableUrl(e.href) || e.ref}` }))]} />
             <input aria-label="输入到网页的文字" className={WEB_FIELD} value={input} onChange={e => setInput(e.target.value)} placeholder="输入文字" disabled={!!busy} />
           </div>
           <div className="mt-2 flex flex-wrap gap-2">

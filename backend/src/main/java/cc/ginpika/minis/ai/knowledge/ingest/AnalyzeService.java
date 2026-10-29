@@ -44,8 +44,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AnalyzeService {
 
-    private static final int MAX_ROUNDS = 8;
-
     private final OpenAiChatClient chat;
     private final GraphStore graph;
     private final ChunkStore chunks;
@@ -134,7 +132,8 @@ public class AnalyzeService {
         messages.addObject().put("role", "user").put("content", sb.toString());
 
         String finish = null;
-        for (int round = 1; round <= MAX_ROUNDS; round++) {
+        for (int round = 1; ; round++) {
+            if (Thread.currentThread().isInterrupted()) { throw new java.util.concurrent.CancellationException("知识入库已停止"); }
             ObjectNode body = om.createObjectNode();
             body.set("messages", messages);
             body.set("tools", tools.toolsOf(ToolSurface.COMMIT));
@@ -463,7 +462,7 @@ public class AnalyzeService {
         }
         graph.upsertEntity(isBlank(type) ? "CONCEPT" : type, name, aliases, null);
         nodes[0]++;
-        String id = GraphStore.entityIdFor(name);
+        String id = graph.byName(name).id();
         if (embedding.configured()) {
             Optional<float[]> vec = embedding.embed(name);
             if (vec.isPresent()) {
@@ -687,8 +686,7 @@ public class AnalyzeService {
                     args.path("aliases").forEach(a -> aliases.add(a.asText()));
                 }
                 String summary = args.path("summary").asText(null);
-                graph.upsertEntity(primary, types, nodeName, aliases, summary);
-                String id = GraphStore.entityIdFor(nodeName);
+                String id = graph.upsertEntity(primary,types,nodeName,aliases,summary,args.path("identity_key").asText(null));
                 nodeIds.add(id);
                 if (embedding.configured()) {
                     Optional<float[]> vec = embedding.embed(

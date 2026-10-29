@@ -45,6 +45,8 @@ public class MemoryWriter {
 
     private final MemoryEventStore events;
     private final MemoryEmbeddingWriter embeddings;
+    @org.springframework.beans.factory.annotation.Autowired
+    private cc.ginpika.minis.ai.memory.graph.MemoryGraphStore graph;
 
     public MemoryWriter(MemoryEventStore events, MemoryEmbeddingWriter embeddings) {
         this.events = events;
@@ -52,11 +54,13 @@ public class MemoryWriter {
     }
 
     /** 落 chat_message 时推：role 为 user/assistant，sessionTitle 供注入侧认出发生在哪 */
+    @org.springframework.transaction.annotation.Transactional
     public void onChatMessage(long messageId, String role, String sessionTitle, String content) {
         push(REF_CHAT_MESSAGE + ":" + messageId, KIND_CHAT, role, sessionTitle, content,
                 REF_CHAT_MESSAGE, messageId);
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public void onChatMessage(cc.ginpika.minis.ai.core.MemoryExec exec, long messageId, String role,
                               String sessionTitle, String content) {
         cc.ginpika.minis.ai.core.MemoryScopeCtx.runVoid(exec,
@@ -64,6 +68,7 @@ public class MemoryWriter {
     }
 
     /** 执行出结论时推（AgentRunner 的 done 分支）：kind 为 heartbeat/plan/agent，output 为结论 */
+    @org.springframework.transaction.annotation.Transactional
     public void onExecDone(long execId, String kind, String title, String output) {
         push(REF_TASK + ":" + execId, KIND_EXEC, kind, title, output, REF_TASK, execId);
     }
@@ -71,6 +76,8 @@ public class MemoryWriter {
     private void push(String eventKey, String kind, String actor, String title, String payload,
                       String refType, long refId) {
         try {
+            if(!events.sourceAllowed(refType,refId)) return;
+            if(graph!=null) graph.episode(eventKey,payload,cc.ginpika.minis.ai.core.MemoryScopeCtx.get(),System.currentTimeMillis());
             if (events.append(cc.ginpika.minis.ai.core.MemoryScopeCtx.get(),
                     eventKey, kind, actor, trim(title), truncate(payload), refType, refId)) {
                 /* 只有真的写入（非幂等重放）才值得花一次 embedding 调用 */

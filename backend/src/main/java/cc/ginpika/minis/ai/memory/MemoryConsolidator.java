@@ -127,6 +127,8 @@ public class MemoryConsolidator {
             if (isProtected(it)) {
                 continue;
             }
+            // Same words may describe different occurrences. Untimed old episodes are not safe to collapse.
+            if("episode".equals(it.scope())) continue;
             String key = domainKey(it) + "\u0000" + (it.body() == null ? "" : it.body().trim());
             Long keepId = keeper.get(key);
             if (keepId == null) {
@@ -144,7 +146,7 @@ public class MemoryConsolidator {
 
     /** 同域判据：owner / project_id / agent_id / domain / scope 全同才算同域（跨域绝不互相取代） */
     private static String domainKey(MemoryItemStore.ItemRow it) {
-        return MemoryVocabulary.retentionKey(it) + "|" + nz(it.scope());
+        return MemoryVocabulary.retentionKey(it) + "|" + nz(it.scope()) + "|" + nz(it.identity());
     }
 
     /** protected：pinned / 正式用户画像 / 未完成事项 / 全局规则 —— 淘汰、去重、巩固一律跳过（memory-v6 I10） */

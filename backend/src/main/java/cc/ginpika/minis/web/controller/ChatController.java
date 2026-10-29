@@ -40,8 +40,8 @@ public class ChatController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
-    /** SSE 流最长保持：与 nginx 的 proxy_read_timeout（300s）对齐 */
-    private static final long STREAM_TIMEOUT_MS = 300_000L;
+    /** 包含 ComfyUI 等长工具等待；覆盖最长 3600s 工作流并为模型收尾留余量。 */
+    private static final long STREAM_TIMEOUT_MS = 3_900_000L;
 
     private final ChatTurnRunner turns;
     private final ChatContextService context;

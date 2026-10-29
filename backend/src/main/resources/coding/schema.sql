@@ -32,10 +32,18 @@ CREATE TABLE IF NOT EXISTS coding_input (
  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES coding_run(id),
  content TEXT NOT NULL, created_at INTEGER NOT NULL, applied_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS coding_instruction_receipt (
+ input_id INTEGER PRIMARY KEY REFERENCES coding_input(id), run_id TEXT NOT NULL REFERENCES coding_run(id),
+ source TEXT NOT NULL, request_key TEXT, attempt INTEGER NOT NULL, requested_mode TEXT,
+ UNIQUE(run_id,request_key)
+);
 CREATE TABLE IF NOT EXISTS coding_workspace_project (
  repository_id TEXT PRIMARY KEY REFERENCES coding_repository(id), workspace_id TEXT NOT NULL,
  directory TEXT NOT NULL, root_path TEXT NOT NULL, target_fingerprint TEXT NOT NULL,
  UNIQUE(workspace_id,root_path,repository_id)
+);
+CREATE TABLE IF NOT EXISTS coding_hidden_recent_project (
+ repository_id TEXT PRIMARY KEY REFERENCES coding_repository(id)
 );
 CREATE TABLE IF NOT EXISTS coding_session (
  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, repository_id TEXT NOT NULL REFERENCES coding_repository(id),
@@ -66,4 +74,8 @@ CREATE TABLE IF NOT EXISTS coding_child_operation (
 CREATE TABLE IF NOT EXISTS coding_delegation_request (
  request_key TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES coding_run(id),
  execution_id TEXT NOT NULL REFERENCES coding_execution(id), arguments TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS coding_validation_command (
+ run_id TEXT PRIMARY KEY REFERENCES coding_run(id) ON DELETE CASCADE,
+ command TEXT, authority TEXT NOT NULL
 );

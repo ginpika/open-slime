@@ -45,9 +45,9 @@ public class UpsertEdgeTool implements AiTool {
         ObjectNode params = om.createObjectNode();
         params.put("type", "object");
         ObjectNode props = params.putObject("properties");
-        props.putObject("subject").put("type", "string").put("description", "关系主语实体名");
+        props.putObject("subject").put("type", "string").put("description", "关系主语实体名或明确的实体 ID；同名时必须使用 ID");
         props.putObject("predicate").put("type", "string").put("description", "关系词（谓词）");
-        props.putObject("object").put("type", "string").put("description", "关系宾语实体名");
+        props.putObject("object").put("type", "string").put("description", "关系宾语实体名或明确的实体 ID；同名时必须使用 ID");
         params.putArray("required").add("subject").add("predicate").add("object");
         return params;
     }

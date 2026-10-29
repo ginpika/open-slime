@@ -137,6 +137,9 @@ public class MemoryController {
     }
 
     /** 人工新增条目：按归属 + 治理落库（source=manual）。归属缺省由 scope / 项目推导，随后仍过写侧矩阵（I3–I6） */
+    @GetMapping("/items/{id}")
+    public ItemView item(@PathVariable long id) { return ItemView.of(require(id)); }
+
     @PostMapping("/items")
     public ItemView create(@RequestBody ItemRequest req) {
         String scope = req.scope() == null ? "" : req.scope().trim();
@@ -483,10 +486,14 @@ public class MemoryController {
     }
 
     private static boolean isActive(MemoryItemStore.ItemRow r) {
+        var temporal=cc.ginpika.minis.ai.memory.MemoryTime.decode(r.temporalJson());
+        boolean state=temporal!=null && "state".equals(temporal.kind());
         return MemoryVocabulary.STATUS_ACTIVE.equals(r.status())
                 && r.supersededBy() == null
                 && (r.validUntil() == null || r.validUntil() > System.currentTimeMillis())
-                && (r.expiresSoft() == null || r.expiresSoft() > System.currentTimeMillis());
+                && (r.expiresSoft() == null || r.expiresSoft() > System.currentTimeMillis())
+                && (!state || (temporal.start()==null || temporal.start()<=System.currentTimeMillis())
+                    && (r.invalidAt()==null || r.invalidAt()>System.currentTimeMillis()));
     }
 
     private static boolean eq(String filter, String value) {
@@ -547,14 +554,14 @@ public class MemoryController {
                            String retention, String identity, Long version, boolean pinned,
                            boolean active, Long validUntil, Long supersededBy, long createdAt,
                            long updatedAt, String producerAgent, String sourceRefs, Long expiresSoft,
-                           Long promotedFrom, Long learnedAt, Long invalidAt) {
+                           Long promotedFrom, Long learnedAt, Long invalidAt, String temporalJson) {
         static ItemView of(MemoryItemStore.ItemRow r) {
             return new ItemView(r.id(), r.agentId(), r.owner(), r.domain(), r.layer(), r.projectId(),
                     r.sessionId(), r.taskId(), r.scope(), MemoryItemRecall.scopeLabel(r.scope()),
                     r.title(), r.body(), r.confidence(), r.source(), r.sourceKind(), r.evidenceLevel(),
                     r.status(), r.retention(), r.identity(), r.version(), r.pinned(), isActive(r),
                     r.validUntil(), r.supersededBy(), r.createdAt(), r.updatedAt(), r.producerAgent(),
-                    r.sourceRefs(), r.expiresSoft(), r.promotedFrom(), r.learnedAt(), r.invalidAt());
+                    r.sourceRefs(), r.expiresSoft(), r.promotedFrom(), r.learnedAt(), r.invalidAt(), r.temporalJson());
         }
     }
 

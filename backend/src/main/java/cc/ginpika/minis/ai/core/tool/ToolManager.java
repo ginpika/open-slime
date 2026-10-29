@@ -32,11 +32,16 @@ public class ToolManager {
         return tools;
     }
 
+    /** 当前已启用且属于指定运行场景的工具；主 Agent 与能力页共用此清单。 */
+    public List<AiTool> availableTools(ToolSurface surface) {
+        return tools.stream().filter(t -> t.available() && t.surfaces().contains(surface)).toList();
+    }
+
     /** 某工具面的全部工具定义（无则返回空数组） */
     public ArrayNode toolsOf(ToolSurface surface) {
         ArrayNode out = om.createArrayNode();
         for (AiTool tool : tools) {
-            if (tool.surfaces().contains(surface)) {
+            if (tool.available() && tool.surfaces().contains(surface)) {
                 out.add(tool.schema(om));
             }
         }
@@ -55,7 +60,7 @@ public class ToolManager {
             return out;
         }
         for (AiTool tool : tools) {
-            if (tool.surfaces().contains(surface) && domains.contains(tool.domain())) {
+            if (tool.available() && tool.surfaces().contains(surface) && domains.contains(tool.domain())) {
                 out.add(tool.schema(om));
             }
         }
@@ -81,7 +86,7 @@ public class ToolManager {
             return out;
         }
         for (AiTool tool : tools) {
-            if (tool.agentsMayCall() && tool.surfaces().contains(surface)
+            if (tool.available() && tool.agentsMayCall() && tool.surfaces().contains(surface)
                     && names.contains(tool.name())) {
                 out.add(tool.schema(om));
             }
@@ -104,7 +109,7 @@ public class ToolManager {
             return out;
         }
         for (AiTool tool : tools) {
-            if (tool.surfaces().contains(surface) && names.contains(tool.name())) {
+            if (tool.available() && tool.surfaces().contains(surface) && names.contains(tool.name())) {
                 out.add(tool.schema(om));
             }
         }
@@ -113,8 +118,8 @@ public class ToolManager {
 
     /** 可被人显式授予的工具（某工具面上、可由 agent 调用的那些）：成员页「额外工具」的候选清单 */
     public List<AiTool> grantableTools(ToolSurface surface) {
-        return tools.stream()
-                .filter(t -> t.agentsMayCall() && t.surfaces().contains(surface))
+        return availableTools(surface).stream()
+                .filter(AiTool::agentsMayCall)
                 .toList();
     }
 
@@ -132,7 +137,7 @@ public class ToolManager {
     public ArrayNode readOnlyToolsOf(ToolSurface surface) {
         ArrayNode out = om.createArrayNode();
         for (AiTool tool : tools) {
-            if (tool.surfaces().contains(surface) && tool.risk() == ToolRisk.READ && tool.agentsMayCall()) {
+            if (tool.available() && tool.surfaces().contains(surface) && tool.risk() == ToolRisk.READ && tool.agentsMayCall()) {
                 out.add(tool.schema(om));
             }
         }

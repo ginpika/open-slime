@@ -3,6 +3,9 @@ import { loginUrlOf, logout, me, type SsoUser } from './api/client'
 import { isDesktopShell, backToLauncher, openDesktopHome } from './api/desktop'
 import Home from './pages/Home'
 import Knowledge from './pages/Knowledge'
+import Economy from './pages/Economy'
+import EconomyResearch from './pages/economy/EconomyResearch'
+import EconomyDatabase from './pages/economy/EconomyDatabase'
 import Search from './pages/Search'
 import Graph from './pages/Graph'
 import Articles from './pages/Articles'
@@ -14,12 +17,11 @@ import MultiAgent from './pages/MultiAgent'
 import MemoryPanel from './pages/MemoryPanel'
 import AgentDetail from './pages/AgentDetail'
 import Roundtable from './pages/Roundtable'
-import Workflow from './pages/Workflow'
 import Workspace from './pages/Workspace'
 import Coding from './pages/Coding'
 import Settings from './pages/Settings'
 import Stats from './pages/Stats'
-import About from './pages/About'
+import Todos from './pages/Todos'
 import { ThemePanel } from './theme/registry'
 import { useThemeState } from './theme/store'
 import { PageSlot } from './theme/overrides'
@@ -206,7 +208,7 @@ function UserMenu({
 }
 
 /** 页面自管滚动、外壳不再套容器的路由 */
-const FULL_BLEED = ['/graph', '/roundtable', '/workflow', '/coding']
+const FULL_BLEED = ['/graph', '/collaboration', '/roundtable', '/workflow', '/coding', '/economy/research', '/economy/database']
 
 function App() {
   const route = useHashRoute()
@@ -263,6 +265,9 @@ function App() {
         </div>
       )}
       {route === '/knowledge' && <div data-page="knowledge"><Knowledge /></div>}
+      {route === '/economy' && <div data-page="economy"><Economy /></div>}
+      {route === '/economy/research' && <EconomyResearch />}
+      {route === '/economy/database' && <EconomyDatabase />}
       {route === '/search' && (
         <div data-page="search" className="h-full">
           <PageSlot route="search" props={{}} fallback={<Search />} />
@@ -329,14 +334,9 @@ function App() {
           />
         </div>
       )}
-      {route === '/roundtable' && (
-        <div data-page="roundtable" className="h-full">
-          <PageSlot route="roundtable" props={{}} fallback={<Roundtable />} />
-        </div>
-      )}
-      {route === '/workflow' && (
-        <div data-page="workflow" className="h-full">
-          <PageSlot route="workflow" props={{}} fallback={<Workflow />} />
+      {['/collaboration', '/roundtable', '/workflow'].includes(route) && (
+        <div data-page="collaboration" className="h-full">
+          <PageSlot route="collaboration" props={{}} fallback={<Roundtable initialView={route === '/workflow' ? 'graph' : 'discussion'} />} />
         </div>
       )}
       {route === '/settings' && (
@@ -350,14 +350,10 @@ function App() {
         </div>
       )}
       {route === '/coding' && <div data-page="coding" className="h-full min-h-0"><Coding /></div>}
+      {route === '/todos' && <div data-page="todos"><PageSlot route="todos" props={{}} fallback={<Todos />} /></div>}
       {route === '/stats' && (
         <div data-page="stats">
           <PageSlot route="stats" props={{}} fallback={<Stats />} />
-        </div>
-      )}
-      {route === '/about' && (
-        <div data-page="about">
-          <PageSlot route="about" props={{}} fallback={<About />} />
         </div>
       )}
       {!isKnownRoute(route) && <p className="pt-24 text-base text-faint">404 —— 没有这个页面。</p>}

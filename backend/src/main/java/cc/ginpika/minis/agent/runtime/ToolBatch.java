@@ -61,9 +61,13 @@ public final class ToolBatch {
             for (JsonNode call : calls.subList(from, to)) {
                 cc.ginpika.minis.ai.core.MemoryExec scope = cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
                 String agent = cc.ginpika.minis.ai.core.AgentScope.get();
-                futures.add(CompletableFuture.supplyAsync(() ->
-                        cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope,
-                                () -> cc.ginpika.minis.ai.core.AgentScope.run(agent, () -> safeRun(one, call))), POOL));
+                String user=cc.ginpika.minis.ai.core.UserScope.get();
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    try(var actor=cc.ginpika.minis.ai.core.UserScope.bind(user)) {
+                        return cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope,
+                                () -> cc.ginpika.minis.ai.core.AgentScope.run(agent, () -> safeRun(one, call)));
+                    }
+                }, POOL));
             }
             for (CompletableFuture<String> future : futures) {
                 results.add(future.join());

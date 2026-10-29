@@ -42,11 +42,12 @@ public class MemorySnapshotStore {
             return;
         }
         jdbc.update("INSERT OR REPLACE INTO memory_snapshot(turn_id, session_id, agent_id, "
-                        + "project_id, watermark, item_ids, tokens, built_at, content_json) VALUES(?,?,?,?,?,?,?,?,?)",
+                        + "project_id, watermark, item_ids, tokens, built_at, content_json) SELECT ?,?,?,?,?,?,?,?,? "
+                        + "WHERE ?>COALESCE((SELECT last_event_id FROM memory_cursor WHERE session_id='reset:at'),0)",
                 snapshot.turnId(), nz(snapshot.exec() == null ? null : snapshot.exec().sessionId()),
                 nz(snapshot.exec() == null ? null : snapshot.exec().agentId()),
                 nz(snapshot.exec() == null ? null : snapshot.exec().projectId()),
-                snapshot.watermark(), join(snapshot.itemIds()), tokens, snapshot.builtAt(), serialize(snapshot));
+                snapshot.watermark(), join(snapshot.itemIds()), tokens, snapshot.builtAt(), serialize(snapshot),snapshot.builtAt());
     }
 
     public Optional<SnapshotRow> find(String turnId) {

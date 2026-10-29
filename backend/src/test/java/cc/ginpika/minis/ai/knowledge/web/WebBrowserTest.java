@@ -50,7 +50,7 @@ class WebBrowserTest {
                 <p>Another paragraph presents a contrasting view and a limitation. The observation is a claim made by its author, not an independently established universal fact.</p>
                 <pre>const answer = 42;</pre><table><tr><th>Value</th><th>Unit</th></tr><tr><td>42</td><td>items</td></tr></table>
                 <p>A final paragraph provides sufficient article content for the reader extractor to identify the primary text and retain its argument.</p></article>
-                <input aria-label="Search" name="q"><a href="/next">Next article</a><div id="environment"></div>
+                <input aria-label="Search" name="q" oninput="document.querySelector('#query-state').textContent='Query:'+this.value"><div id="query-state"></div><a href="/next">Next article</a><div id="environment"></div>
                 <div id="nested"><div style="width:1200px;height:1500px">Nested scroll area</div></div><div id="scroll-state">Scroll:0,0,0</div>
                 <script>document.querySelector('#environment').textContent='Environment: '+navigator.language+' '+Intl.DateTimeFormat().resolvedOptions().timeZone+' '+navigator.webdriver+' '+navigator.userAgent+' WebSocket:'+typeof WebSocket;</script></body></html>
                 """;
@@ -85,10 +85,21 @@ class WebBrowserTest {
             assertEquals(requests,mediaRequests.get()); // unselected media is never archived
             assertFalse(plain.sourceHtml().contains("data:"));
             assertNotEquals(plain.contentHash(),selected.contentHash());
+            var resumed=browser.command("owner-a","chat-a",command(null,"read",null,null,null),false);
+            String search=resumed.elements().stream().filter(e->e.tag().equals("input")).findFirst().orElseThrow().ref();
+            browser.command("owner-a","chat-a",command(null,"fill",null,search,"retained across turns"),false);
             browser.command("owner-a","chat-a",new WebDtos.Command(id,"scroll",null,null,null,0,1150,80,100.0,240.0),true);
             assertTrue(browser.command("owner-a","chat-a",command(id,"read",null,null,null),false).text().contains("Scroll:0,240,100"));
             browser.command("owner-a","chat-a",new WebDtos.Command(id,"scroll",null,null,null,0,600,400,0.0,300.0),true);
             assertTrue(browser.command("owner-a","chat-a",command(id,"read",null,null,null),false).text().contains("Scroll:300,240,100"));
+            // Repeated opens from later turns must retain the actual DOM, input value and both scroll areas.
+            for(int turn=0;turn<5;turn++) {
+                var continued=browser.command("owner-a","chat-a",command(null,"open",base+"/",null,null),false);
+                assertEquals(id,continued.browserId());
+                assertTrue(continued.text().contains("Query:retained across turns"));
+                assertTrue(continued.text().contains("Scroll:300,240,100"));
+                assertEquals(1,browser.tabs("owner-a","chat-a").size());
+            }
             browser.command("owner-a","chat-a",command(id,"scroll",null,null,"up"),true);
             assertTrue(browser.command("owner-a","chat-a",command(id,"read",null,null,null),false).text().contains("Scroll:0,240,100"));
             assertThrows(IllegalArgumentException.class,()->browser.command("owner-a","chat-a",new WebDtos.Command(id,"scroll",null,null,null,0,600,400,Double.NaN,0.0),false));

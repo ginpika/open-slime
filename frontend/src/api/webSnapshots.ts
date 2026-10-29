@@ -7,7 +7,7 @@ export type BrowserView = {
   totalChars: number; offset: number; elements: WebElement[]; blocked: boolean; screenshot: string | null
 }
 export type BrowserCommand = {
-  browserId?: string; action: 'open' | 'read' | 'click' | 'fill' | 'press' | 'scroll' | 'back' | 'close'
+  browserId?: string; action: 'open' | 'read' | 'click' | 'fill' | 'press' | 'scroll' | 'back' | 'close' | 'type' | 'drag' | 'double_click'
   url?: string; ref?: string; text?: string; offset?: number
   x?: number; y?: number; deltaX?: number; deltaY?: number
 }
@@ -81,5 +81,6 @@ export function webError(error: unknown): string {
 }
 
 export const INDEX_LABEL: Record<string, string> = {
+  reset: '知识索引已重置',
   pending: '待索引', indexing: '正在生成向量', 'keyword-only': '已进入关键词检索', ready: '向量已就绪', failed: '向量生成失败，可重试', disabled: '已停用',
 }

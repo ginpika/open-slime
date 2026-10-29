@@ -64,6 +64,12 @@ public class ChatMessageStore {
                 ChatMessageStore::map, sessionId);
     }
 
+    public long observedAt(String sessionId, long id) {
+        var times = jdbc.query("SELECT created_at FROM chat_message WHERE session_id=? AND id=? AND role='user'",
+                (rs, n) -> rs.getLong(1), sessionId, id);
+        return times.isEmpty() ? 0L : times.getFirst();
+    }
+
     /**
      * 写入某条消息的「执行留痕」（chat_message.context 列）：首页会话用它存该 Turn 每一轮
      * LLM 调用的请求体 + 响应体（JSON 数组）。圆桌那条流另有其义（发言当时的请求体），

@@ -134,6 +134,15 @@ export function clearRunError(sessionId: string | null | undefined): void {
   emit()
 }
 
+/** A committed rewind invalidates optimistic text and old topic snapshots as well as stored messages. */
+export function clearRoundtableRun(sessionId: string): void {
+  const controller = aborters.get(sessionId)
+  aborters.delete(sessionId)
+  runs.delete(sessionId)
+  controller?.abort()
+  emit()
+}
+
 /* ---------------- 攒段：与落库后的形状对齐 ---------------- */
 
 /** 把一段正文增量并进分段数组：没有段就开一段，否则续在最后一段上 */
@@ -181,6 +190,7 @@ export type RtStartArgs = {
   modelId?: string
   /** 选人策略标识 */
   speakerStrategy?: string
+  redirectWork?: boolean
   /** 草稿态下后端建好会话后回传 id：页面据此把选中的会话切过去 */
   onSession?: (sessionId: string) => void
 }
@@ -188,8 +198,8 @@ export type RtStartArgs = {
 /**
  * 让圆桌说一句：状态全程写进本仓，故调用方（圆桌页）卸载也不影响这一轮跑完与后续续看。
  *
- * <p>同一张桌子已有发言在跑时<b>不再拒绝</b>——那是「用户插话」：放弃旧流的读取（后端收到新消息
- * 会打断正在说话的那位），再投递新的一轮。随时加入讨论、补充信息是这套设计的核心目标。
+ * <p>已有发言时也可发送：切到新消息的读取，旧回复仍由后端保存。
+ * 已建立计划后的普通消息不停止工作；只有 redirectWork 明确请求重新规划。
  */
 export function startRoundtable(o: RtStartArgs): void {
   const startKey = runKey(o.sessionId)
@@ -213,12 +223,14 @@ export function startRoundtable(o: RtStartArgs): void {
   /** 当前 key：草稿那一轮在后端建好会话后，整条搬到真实的会话 id 上 */
   let key = startKey
   const put = (fn: (r: RtRun) => RtRun) => {
+    if (aborters.get(key) !== ac) return
     const cur = runs.get(key)
     if (!cur) return
     runs.set(key, fn(cur))
     emit()
   }
   const adopt = (id: string) => {
+    if (aborters.get(key) !== ac) return
     if (key === id) return
     const cur = runs.get(key)
     aborters.delete(key)
@@ -278,6 +290,7 @@ export function startRoundtable(o: RtStartArgs): void {
           onAction: () => put((r) => ({ ...r, revision: r.revision + 1 })),
         },
         ac.signal,
+        o.redirectWork,
       )
       put((r) => ({ ...r, running: false, live: null, revision: r.revision + 1 }))
     } catch (e) {
@@ -290,8 +303,10 @@ export function startRoundtable(o: RtStartArgs): void {
         error: aborted ? null : e instanceof Error ? e.message : String(e),
       }))
     } finally {
-      aborters.delete(key)
-      emitSettled(key)
+      if (aborters.get(key) === ac) {
+        aborters.delete(key)
+        emitSettled(key)
+      }
     }
   })()
 }

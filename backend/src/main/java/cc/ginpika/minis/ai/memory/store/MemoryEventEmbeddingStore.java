@@ -28,10 +28,10 @@ public class MemoryEventEmbeddingStore {
     public void save(long eventId, String model, float[] vec) {
         jdbc.update(
                 "INSERT INTO memory_event_embedding(event_id, model, dim, vec, updated_at) "
-                        + "VALUES(?,?,?,?,?) "
+                        + "SELECT id,?,?,?,? FROM memory_event WHERE id=? "
                         + "ON CONFLICT(event_id) DO UPDATE SET model=excluded.model, "
                         + "dim=excluded.dim, vec=excluded.vec, updated_at=excluded.updated_at",
-                eventId, model, vec.length, MemoryVecMath.encode(vec), System.currentTimeMillis());
+                model, vec.length, MemoryVecMath.encode(vec), System.currentTimeMillis(),eventId);
     }
 
     /** 指定事件集里当前模型的向量（已解码；缺向量/模型不符的事件不在结果里） */

@@ -15,7 +15,7 @@ public class ModelLoop {
     private final OpenAiChatClient client;
     public ModelLoop(OpenAiChatClient client) { this.client = client; }
 
-    public enum End { ANSWERED, EMPTY_CONTENT, ROUNDS_EXHAUSTED }
+    public enum End { ANSWERED, EMPTY_CONTENT }
     public record Result(String content, String rawResponse, End end, int round, JsonNode message) {
         public Result(String content,String rawResponse,End end,int round){this(content,rawResponse,end,round,null);}
     }
@@ -33,6 +33,8 @@ public class ModelLoop {
         default void progress() {}
         default void fallback(int round, String text, String raw) {}
         default void beforeTools() {}
+        /** Caller may finish the turn after a complete tool exchange, e.g. to wait for human input. */
+        default String answerAfterTools(int round, List<JsonNode> calls, List<String> results) { return null; }
         default boolean continueAfterAnswer(int round, String content) { return false; }
         default boolean continueAfterAnswer(int round, JsonNode message, String content) { return continueAfterAnswer(round,content); }
         /** Retries apply only to the current model request, before any tools are dispatched. */
@@ -40,24 +42,19 @@ public class ModelLoop {
         default long retryDelayMillis(int retry){return 500L << Math.min(4,retry-1);}
         default void retrying(int round,int retry,int maximum,long delayMillis,RuntimeException error){}
     }
-    public record Spec(ModelTarget target, String source, ObjectNode body, int maxRounds,
-                       boolean finalAnswerOnly, Dispatch dispatch, Hooks hooks,
+    public record Spec(ModelTarget target, String source, ObjectNode body,
+                       boolean allowReasoningAnswer, Dispatch dispatch, Hooks hooks,
                        OpenAiChatClient.CallControl control) {}
 
     public Result run(Spec spec) {
         ArrayNode messages = (ArrayNode) spec.body().get("messages");
         Hooks hooks = spec.hooks() == null ? new Hooks() {} : spec.hooks();
         String lastRaw = null;
-        int limit = Math.max(0, spec.maxRounds());
-        for (int round = 0; round <= limit; round++) {
-            // Coding stops at its budget; conversational callers retain their final answer round.
-            if (!spec.finalAnswerOnly() && round == limit) {
-                return new Result(null, lastRaw, End.ROUNDS_EXHAUSTED, round);
-            }
+        for (int round = 0; ; round++) {
+            checkCancelled(spec);
             hooks.beforeRound(round, spec.body());
-            boolean tools = !spec.finalAnswerOnly() || round < limit;
             ObjectNode body = spec.body();
-            if (!tools) { body = body.deepCopy(); body.remove("tools"); }
+            boolean tools = body.path("tools").isArray() && !body.path("tools").isEmpty();
             OpenAiChatClient.RawResult raw;
             try {
                 raw = request(spec,body,hooks,round);
@@ -75,7 +72,7 @@ public class ModelLoop {
             if (!requested.isArray() || requested.isEmpty()) {
                 String content = message.path("content").asText("");
                 if (content.isBlank()) {
-                    if (reasoning.isBlank() || !spec.finalAnswerOnly()) { return new Result(null, lastRaw, End.EMPTY_CONTENT, round); }
+                    if (reasoning.isBlank() || !spec.allowReasoningAnswer()) { return new Result(null, lastRaw, End.EMPTY_CONTENT, round); }
                     hooks.fallback(round, reasoning, lastRaw);
                     content = reasoning;
                 }
@@ -83,6 +80,7 @@ public class ModelLoop {
                 if (hooks.continueAfterAnswer(round, answer, content)) { continue; }
                 return new Result(content, lastRaw, End.ANSWERED, round,answer);
             }
+            checkCancelled(spec);
             hooks.beforeTools();
             ObjectNode assistant = assistant(message);
             messages.add(assistant);
@@ -99,8 +97,9 @@ public class ModelLoop {
                 hooks.message(result);
             }
             hooks.progress();
+            String answer = hooks.answerAfterTools(round, calls, results);
+            if (answer != null) { return new Result(answer, lastRaw, End.ANSWERED, round); }
         }
-        return new Result(null, lastRaw, End.ROUNDS_EXHAUSTED, limit);
     }
 
     /** Preserve provider fields; an empty field represents absent historical reasoning, never invented text. */

@@ -21,7 +21,8 @@ class RoundtableTaskToolsTest {
     private final RoundtableTodoStore board = mock(RoundtableTodoStore.class);
     private final AgentDirectory directory = mock(AgentDirectory.class);
     private final RuntimeEventBus events = mock(RuntimeEventBus.class);
-    private final RoundtableTaskTools tools = new RoundtableTaskTools(om, board, directory, events);
+    private final RoundtableTaskTools tools = new RoundtableTaskTools(om, board, directory, events,
+            mock(CollaborationStore.class), mock(CollaborationIssueActions.class), mock(CollaborationPlan.class), mock(RoundtableMessageStore.class),mock(CollaborationScopeGuard.class),mock(cc.ginpika.minis.coding.CodingFacade.class),mock(CollaborationQuality.class),mock(org.springframework.transaction.support.TransactionTemplate.class),mock(cc.ginpika.minis.project.ProjectKnowledgeStore.class));
     private final RoundtableTodoStore.TodoRow todo = new RoundtableTodoStore.TodoRow(
             "todo", "session", "topic", "peer", "work", null, null, 0, "doing", "peer",
             null, null, null, 1, 1L, 1L);
@@ -33,6 +34,7 @@ class RoundtableTaskToolsTest {
     }
 
     @Test void userDecisionPersistsTargetAndEmitsDiscussionEvent() {
+        when(board.transition(anyString(), anyString(), anyString(), anyString(), any(), any())).thenReturn(true);
         String reply = tools.runTool(RequestDiscussionTool.NAME,
                 call("{\"reason\":\"need a decision\",\"with\":\"用户\"}"),
                 "session", "peer", "topic", todo);
@@ -41,6 +43,8 @@ class RoundtableTaskToolsTest {
         var event = ArgumentCaptor.forClass(RuntimeEvent.class);
         verify(events).publish(event.capture());
         assertEquals(RuntimeEventType.DISCUSSION_REQUESTED, event.getValue().type());
+        assertEquals("user", event.getValue().target());
+        assertEquals("todo", event.getValue().taskId());
     }
 
     @Test void unresolvedTargetDoesNotWritePartialBlockedState() {

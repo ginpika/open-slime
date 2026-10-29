@@ -102,6 +102,7 @@ public final class GraphExplorer {
         for (GraphStore.Entity ent : store.entitiesByIds(topIds)) {
             top.add(new Scored(ent, scores.getOrDefault(ent.id(), 0d)));
         }
+        top.sort(java.util.Comparator.comparingDouble(Scored::score).reversed());
 
         /* 高分边：两端均在保留集合内，按两端得分之和降序 */
         List<GraphStore.Edge> edges = subEdges.stream()

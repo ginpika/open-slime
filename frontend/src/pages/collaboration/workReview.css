@@ -1,0 +1,143 @@
+/* 阅读窗口拥有一个稳定的内容区；仅当前文档滚动，标题、页签和操作始终可见。 */
+.work-review-window { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.work-review-window > .collab-detail { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; height: min(74dvh, 820px); }
+.work-review-window .collab-detail-actions { flex-shrink: 0; padding: 12px 24px; gap: 12px; }
+.work-review { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; color: var(--c-fg); }
+.work-review button, .work-review input, .work-review select { font: inherit; }
+.work-review button, .work-review a, .work-review summary { -webkit-tap-highlight-color: transparent; }
+.work-review button:focus-visible, .work-review a:focus-visible, .work-review summary:focus-visible, .work-review input:focus-visible, .work-review select:focus-visible, .work-review [tabindex]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+.work-review-header { flex-shrink: 0; padding: 20px 28px 18px; }
+.work-review-eyebrow { display: flex; align-items: center; gap: 10px; font-size: .8125rem; line-height: 1.4; color: var(--c-muted); }
+.work-review-eyebrow span { font-variant-numeric: tabular-nums; }
+.work-review-header h2 { margin: 8px 0 12px; font-size: 1.375rem; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
+.work-review-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: .8125rem; line-height: 1.5; color: var(--c-muted); }
+.work-review-meta > span { display: inline-flex; align-items: center; gap: 6px; }
+.work-review svg { flex-shrink: 0; width: 16px; height: 16px; }
+.work-review-pill { display: inline-flex; align-items: center; flex-shrink: 0; width: fit-content; padding: 3px 9px; border-radius: 5px; background: color-mix(in srgb, var(--c-fg) 7%, transparent); color: var(--c-fg-2); font-size: .8125rem; line-height: 1.4; font-weight: 500; }
+.work-review-pill:is([data-state="blocked"], [data-state="failed"], [data-state="incomplete"]) { background: color-mix(in srgb, var(--c-fg) 9%, transparent); color: var(--c-fg); border-left: 3px solid var(--c-accent); }
+.work-review-pill:is([data-state="doing"], [data-state="running"], [data-state="checking"]) { border-left: 3px solid var(--c-accent); color: var(--c-fg); }
+.work-review-tabs { display: flex; flex-shrink: 0; gap: 24px; padding: 0 28px; border-bottom: 1px solid var(--c-line); overflow-x: auto; }
+.work-review-tabs > button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; min-height: 46px; padding: 9px 0; border-bottom: 2px solid transparent; color: var(--c-muted); font-size: .9375rem; line-height: 1.5; white-space: nowrap; }
+.work-review-tabs > button[aria-selected="true"] { border-color: var(--c-accent); color: var(--c-fg); font-weight: 600; }
+.work-review-count { font-variant-numeric: tabular-nums; font-size: .8125rem; line-height: 1.4; }
+.work-review-panel { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+.work-review-panel-runs { display: flex; overflow: hidden; }
+.work-review-document { max-width: 860px; margin: 0 auto; padding: 24px 32px 40px; }
+.work-review-section + .work-review-section { margin-top: 28px; padding-top: 26px; border-top: 1px solid var(--c-line); }
+.work-review-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.work-review-section-head h3 { font-size: 1.125rem; line-height: 1.5; font-weight: 600; }
+.work-review-warning { padding: 16px 20px; border-left: 3px solid var(--c-accent); background: color-mix(in srgb, var(--c-fg) 3%, transparent); }
+.work-review-section.work-review-warning + .work-review-section { border-top: 0; }
+.work-review-text-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+.work-review-text-head h3 { font-size: 1.125rem; line-height: 1.5; font-weight: 600; }
+.work-review-text-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 12px; margin-left: auto; }
+.work-review-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 4px 6px; border-radius: 4px; color: var(--c-muted); font-size: .875rem !important; line-height: 1.5; }
+.work-review-button:hover { color: var(--c-fg); background: color-mix(in srgb, var(--c-fg) 5%, transparent); }
+.work-review button:disabled { cursor: default; opacity: .5; }
+.work-review-copy { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.work-review-copy [role="status"] { font-size: .8125rem; color: var(--c-fg-2); }
+.work-review-prose, .work-review-raw { font-size: 1rem; line-height: 1.625; overflow-wrap: anywhere; color: var(--c-fg-2); }
+.work-review-prose > :is(p, ul, ol, blockquote) { margin-top: 12px; margin-bottom: 12px; }
+.work-review-prose > :is(h1, h2, h3) { margin: 24px 0 12px; color: var(--c-fg); font-size: 1.125rem; line-height: 1.5; }
+.work-review-prose > :first-child { margin-top: 0; }
+.work-review-prose > :last-child { margin-bottom: 0; }
+.work-review-prose p { white-space: pre-wrap; }
+.work-review-prose pre { max-width: 100%; font-size: .875rem; white-space: pre; }
+.work-review-prose table { display: block; max-width: 100%; overflow-x: auto; }
+.work-review-prose img { max-width: 100%; }
+.work-review-raw { white-space: pre-wrap; font-family: inherit; }
+.work-review-empty { padding: 12px 0; color: var(--c-muted); font-size: 1rem; line-height: 1.625; overflow-wrap: anywhere; }
+.work-review-empty button, .work-review-notice button { margin-left: 8px; text-decoration: underline; }
+.work-review-awaiting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--c-muted); font-size: 1rem; line-height: 1.625; padding: 12px 0; }
+.work-review-awaiting > .work-review-button { margin-left: auto; }
+.work-review-evidence { margin-top: 14px; padding-left: 14px; border-left: 2px solid var(--c-line); }
+.work-review-evidence h4 { margin-bottom: 6px; font-size: .875rem; line-height: 1.5; color: var(--c-muted); }
+.work-review-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; font-size: .9375rem; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; }
+.work-review-criteria { margin: 20px 0; }
+.work-review-criteria li { display: flex; align-items: baseline; gap: 14px; padding: 12px 0; border-top: 1px solid var(--c-line); }
+.work-review-criteria li > span { flex-shrink: 0; font-size: .8125rem; color: var(--c-muted); font-family: monospace; }
+.work-review-findings > li { padding: 20px 0; }
+.work-review-findings > li:first-child { padding-top: 0; }
+.work-review-findings > li + li { border-top: 1px solid var(--c-line); }
+.work-review-finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .8125rem; color: var(--c-muted); }
+.work-review-finding-head code { overflow-wrap: anywhere; }
+.work-review-resolution { margin-top: 14px; }
+.work-review-resolution summary { cursor: pointer; font-size: .9375rem; color: var(--c-fg); padding: 6px 0; }
+.work-review-attention { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; padding: 12px 0; margin: 20px 0; text-align: left; font-size: 1rem !important; line-height: 1.5; }
+.work-review-attention span { margin-left: auto; font-size: .875rem; text-decoration: underline; }
+.work-review-dependencies li > button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 0; border-bottom: 1px solid var(--c-line); text-align: left; font-size: 1rem; line-height: 1.5; }
+.work-review-dependencies li > button > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.work-review-notice { flex-shrink: 0; margin: 0; padding: 10px 16px; font-size: .875rem; line-height: 1.5; color: var(--c-fg); background: color-mix(in srgb, var(--c-fg) 5%, transparent); overflow-wrap: anywhere; }
+.work-runs { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.work-runs-toolbar { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 12px 20px; border-bottom: 1px solid var(--c-line); }
+.work-runs-search { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--c-line); border-radius: 5px; }
+.work-runs-search input { min-width: 0; width: 100%; background: transparent; font-size: .875rem; line-height: 1.5; }
+.work-runs-toolbar select, .work-runs-mobile-select select { min-width: 0; max-width: 100%; padding: 7px; border: 1px solid var(--c-line); border-radius: 5px; font-size: .875rem; color: var(--c-fg); background: var(--c-bg); }
+.work-runs-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.work-runs-list { width: 280px; flex-shrink: 0; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--c-line); background: color-mix(in srgb, var(--c-fg) 2%, transparent); }
+.work-runs-list-heading { display: flex; justify-content: space-between; gap: 10px; padding: 14px 16px 8px; font-size: .8125rem; color: var(--c-muted); }
+.work-run-item { display: block; position: relative; width: 100%; padding: 16px; border-bottom: 1px solid var(--c-line); text-align: left; }
+.work-run-item[aria-current="true"] { background: color-mix(in srgb, var(--c-fg) 5%, transparent); box-shadow: inset 3px 0 var(--c-accent); }
+.work-run-item:hover { background: color-mix(in srgb, var(--c-fg) 4%, transparent); }
+.work-run-item-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .9375rem; line-height: 1.5; }
+.work-run-item-top strong { font-weight: 500; }
+.work-run-item-meta { display: block; margin-top: 8px; font-size: .8125rem; line-height: 1.5; color: var(--c-muted); font-variant-numeric: tabular-nums; }
+.work-run-item-summary { display: block; margin-top: 8px; font-size: .875rem; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--c-fg-2); }
+.work-runs-list > .work-review-empty { padding: 16px; }
+.work-runs-more { display: block; width: 100%; padding: 16px; font-size: .875rem !important; color: var(--c-fg-2); }
+.work-run-reader { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; }
+.work-run-reader-head { padding: 18px 24px 12px; flex-shrink: 0; }
+.work-run-reader-head h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 1.125rem; line-height: 1.5; font-weight: 600; }
+.work-run-reader-head p { margin-top: 8px; color: var(--c-muted); font-size: .8125rem; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.work-run-reader > .work-review-tabs { padding: 0 24px; gap: 20px; }
+.work-run-reader > .work-review-tabs > button { font-size: .875rem; min-height: 42px; }
+.work-run-document { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px; }
+.work-run-document > .work-review-section { max-width: 850px; margin-left: auto; margin-right: auto; }
+.work-run-placeholder { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; }
+.work-run-placeholder > svg { width: 28px; height: 28px; }
+.work-tool-list > li { border-bottom: 1px solid var(--c-line); }
+.work-tool-list summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px 0; cursor: pointer; list-style: none; font-size: .9375rem; line-height: 1.5; }
+.work-tool-list summary::-webkit-details-marker { display: none; }
+.work-tool-list summary strong { font-weight: 500; overflow-wrap: anywhere; }
+.work-tool-number { color: var(--c-muted); font-variant-numeric: tabular-nums; }
+.work-tool-state { margin-left: auto; color: var(--c-muted); font-size: .8125rem; }
+.work-tool-list details[open] > summary > svg { transform: rotate(180deg); }
+.work-tool-list .work-review-section { margin: 8px 0 20px; }
+.work-tool-list .work-review-section-head h3 { font-size: 1rem; }
+.work-review-payload { min-width: 0; }
+.work-review-payload > .work-review-copy { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.work-review-payload pre { max-height: 420px; overflow: auto; padding: 16px; border: 1px solid var(--c-line); border-radius: 5px; background: color-mix(in srgb, var(--c-fg) 3%, transparent); color: var(--c-fg-2); font-size: .875rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
+.work-runs-mobile-select { display: none; }
+@media (max-width: 700px) {
+  /* 窄屏统一滚动正文，文字放大时工具栏也可自然滚出，不挤掉阅读区。 */
+  .work-review { display: block; overflow-y: auto; overscroll-behavior: contain; }
+  .work-review-panel, .work-review-panel-runs, .work-run-document { display: block; overflow: visible; }
+  .work-review-window > .collab-detail { height: 78dvh; }
+  .work-review-header { padding: 14px 16px; }
+  .work-review-header h2 { margin: 6px 0 10px; font-size: 1.25rem; }
+  .work-review-meta { gap: 8px; }
+  .work-review-meta > span:last-child:not(:nth-child(2)) { display: none; }
+  .work-review-tabs { padding: 0 16px; gap: 20px; }
+  .work-review-tabs > button { min-height: 44px; font-size: .9375rem; }
+  .work-review-document { padding: 20px 16px 28px; }
+  .work-review-window .collab-detail-actions { padding: 10px 16px; flex-wrap: wrap; }
+  .work-review-warning { padding: 14px; }
+  .work-runs-toolbar { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  .work-runs-search { flex-basis: 100%; }
+  .work-runs-search input, .work-runs-toolbar select { font-size: 1rem; }
+  .work-runs-toolbar select { flex: 1; }
+  .work-runs-layout { flex-direction: column; }
+  .work-runs-list { display: none; }
+  .work-runs-mobile-select { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; flex-shrink: 0; padding: 10px 12px; border-bottom: 1px solid var(--c-line); }
+  .work-runs-mobile-select select { flex: 1; width: 100%; font-size: 1rem; }
+  .work-run-reader-head { padding: 12px 16px 8px; }
+  .work-run-reader > .work-review-tabs { padding: 0 16px; gap: 16px; }
+  .work-run-document { padding: 20px 16px; }
+  .work-review-button { font-size: .9375rem !important; }
+  .work-review-section-head h3 { font-size: 1.125rem; }
+}
+@media (max-height: 650px) {
+  .work-review-header { padding-top: 10px; padding-bottom: 10px; }
+  .work-review-header h2 { margin-top: 2px; margin-bottom: 6px; }
+  .work-review-eyebrow { display: none; }
+}

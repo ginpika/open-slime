@@ -14,11 +14,11 @@ const require = createRequire(runtime ? path.join(runtime, 'package.json') : pat
 const { chromium } = require('playwright')
 const html = await fs.readFile(path.join(dist, 'index.html'), 'utf8')
 const project = { id: 'p1', name: 'personal-assistant-with-a-long-project-name', workspaceId: 'w1', workspaceName: '开发工作空间', kind: 'docker', directory: 'projects/assistant', validationCommand: 'npm run build', enabled: true, createdAt: 0 }
-let listedProjects = [project], projectsFail = false
+let listedProjects = [project], projectsFail = false, removeRecentFails = false
 const workspace = { id: 'w1', name: '开发工作空间', kind: 'docker', workdir: '/workspace', enabled: true }
 const codingAgent = { id: 'builtin-coding', name: '编码 Agent', modelId: 'm1' }
 let codingPeer = { ...codingAgent, builtin: true, executionKind: 'CODING', tools: ['coding_task'], terminals: [], sort: 1, note: '工作空间编码与智能体共用任务', avatar: null, role: '编码', roleColor: '#38bdf8' }
-const caps = { enabled: true, localExecutionAllowed: false, dockerImage: 'node:22', maxRounds: 60, maxRunMinutes: 30, isolation: 'fixture', agent: codingAgent }
+const caps = { enabled: true, localExecutionAllowed: false, dockerImage: 'node:22', maxRunMinutes: 30, isolation: 'fixture', agent: codingAgent }
 const models = [{ id: 'm1', name: '开发模型', baseUrl: 'http://fixture.invalid/v1', apiKey: 'fixture-key', model: 'coding-model', contextWindow: 262144, builtin: false, maxOutputTokens: null }, { id: 'm2', name: '推理模型', baseUrl: 'http://fixture.invalid/v1', apiKey: 'fixture-key', model: 'reasoning-model', contextWindow: 262144, builtin: false, maxOutputTokens: null }]
 const settingsView = () => ({ models, defaultModelId: 'm1', embedding: { mode: 'llm', llmModelId: 'm1', baseUrl: null, apiKey: null, model: 'embedding' }, rerank: { mode: 'off', llmModelId: null, baseUrl: null, apiKey: null, model: '' } })
 const makeRun = (id, extra = {}) => ({ id, taskId: 1, repositoryId: 'p1', prompt: '为项目实现任务列表', mode: 'EDIT', runner: 'WORKSPACE', status: 'REVIEWABLE', attempt: 1, round: 2, answer: '已完成任务列表修改。尚未运行项目验证。', error: null, validationStatus: 'NOT_RUN', artifactHash: 'reviewed-hash', modelId: 'm1', createdAt: 0, updatedAt: 1, ...extra })
@@ -81,8 +81,17 @@ await context.route('**/*', async route => {
   else if (url.pathname.endsWith('/executions/child-1/stop')) { childFixtures[0].status = 'CANCELLED'; value = { stopped: true } }
   else if (url.pathname.endsWith('/executions/child-1/resume')) { childFixtures[0].status = 'RUNNING'; childFixtures[0].attempt++; value = childFixtures[0] }
   else if (url.pathname === '/api/coding/runs/r1/resume') { resumeBody = route.request().postDataJSON(); rootMode = resumeBody.mode || rootMode; rootAttempt++; phase = 'RUNNING'; value = makeRun('r1', { status: phase, mode: rootMode, attempt: rootAttempt, sessionId: composition ? 's1' : null }) }
+  else if (url.pathname === '/api/coding/projects/p1/recent' && method === 'DELETE') {
+    if (removeRecentFails) { await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: '暂时无法移除' }) }); return }
+    listedProjects = listedProjects.map(item => item.id === project.id ? { ...item, recentHidden: true } : item)
+    value = { ok: true }
+  }
   else if (url.pathname === '/api/coding/projects') {
-    if (method === 'POST') { createBody = route.request().postDataJSON(); value = { ...project, id: 'p2', name: createBody.name, directory: createBody.name } }
+    if (method === 'POST') {
+      createBody = route.request().postDataJSON()
+      if (createBody.create) value = { ...project, id: 'p2', name: createBody.name, directory: createBody.name }
+      else { value = { ...project, recentHidden: false }; listedProjects = [value] }
+    }
     else if (projectsFail) { await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: '项目列表暂时不可用' }) }); return }
     else value = listedProjects
   } else if (url.pathname === '/api/coding/runs') {
@@ -118,6 +127,35 @@ try {
     await page.goto('http://coding.test/#/coding')
     await page.getByRole('heading', { name: '从一个项目开始' }).waitFor(); await no404()
     await page.screenshot({ path: path.join(output, 'landing.png') })
+  })
+  await check('recent project removal handles failures, persists and restores when reopened', async () => {
+    await page.goto('http://coding.test/#/coding?start=1')
+    const remove = page.getByRole('button', { name: `从最近项目移除 ${project.name}`, exact: true })
+    await remove.waitFor()
+    await page.evaluate(() => { document.cookie = 'minis.coding.project=p1; Path=/; SameSite=Lax' })
+    removeRecentFails = true
+    await remove.click()
+    await page.getByRole('alert').filter({ hasText: '移除失败：暂时无法移除' }).waitFor()
+    assert.equal(await page.locator('.coding-project-row').count(), 1)
+    assert.equal(await page.locator('.coding-studio').count(), 0)
+    removeRecentFails = false
+    await remove.click()
+    await page.locator('.coding-recent-empty').waitFor()
+    assert.equal(await page.locator('.coding-project-row').count(), 0)
+    assert.equal((await page.evaluate(() => document.cookie)).includes('minis.coding.project='), false)
+    await page.reload(); await page.locator('.coding-recent-empty').waitFor()
+    await page.goto('http://coding.test/#/coding?project=p1'); await page.locator('.coding-studio').waitFor()
+    await page.goto('http://coding.test/#/coding?workspace=w1&directory=projects/assistant')
+    await page.getByRole('button', { name: '打开此目录 →', exact: true }).click()
+    await page.locator('.coding-studio').waitFor()
+    await page.goto('http://coding.test/#/coding?start=1'); await remove.waitFor()
+    await page.screenshot({ path: path.join(output, 'recent-remove.png') })
+    const viewport = page.viewportSize()
+    await page.setViewportSize({ width: 390, height: 844 })
+    assert.equal(await page.locator('.coding-project-row').evaluate(row => row.scrollWidth <= row.clientWidth), true)
+    assert.ok(await remove.evaluate(button => parseFloat(getComputedStyle(button).fontSize) >= 14))
+    await page.screenshot({ path: path.join(output, 'recent-remove-mobile.png') })
+    await page.setViewportSize(viewport)
   })
   await check('project opening, file preview and tab closing', async () => {
     await page.getByRole('button', { name: /personal-assistant-with-a-long-project-name/ }).click()

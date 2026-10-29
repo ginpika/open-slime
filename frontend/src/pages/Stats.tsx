@@ -3,6 +3,7 @@ import { getStats, loginUrlOf, type StatsBucket, type StatsModel, type StatsQuer
 import StatsTrendChart from '../components/StatsTrendChart'
 import { LoadState } from '../components/LoadState'
 import { Button } from '../components/ui'
+import { Select } from '../components/Select'
 import { usePageKit } from '../kit'
 import { PriceEditor } from './stats/PriceEditor'
 import { amount, dateTime, downloadStats, fmtNum, money, qualityLabel, sourceLabel, statsError, statusLabel, validateRange } from './stats/format'
@@ -102,8 +103,8 @@ export default function Stats() {
         {RANGES.map(r => <button key={r.days} type="button" aria-pressed={range.days === r.days} onClick={() => { setRange({ days: r.days }); setCustomOpen(false); setRangeError(null); reload() }}>{r.label}</button>)}
         <button type="button" aria-pressed={!!range.from} onClick={() => { setCustomOpen(v => !v); if (!from && data) { setFrom(data.from); setTo(data.to) } }}>自定义日期</button>
       </div>
-      <label className="usage-field"><span>来源</span><select aria-label="来源" value={source} onChange={e => changeSource(e.target.value)}><option value="">全部来源</option>{[...new Set([...(data?.sources ?? []), ...(source ? [source] : [])])].map(s => <option key={s} value={s}>{sourceLabel(s)}</option>)}</select></label>
-      <label className="usage-field usage-filter-model"><span>模型与端点</span><select aria-label="模型与端点" value={selectedModel} onChange={e => changeModel(e.target.value)}><option value="">全部模型</option>{(data?.models ?? []).map(m => <option key={modelKey(m)} value={modelKey(m)}>{modelTitle(m)}</option>)}{selectedModel && !data?.models.some(m => modelKey(m) === selectedModel) && <option value={selectedModel}>{modelTitle({ provider: JSON.parse(selectedModel)[0], model: JSON.parse(selectedModel)[1] })}</option>}</select></label>
+      <div className="usage-field"><span>来源</span><Select label="来源" value={source} onChange={changeSource} size="compact" options={[{ value: '', label: '全部来源' }, ...[...new Set([...(data?.sources ?? []), ...(source ? [source] : [])])].map(s => ({ value: s, label: sourceLabel(s) }))]} /></div>
+      <div className="usage-field usage-filter-model"><span>模型与端点</span><Select label="模型与端点" value={selectedModel} onChange={changeModel} size="compact" searchable options={[{ value: '', label: '全部模型' }, ...(data?.models ?? []).map(m => ({ value: modelKey(m), label: modelTitle(m) })), ...(selectedModel && !data?.models.some(m => modelKey(m) === selectedModel) ? [{ value: selectedModel, label: modelTitle({ provider: JSON.parse(selectedModel)[0], model: JSON.parse(selectedModel)[1] }) }] : [])]} /></div>
       {(source || selectedModel) && <Button onClick={() => { setSource(''); setSelectedModel(''); reload() }}>清除筛选</Button>}
     </div>
     {customOpen && <form className="usage-custom-range" onSubmit={applyRange}>

@@ -1,0 +1,52 @@
+/* 本模块遵循 docs/ui-design-font-size.md；浮窗和下拉经 portal 渲染，分别设置字号。 */
+.comfyui-panel,
+.comfyui-form,
+.comfyui-select {
+  --ui-btn-fs: 14px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.comfyui-panel h2,
+.comfyui-panel h3 {
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.comfyui-panel .text-base,
+.comfyui-form .text-base,
+.comfyui-form input,
+.comfyui-form textarea {
+  font-size: 16px;
+}
+
+.comfyui-panel .text-sm,
+.comfyui-form .text-sm,
+.comfyui-panel button,
+.comfyui-form button,
+.comfyui-select button,
+.comfyui-select input {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.comfyui-form .ui-label,
+.comfyui-form .text-2xs,
+.comfyui-form .astro-field > span,
+.comfyui-form .astro-field > small {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+@media (max-width: 640px) {
+  .comfyui-panel p,
+  .comfyui-form p,
+  .comfyui-form input,
+  .comfyui-form textarea,
+  .comfyui-panel button,
+  .comfyui-form button,
+  .comfyui-select button {
+    font-size: 16px;
+    line-height: 24px;
+  }
+}

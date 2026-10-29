@@ -1,0 +1,4 @@
+.deepseek-web-panel input:not([type="checkbox"]),
+.deepseek-web-panel button {
+  font-size: 1rem;
+}

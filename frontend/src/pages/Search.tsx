@@ -2,6 +2,7 @@ import { AppIcon } from '../components/AppIcon'
 import { useEffect, useState, type FormEvent } from 'react'
 import { loginUrlOf, search, type SearchResponse } from '../api/client'
 import ResultCard from '../components/ResultCard'
+import WebSearchResults from '../components/WebSearchResults'
 import Toast from '../components/Toast'
 import { Control, btnPrimary } from '../components/ui'
 import { usePageKit } from '../kit'
@@ -98,7 +99,7 @@ export default function Search() {
     return () => {
       alive = false
     }
-  }, [query])
+  }, [query, rag])
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -174,12 +175,12 @@ export default function Search() {
       {/* 内容滚动区：TailwindCSS 风格细滚动条，顶栏不参与滚动 */}
       <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto">
         {/* 统计行：Google 式「约 N 条结果（用时 X 秒）」 */}
-        <div className="max-w-2xl pt-5">
+        <div className="w-full max-w-3xl pt-5">
           {busy ? (
             <p className="text-sm text-hint">正在检索 …</p>
           ) : res ? (
             <p className="text-sm text-faint">
-              约 {res.hits.length} 条结果
+              约 {res.hits.length + (res.web?.results.length ?? 0)} 条结果
               {ms !== null && (<>（用时 {(ms / 1000).toFixed(2)} 秒）</>)}
             </p>
           ) : null}
@@ -187,8 +188,8 @@ export default function Search() {
 
         {/* 结果列表（重检索时保留旧结果，Google 式原地刷新） */}
         {res && (
-          <div className="mt-2 pb-10">
-            {res.hits.length === 0 ? (
+          <div className="mt-2 w-full max-w-3xl pb-10">
+            {res.hits.length === 0 && !res.web?.results.length ? (
               <div className="py-10">
                 <kit.Empty>未找到与「{q.trim()}」相符的结果。</kit.Empty>
                 <ul className="mt-3 list-disc space-y-1.5 pl-5 text-base leading-relaxed text-muted">
@@ -197,17 +198,21 @@ export default function Search() {
                   <li>换个说法，或试试同义词</li>
                 </ul>
               </div>
-            ) : (
+            ) : res.hits.length > 0 ? (
               /* 每条命中自带主题化 interactive 卡片，容器只负责以间隙分组 */
-              <div className="flex flex-col gap-3">
+              <section className="w-full space-y-3" aria-label="内部搜索结果">
+                <h2 className="text-xl font-bold">内部结果 <span className="text-sm font-normal text-muted">知识库</span></h2>
+                <div className="flex flex-col gap-3">
                 {res.hits.map((hit, i) => (
                   <ResultCard
                     key={`${hit.kind}-${hit.chunkId ?? hit.entityId ?? i}`}
                     hit={hit}
                   />
                 ))}
-              </div>
-            )}
+                </div>
+              </section>
+            ) : null}
+            <WebSearchResults web={res.web} />
           </div>
         )}
       </div>

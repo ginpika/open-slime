@@ -64,6 +64,7 @@ public class MemoryExtractor {
             - 用户画像必须有真实用户原话证据；项目事实与决策是待确认候选；方法经验默认私有。临时猜测不应变成确认事实。
             - evidence_quote 必须逐字引用用户消息，不能引用助手、工具、角色对白或系统推断；找不到时留空。
             - 寒暄、纯提问、无信息量的往来一律不产出（返回空数组 []）。
+            - 可附 relations 数组，每项为 {"subject":"实体名","predicate":"关系","object":"实体名"}；仅表达本条正文明确支持的关系，不能补造推断。
             - 每条格式：{"scope":"profile|directive|project|fact|decision|method|open_issue|episode","title":"不超过12字的标题","body":"一句完整的中文陈述","confidence":0.0~1.0,"valid_until":null,"evidence_quote":"用户原话，不能引用助手"}
             - scope 判定：偏好 / 身份 / 长期约束→profile；对「以后要不要提起某事」的指令→directive；
               进行中的事 / 主题→project；项目的既定事实→fact；项目已定决策→decision；做法与经验→method；
@@ -71,6 +72,13 @@ public class MemoryExtractor {
             - 关于「用户本人」的稳定事实与偏好才算 profile/directive；小说人物、剧情设定、虚构选择**绝不是** profile。
             - valid_until 只在进行中的事有明显期限时填 "YYYY-MM-DD"，否则 null。
             - 不确定是否长期有效时给较小的 confidence，绝不编造没出现过的信息。
+            - 每条必须附 temporal 对象：{"kind":"event|state|timeless|unknown","source_ref":"所依据的原消息编号","expression":"逐字引用原消息的时间短语","start":null,"end":null}。
+            - event 是发生过的一次经历，state 是持续一段时间的状态，timeless 是无时间限定的长期信息；不能确定则 unknown。
+            - “今天上午吃了苹果”是 event/episode，不能概括为喜欢苹果或每天吃苹果。用户自述不等于独立核实。
+            - 相对时间必须以对应原消息时间和时区解释，严禁以提炼时刻或当前日期解释；跨日批次分别选择 source_ref。
+            - expression 必须逐字来自所选原消息。start/end 仅填写原文明确的 ISO 日期或日期时间；未知留 null，不猜具体几点。
+            - 上午/下午等保留原精度。已结束的历史事件不设 valid_until；valid_until 只控制有明确期限的当前状态。
+            - 新的经历通常追加；昨天吃苹果与今天吃梨不是互相取代。只有同一状态明确变化才考虑更新。
             - 没有可记的内容就返回 []。
             """;
 
@@ -82,11 +90,13 @@ public class MemoryExtractor {
     private final MemoryItemEmbeddingWriter embeddings;
     private final UserProfileService profiles;
     private final cc.ginpika.minis.ai.memory.store.MemoryRevocationStore revocations;
+    private final cc.ginpika.minis.ai.memory.store.MemoryRetractionStore retractions;
 
     public MemoryExtractor(MemoryProps props, SettingsService settings, OpenAiChatClient chat,
                            ObjectMapper om, MemoryItemStore items,
                            MemoryItemEmbeddingWriter embeddings, UserProfileService profiles,
-                           cc.ginpika.minis.ai.memory.store.MemoryRevocationStore revocations) {
+                           cc.ginpika.minis.ai.memory.store.MemoryRevocationStore revocations,
+                           cc.ginpika.minis.ai.memory.store.MemoryRetractionStore retractions) {
         this.props = props;
         this.settings = settings;
         this.chat = chat;
@@ -95,6 +105,7 @@ public class MemoryExtractor {
         this.embeddings = embeddings;
         this.profiles = profiles;
         this.revocations = revocations;
+        this.retractions = retractions;
     }
 
     /**
@@ -120,12 +131,13 @@ public class MemoryExtractor {
         if (u.length() < props.getNoiseMinChars() && !explicit) {
             return;
         }
+        long generation=retractions.generation();
         List<ChatMessage> messages = buildMessages(u, assistantText, explicit);
         POOL.submit(() -> {
             try {
                 /* 提炼跑在异步虚拟线程上：把作用域一并带过去，写入审计（revision）才记得住「是哪个
                    Agent / 哪一轮」写的（memory-v6 §6.1）；ThreadLocal 在此线程内自带清理 */
-                MemoryScopeCtx.runVoid(scope, () -> extract(scope, messages, explicit, null));
+                MemoryScopeCtx.runVoid(scope, () -> extract(scope, messages, explicit, null, false, generation));
             } catch (RuntimeException e) {
                 log.warn("记忆提炼失败（不影响主流程）：{}", e.getMessage());
             }
@@ -149,11 +161,12 @@ public class MemoryExtractor {
             log.debug("记忆提炼跳过：无执行作用域（memory-v6 I1）");
             return java.util.concurrent.CompletableFuture.completedFuture(false);
         }
+        long generation=retractions.generation();
         List<ChatMessage> messages = List.of(new ChatMessage("system", SYSTEM),
-                new ChatMessage("user", conversation));
+                new ChatMessage("user", "【逐消息时间依据】\n" + MemoryTime.material(refs) + "\n【材料】\n" + conversation));
         return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
             try {
-                return MemoryScopeCtx.run(scope, () -> extract(scope, messages, explicit, refs));
+                return MemoryScopeCtx.run(scope, () -> extract(scope, messages, explicit, refs, false, generation));
             } catch (RuntimeException e) {
                 log.warn("记忆提炼失败（不影响主流程）：{}", e.getMessage());
                 return false;
@@ -163,11 +176,12 @@ public class MemoryExtractor {
 
     public java.util.concurrent.CompletableFuture<Boolean> distillAsync(MemoryExec exec, String text, String refs) {
         if (!props.isEnabled()) { return java.util.concurrent.CompletableFuture.completedFuture(false); }
+        long generation=retractions.generation();
         String prompt = SYSTEM + "\n这是任务收尾材料。只保留经过验证、跨任务仍有价值的 method 与 open_issue。"
                 + "不要把临时结论、工具原始输出、剧情选择或未验证假设当成确认事实。";
         return java.util.concurrent.CompletableFuture.supplyAsync(() -> MemoryScopeCtx.run(exec,
-                () -> extract(exec, List.of(new ChatMessage("system", prompt), new ChatMessage("user", text)),
-                        false, refs, true)), POOL);
+                () -> extract(exec, List.of(new ChatMessage("system", prompt), new ChatMessage("user", "【来源时间】\n"+MemoryTime.material(refs)+"\n"+text)),
+                        false, refs, true, generation)), POOL);
     }
 
     /** 显式记忆触发词判定（用户明确要求记住）：供攒批缓冲判断是否该立即提炼、也用于门槛放行 */
@@ -176,22 +190,32 @@ public class MemoryExtractor {
     }
 
     /** 真提炼：一次 LLM 往返 → 解析 → 按归属落条目 / 画像候选（+ 异步补向量） */
-    private boolean extract(MemoryExec exec, List<ChatMessage> messages, boolean explicit, String refs) {
-        return extract(exec, messages, explicit, refs, false);
-    }
-
-    private boolean extract(MemoryExec exec, List<ChatMessage> messages, boolean explicit, String refs, boolean distilling) {
+    private boolean extract(MemoryExec exec, List<ChatMessage> messages, boolean explicit, String refs, boolean distilling, long generation) {
         ModelTarget target = target();
         if (!target.configured()) {
             return false;
         }
         String content = chat.chat(target, messages, SOURCE).content();
         List<Draft> drafts = parse(content);
+        String sources = exec.taskId() == null ? refs
+                : MemoryEvidence.merge(refs, MemoryEvidence.ref("task", exec.taskId(), null));
+        return retractions.writeIfCurrent(generation, sources, () -> persist(exec, drafts, explicit, refs, distilling));
+    }
+
+    private boolean persist(MemoryExec exec, List<Draft> drafts, boolean explicit, String refs, boolean distilling) {
         if (drafts.isEmpty()) {
             return true;
         }
         String source = explicit ? MemoryItemStore.SOURCE_EXPLICIT : MemoryItemStore.SOURCE_AUTO;
         for (Draft d : drafts) {
+            MemoryTime.Frame time = MemoryTime.extract(d.temporal(), refs, d.body(), d.scope());
+            if("state".equals(time.kind()) && time.end()==null && d.validUntil()!=null) {
+                time=new MemoryTime.Frame(time.kind(),time.start(),d.validUntil(),time.precision(),time.partOfDay(),
+                        time.zone(),time.anchorAt(),time.sourceRef(),time.expression(),time.attribution());
+            }
+            String timedScope = "event".equals(time.kind()) ? "episode" : d.scope();
+            d = new Draft(timedScope, d.title(), MemoryTime.normalize(d.body(), time), d.confidence(),
+                    "event".equals(time.kind()) ? null : d.validUntil(), d.quote(), d.relations(), d.temporal());
             if (distilling && !List.of("method", "open_issue").contains(d.scope())) { continue; }
             if (d.confidence() < 0.6) { continue; }
             if (MemoryVocabulary.PROFILE_SCOPES.contains(d.scope())) {
@@ -228,7 +252,12 @@ public class MemoryExtractor {
             }
             String fp = MemoryVocabulary.fingerprint(own.owner(), own.projectId(), own.agentId(),
                     own.domain(), d.scope(), body, own.layer(), own.sessionId(), own.taskId());
-            if (revocations.blocked(fp) || items.findByFingerprint(fp).isPresent()) {
+            var existing=items.findByFingerprint(fp);
+            if(existing.isPresent()) {
+                items.attachEvidence(existing.get().id(),refs);
+                continue;
+            }
+            if (revocations.blocked(fp)) {
                 /* 幂等：同域同内容已存在，不重复建 */
                 continue;
             }
@@ -245,6 +274,8 @@ public class MemoryExtractor {
                     MemoryVocabulary.RETENTION_NORMAL, identity);
             long id = items.insert(own, gov, d.scope(), d.title(), body, d.confidence(),
                     source, d.validUntil(), refs);
+            items.setTemporal(id, time);
+            items.attachTriples(id,d.relations());
             embeddings.complementAsync(id);
         }
         log.debug("记忆提炼完成：agent={} 产出 {} 条（explicit={}）",
@@ -270,8 +301,7 @@ public class MemoryExtractor {
     }
 
     private String truncate(String body) {
-        int max = Math.max(120, props.getBodyMaxChars());
-        return body.length() <= max ? body : body.substring(0, max) + "…";
+        return body;
     }
 
     private List<ChatMessage> buildMessages(String userText, String assistantText, boolean explicit) {
@@ -319,7 +349,7 @@ public class MemoryExtractor {
                 double confidence = n.path("confidence").isNumber()
                         ? Math.max(0d, Math.min(1d, n.path("confidence").asDouble())) : 0.5d;
                 out.add(new Draft(scope, title.isEmpty() ? null : title, body, confidence,
-                        parseDate(n.path("valid_until").asText(null)), n.path("evidence_quote").asText("")));
+                        parseDate(n.path("valid_until").asText(null)), n.path("evidence_quote").asText(""),n.path("relations"),n.path("temporal")));
             }
             return out;
         } catch (Exception e) {
@@ -336,19 +366,18 @@ public class MemoryExtractor {
     }
 
     /** "YYYY-MM-DD" → 当天结束时刻的毫秒；非法 / 空返回 null（= 不过期） */
-    private static Long parseDate(String text) {
+    private Long parseDate(String text) {
         if (text == null || text.isBlank() || "null".equalsIgnoreCase(text.trim())) {
             return null;
         }
         try {
-            return LocalDate.parse(text.trim()).atTime(23, 59, 59)
-                    .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            return LocalDate.parse(text.trim()).plusDays(1).atStartOfDay(ZoneId.of(props.getTimeZone())).toInstant().toEpochMilli();
         } catch (Exception e) {
             return null;
         }
     }
 
     /** 一条提炼出的记忆草稿 */
-    private record Draft(String scope, String title, String body, double confidence, Long validUntil, String quote) {
+    private record Draft(String scope, String title, String body, double confidence, Long validUntil, String quote, JsonNode relations, JsonNode temporal) {
     }
 }

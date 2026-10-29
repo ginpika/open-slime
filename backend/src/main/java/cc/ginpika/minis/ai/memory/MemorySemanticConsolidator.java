@@ -97,6 +97,9 @@ public class MemorySemanticConsolidator {
             if (isProtected(it)) {
                 continue;
             }
+            // Repeated historical events are separate occurrences, never newer values of one state.
+            var time = cc.ginpika.minis.ai.memory.MemoryTime.decode(it.temporalJson());
+            if ("episode".equals(it.scope()) || time == null || !"state".equals(time.kind())) continue;
             groups.computeIfAbsent(domainKey(it), k -> new ArrayList<>()).add(it);
         }
         int superseded = 0;
@@ -127,7 +130,7 @@ public class MemorySemanticConsolidator {
     private int mergeGroup(ModelTarget target, List<MemoryItemStore.ItemRow> group) {
         StringBuilder sb = new StringBuilder("【同一作用域的记忆条目】\n");
         for (MemoryItemStore.ItemRow it : group) {
-            sb.append('(').append(it.id()).append(") ")
+            sb.append('(').append(it.id()).append(") ").append(cc.ginpika.minis.ai.memory.MemoryTime.label(it.temporalJson())).append(" ")
                     .append(it.body() == null ? "" : it.body().replaceAll("\\s+", " ")).append('\n');
         }
         String content = chat.chat(target,
@@ -141,6 +144,9 @@ public class MemorySemanticConsolidator {
             if (oldId == newId || !contains(group, oldId) || !contains(group, newId)) {
                 continue;
             }
+            var oldTime=cc.ginpika.minis.ai.memory.MemoryTime.decode(group.stream().filter(i->i.id()==oldId).findFirst().orElseThrow().temporalJson());
+            var newTime=cc.ginpika.minis.ai.memory.MemoryTime.decode(group.stream().filter(i->i.id()==newId).findFirst().orElseThrow().temporalJson());
+            if(oldTime==null || newTime==null || oldTime.start()==null || newTime.start()==null || newTime.start()<oldTime.start()) continue;
             items.supersede(oldId, newId);
             edges.invalidateBySourceItem(oldId);
             n++;
@@ -187,7 +193,7 @@ public class MemorySemanticConsolidator {
     }
 
     private static String domainKey(MemoryItemStore.ItemRow it) {
-        return MemoryVocabulary.retentionKey(it) + "|" + nz(it.scope());
+        return MemoryVocabulary.retentionKey(it) + "|" + nz(it.scope()) + "|" + nz(it.identity());
     }
 
     private static String nz(String s) {

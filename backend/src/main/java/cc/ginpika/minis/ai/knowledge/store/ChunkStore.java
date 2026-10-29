@@ -96,19 +96,19 @@ public class ChunkStore {
         jdbc.update("DELETE FROM chunks_fts_meta WHERE rowid = ?", id);
         jdbc.update("DELETE FROM chunks_fts_cn WHERE rowid = ?", id);
         jdbc.update("DELETE FROM chunk_embedding WHERE chunk_id = ?", id);
-        jdbc.update("DELETE FROM chunk_entity WHERE chunk_id = ?", id);
+        jdbc.update("DELETE FROM graph_chunk_entity WHERE chunk_id = ?", id);
         jdbc.update("DELETE FROM chunk_extraction WHERE chunk_id = ?", id);
         jdbc.update("DELETE FROM chunks WHERE id = ?", id);
     }
 
     /** 清空全部 chunk 及其索引与向量（重置知识库用）：先清双 FTS 与各子表，再删 chunks 主表；
-     *  返回删除的 chunk 条数。chunk_entity 亦在此清（外键指向 chunks，须先于主表）。 */
+     *  返回删除的 chunk 条数。graph_chunk_entity 亦在此清（外键指向 chunks，须先于主表）。 */
     @Transactional
     public int clearAll() {
         jdbc.update("DELETE FROM chunks_fts_meta");
         jdbc.update("DELETE FROM chunks_fts_cn");
         jdbc.update("DELETE FROM chunk_embedding");
-        jdbc.update("DELETE FROM chunk_entity");
+        jdbc.update("DELETE FROM graph_chunk_entity");
         jdbc.update("DELETE FROM chunk_extraction");
         return jdbc.update("DELETE FROM chunks");
     }

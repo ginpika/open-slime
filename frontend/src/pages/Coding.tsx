@@ -1,7 +1,7 @@
 import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useState } from 'react'
 import { getSettings, type ModelView } from '../api/client'
-import { codingCapabilities, codingError, codingProjects, codingRuns, codingSessions, codingWorkspaces, type CodingCapabilities, type CodingMode, type CodingProject, type CodingRun, type CodingSession, type CodingWorkspace } from '../api/coding'
+import { codingCapabilities, codingError, codingProjects, codingRuns, codingSessions, codingWorkspaces, removeRecentCodingProject, type CodingCapabilities, type CodingMode, type CodingProject, type CodingRun, type CodingSession, type CodingWorkspace } from '../api/coding'
 import CodingStart from './coding/CodingStart'
 import CodingStudio from './coding/CodingStudio'
 import { readCodingProject, rememberCodingProject, resolveCodingProject } from './coding/projectSession'
@@ -30,7 +30,7 @@ export default function Coding() {
     if (p.status === 'fulfilled') setProjects(p.value)
     if (w.status === 'fulfilled') setWorkspaces(w.value)
     if (r.status === 'fulfilled') setRuns(r.value)
-    if (conversations.status === 'fulfilled') setSessions(conversations.value)
+    if (conversations.status === 'fulfilled') setSessions([...conversations.value].sort((a, b) => b.updatedAt - a.updatedAt))
     if (settings.status === 'fulfilled') setModels(settings.value.models)
     if (capabilities.status === 'fulfilled') setCaps(capabilities.value)
     else setCaps(null)
@@ -57,11 +57,28 @@ export default function Coding() {
     setProjects(previous => [item, ...previous.filter(p => p.id !== item.id)])
     window.location.hash = `/coding?project=${encodeURIComponent(item.id)}`
   }
+  const removeRecent = async (item: CodingProject) => {
+    await removeRecentCodingProject(item.id)
+    if (readCodingProject() === item.id) rememberCodingProject('')
+    setProjects(previous => previous.map(project => project.id === item.id ? { ...project, recentHidden: true } : project))
+  }
   const changed = useCallback((run: CodingRun) => {
-    setRuns(previous => [run, ...previous.filter(r => r.id !== run.id)].sort((a, b) => b.updatedAt - a.updatedAt))
-    if (run.sessionId) setSessions(previous => { const existing = previous.find(s => s.id === run.sessionId); if (existing && existing.updatedAt > run.updatedAt) return previous; const next = { id: run.sessionId!, repositoryId: run.repositoryId, title: existing?.title || run.prompt, lastRunId: run.id, createdAt: existing?.createdAt || run.createdAt, updatedAt: run.updatedAt }; return [next, ...previous.filter(s => s.id !== next.id)] })
+    setRuns(previous => {
+      const existing = previous.find(item => item.id === run.id)
+      if (existing && existing.updatedAt > run.updatedAt) return previous
+      const next = existing ? previous.map(item => item.id === run.id ? run : item) : [run, ...previous]
+      return next.sort((a, b) => b.updatedAt - a.updatedAt)
+    })
+    if (run.sessionId) setSessions(previous => {
+      const existing = previous.find(item => item.id === run.sessionId)
+      if (existing && existing.updatedAt > run.updatedAt) return previous
+      const next = { id: run.sessionId!, repositoryId: run.repositoryId, title: existing?.title || run.prompt, lastRunId: run.id, createdAt: existing?.createdAt ?? run.createdAt, updatedAt: run.updatedAt }
+      // 先原位合并，再按真实更新时间降序；相同时间保持既有顺序。
+      const items = existing ? previous.map(item => item.id === next.id ? next : item) : [next, ...previous]
+      return items.sort((a, b) => b.updatedAt - a.updatedAt)
+    })
   }, [])
   if (loading) return <div className="coding-loading" role="status"><span className="coding-wordmark"><AppIcon name="code" size={26} /></span><p>正在加载编程项目…</p></div>
-  if (project && caps) return <CodingStudio key={`${project.id}:${runId}`} project={project} models={models} caps={caps} runs={runs.filter(r => r.repositoryId === project.id)} sessions={sessions.filter(s => s.repositoryId === project.id)} runId={runId} onRunChanged={changed} initialDraft={draft?.projectId === project.id ? draft : undefined} loadError={error} onReload={load} onSelectRun={(id, seed) => { setDraft(seed ? { ...seed, projectId: project.id } : null); window.location.hash = `/coding?project=${encodeURIComponent(project.id)}${id ? `&run=${encodeURIComponent(id)}` : ''}` }} />
-  return <CodingStart key={`${params.get('workspace') || ''}:${params.get('directory') || '.'}`} projects={projects} workspaces={workspaces} runs={runs} onOpen={open} onReload={load} initialWorkspace={params.get('workspace') || ''} initialDirectory={params.get('directory') || '.'} error={error || (explicitProject && projectId ? '这个项目未绑定现有工作空间，请从下方选择工作空间目录打开项目。旧任务记录仍保存在后端。' : '')} enabled={caps?.enabled === true} agent={caps?.agent} />
+  if (project && caps) return <CodingStudio key={project.id} project={project} models={models} caps={caps} runs={runs.filter(r => r.repositoryId === project.id)} sessions={sessions.filter(s => s.repositoryId === project.id)} runId={runId} onRunChanged={changed} initialDraft={draft?.projectId === project.id ? draft : undefined} loadError={error} onReload={load} onSelectRun={(id, seed) => { setDraft(seed ? { ...seed, projectId: project.id } : null); window.location.hash = `/coding?project=${encodeURIComponent(project.id)}${id ? `&run=${encodeURIComponent(id)}` : ''}` }} />
+  return <CodingStart key={`${params.get('workspace') || ''}:${params.get('directory') || '.'}`} projects={projects.filter(project => !project.recentHidden)} workspaces={workspaces} runs={runs} onOpen={open} onRemoveRecent={removeRecent} onReload={load} initialWorkspace={params.get('workspace') || ''} initialDirectory={params.get('directory') || '.'} error={error || (explicitProject && projectId ? '这个项目未绑定现有工作空间，请从下方选择工作空间目录打开项目。旧任务记录仍保存在后端。' : '')} enabled={caps?.enabled === true} agent={caps?.agent} />
 }

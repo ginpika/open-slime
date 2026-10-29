@@ -22,6 +22,7 @@ class CodingApplicationYamlTest {
         assertEquals("0", environment.getProperty("minis.coding.max-response-tokens"));
         assertEquals("32768", environment.getProperty("minis.coding.response-reserve-tokens"));
         assertEquals("3", environment.getProperty("minis.coding.max-output-continuations"));
+        assertEquals("2", environment.getProperty("minis.coding.max-concurrent-runs"));
         assertEquals("true", environment.getProperty("minis.web.headless"));
 
         var props = bindCoding(environment);
@@ -38,13 +39,15 @@ class CodingApplicationYamlTest {
                 "MINIS_CODING_RESPONSE_TOKENS", "16384",
                 "MINIS_CODING_RESPONSE_RESERVE", "65536",
                 "MINIS_CODING_MAX_TOKENS", "900000",
-                "MINIS_CODING_OUTPUT_CONTINUATIONS", "4")));
+                "MINIS_CODING_OUTPUT_CONTINUATIONS", "4",
+                "MINIS_CODING_RUNS", "3")));
 
         var props = bindCoding(environment);
         assertEquals(900_000L, props.getMaxEstimatedTokens());
         assertEquals(16_384, props.getMaxResponseTokens());
         assertEquals(65_536, props.getResponseReserveTokens());
         assertEquals(4, props.getMaxOutputContinuations());
+        assertEquals(3, props.getMaxConcurrentRuns());
     }
 
     private static StandardEnvironment loadApplicationYaml() throws IOException {

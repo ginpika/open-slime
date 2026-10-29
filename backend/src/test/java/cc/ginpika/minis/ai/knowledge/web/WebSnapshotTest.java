@@ -137,8 +137,9 @@ class WebSnapshotTest {
         try(var ds=new SingleConnectionDataSource("jdbc:sqlite::memory:",true)) {
             new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(ds);
             var jdbc=new JdbcTemplate(ds);var om=new ObjectMapper();var chunks=new ChunkStore(jdbc);var graph=new GraphStore(jdbc,om);
-            var docs=new DocumentStore(jdbc,chunks,graph,new Chunker(mock(cc.ginpika.minis.ai.llm.OpenAiChatClient.class),mock(cc.ginpika.minis.ai.core.prompt.PromptManager.class),om),"unused");
-            var store=new WebSnapshotStore(jdbc,chunks,docs,om);
+            var evidence=new SnapshotEvidenceStore(jdbc);
+            var docs=new DocumentStore(jdbc,chunks,graph,new Chunker(mock(cc.ginpika.minis.ai.llm.OpenAiChatClient.class),mock(cc.ginpika.minis.ai.core.prompt.PromptManager.class),om),"unused",evidence);
+            var store=new WebSnapshotStore(jdbc,chunks,docs,om,evidence);
             var first=capture("<p>Original source facts, numbers and conditions.</p>");
             var request=new WebDtos.SaveRequest(first.captureId(),first.title(),"Generated summary","High quality original source",List.of(new WebDtos.Claim("Original source facts","fact",List.of("p1"))),"test-model");
             var saved=store.save(first,request);

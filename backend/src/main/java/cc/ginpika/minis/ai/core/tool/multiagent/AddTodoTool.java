@@ -27,13 +27,9 @@ public class AddTodoTool implements AiTool {
 
     @Override
     public String description() {
-        return "往圆桌共享任务区加一条待办：把「需要有人去做的事」落成一条可追踪的 TODO，"
-                + "桌上所有人都看得见、都能改。讨论出结论后，用 " + StartWorkTool.NAME + " 让各成员开工，"
-                + "他们的执行线程会按顺序把任务区的条目做掉（每条一次执行）。"
-                + "title 写清要做什么、detail 写清验收标准或前提；owner 可指定负责人（写成员名），"
-                + "不指定则为公共条目。若这一步必须等别的条目先完成，用 depends_on 声明前置"
-                + "（写那些条目的标题或 id）：前置没完成前没有人会开工这条，"
-                + "所以分工上有先后的活请务必声明——不然下游会在没有上游产出时白跑一趟。";
+        return "主控向共享任务区加入一项有明确边界的工作。title 写目标，detail 必须写边界、产出及验收方法，"
+                + "owner 明确执行成员（名字或ID）；depends_on 使用已有条目ID。优先修订已有条目，避免同因补救任务重复扩张。"
+                + "新增后不会自行开工，由主控用 start_work 指定本次执行和独立检查。";
     }
 
     @Override
@@ -64,11 +60,25 @@ public class AddTodoTool implements AiTool {
                 .put("description", "补充说明 / 验收标准 / 前提（可空）");
         props.putObject("owner").put("type", "string")
                 .put("description", "负责人：写成员名（须是本桌成员）；不填 = 公共，谁有空谁做");
-        props.putObject("depends_on").put("type", "array")
+        var dependencies=props.putObject("depends_on").put("type", "array")
                 .put("description", "前置依赖：这一步要等哪几条 TODO 先完成（写它们的标题或 id）；"
                         + "没有先后关系就留空。前置未完成前这条不会被任何人开工");
-        props.putObject("depends_on").putObject("items").put("type", "string");
+        dependencies.putObject("items").put("type", "string");
+        props.set("contract", contractSchema(om));
         params.putArray("required").add("title");
         return params;
+    }
+
+    static ObjectNode contractSchema(ObjectMapper om) {
+        var schema=om.createObjectNode().put("type","object").put("description","可执行工作契约：预期成果、可检查标准、何时收工。滚动细化近期工作，远期方向留在计划里。");
+        var fields=schema.putObject("properties");
+        fields.putObject("outcome").put("type","string").put("description","能交付或回答什么问题");
+        fields.putObject("stopCondition").put("type","string").put("description","达到什么条件即可收工，避免无限优化");
+        var criteria=fields.putObject("acceptanceCriteria").put("type","array").put("minItems",1).putObject("items").put("type","object");
+        var item=criteria.putObject("properties");
+        item.putObject("id").put("type","string");item.putObject("text").put("type","string");
+        criteria.putArray("required").add("id").add("text");
+        schema.putArray("required").add("outcome").add("acceptanceCriteria").add("stopCondition");
+        return schema;
     }
 }

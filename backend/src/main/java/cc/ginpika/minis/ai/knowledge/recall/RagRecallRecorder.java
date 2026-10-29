@@ -2,6 +2,8 @@ package cc.ginpika.minis.ai.knowledge.recall;
 
 import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.tool.doc.SearchVectorChunksTool;
+import cc.ginpika.minis.ai.core.tool.doc.SearchWebTool;
+import cc.ginpika.minis.ai.core.tool.doc.FetchWebTool;
 import cc.ginpika.minis.ai.core.tool.graph.ExploreSubgraphTool;
 import cc.ginpika.minis.ai.core.tool.graph.QueryEntityPathTool;
 import cc.ginpika.minis.ai.core.tool.graph.QueryEntityRelationsTool;
@@ -35,6 +37,7 @@ public class RagRecallRecorder {
     public static final String CH_GRAPH = "graph";
     /** 三路之一：时序事件（记忆事件流召回） */
     public static final String CH_MEMORY = "memory";
+    public static final String CH_WEB = "web";
 
     /** memory 通道下的一个「伪工具」名：每轮自动注入的记忆召回（非模型主动调工具，见 MemoryProvider） */
     public static final String TOOL_MEMORY_INJECT = "memory_inject";
@@ -46,7 +49,9 @@ public class RagRecallRecorder {
             QueryEntityRelationsTool.NAME, CH_GRAPH,
             QueryEntityPathTool.NAME, CH_GRAPH,
             ExploreSubgraphTool.NAME, CH_GRAPH,
-            RecallMemoryTool.NAME, CH_MEMORY);
+            RecallMemoryTool.NAME, CH_MEMORY,
+            SearchWebTool.NAME, CH_WEB,
+            FetchWebTool.NAME, CH_WEB);
 
     /** 单条留痕的 result 存储上限：召回结果本就有渲染限额，这里只是防御性地兜一个绝对上界 */
     private static final int RESULT_LIMIT = 50_000;
@@ -82,6 +87,13 @@ public class RagRecallRecorder {
 
     private static String clip(String s) {
         return s.length() > RESULT_LIMIT ? s.substring(0, RESULT_LIMIT) + "…" : s;
+    }
+
+    public void recordWebInject(String query, String result, String agentId) {
+        try {
+            store.append(CH_WEB, "web_inject", "chat", agentId == null || agentId.isBlank() ? "builtin" : agentId,
+                    query, clip(result), result.length());
+        } catch (RuntimeException e) { log.warn("网页召回留痕写入失败（不影响检索）"); }
     }
 
     /**

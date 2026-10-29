@@ -16,6 +16,11 @@ public class MemoryProps {
     /** 总开关：关时记忆 v2 全链路（提炼 / 巩固 / 条目召回）短路。默认开 */
     private boolean enabled = true;
 
+    /** Source-local zone; configure minis.memory.time-zone when the server and user zones differ. */
+    private String timeZone = java.time.ZoneId.systemDefault().getId();
+    public String getTimeZone() { return timeZone; }
+    public void setTimeZone(String value) { timeZone = java.time.ZoneId.of(value).getId(); }
+
     /** 提炼与巩固用模型（llm_model.id）；空 = 沿用聊天默认模型 */
     private String extractModel = "";
 
@@ -44,7 +49,7 @@ public class MemoryProps {
     /** 巩固节拍（毫秒）：后台合成 / 去重 / 过期的扫描周期 */
     private long consolidateIntervalMs = 3_600_000L;
 
-    /** 单条记忆正文长度上限（字符）：超出截断（正本可回读），防止长条目撑爆注入预算（memory-v5 §6.3） */
+    /** 单条记忆注入渲染长度上限（字符）：只截断上下文，不截断图谱正本，防止长条目撑爆注入预算（memory-v5 §6.3） */
     private int bodyMaxChars = 1200;
 
     /** 上下文注入的 token 预算（memory-v5 §6.3）：按作用域分桶，替代「按条数」硬编码 */

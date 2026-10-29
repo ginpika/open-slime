@@ -42,12 +42,26 @@ public class WorkspaceProjects {
         return jdbc.query("SELECT * FROM coding_workspace_project WHERE repository_id=?",(r,n)->new Binding(r.getString("repository_id"),r.getString("workspace_id"),r.getString("directory"),r.getString("root_path"),r.getString("target_fingerprint")),repositoryId).stream().findFirst().orElse(null);
     }
     public boolean bound(Run run){return binding(run.repositoryId())!=null;}
+    public ExecTarget.Shell openShell(String owner,String projectId,int cols,int rows) throws java.io.IOException {
+        project(owner,projectId); // Ownership must be checked before resolving credentials.
+        Binding b=binding(projectId);var target=boundTarget(b,true);
+        String prefix=target.workdir()==null || target.workdir().isBlank()?"":"cd -- "+q(target.workdir())+" || exit 72; ";
+        checked(target,guard(b.directory(),b.root())+"command -v bash >/dev/null 2>&1 || { echo '工作空间未安装 bash，请先安装 bash 后再创建终端' >&2; exit 127; }",8000,15000);
+        String command=prefix+guard(b.directory(),b.root())+"exec bash -i";
+        return targets.get(target.kind()).openShell(target,command,cols,rows);
+    }
     public List<CodingProject> projects(String owner){return store.repositories(owner).stream().filter(r->binding(r.id())!=null).map(r->project(owner,r.id())).toList();}
+    /** Only hides the recent entry; bindings, runs and workspace files remain available. */
+    public void removeRecent(String owner,String id){
+        project(owner,id);
+        jdbc.update("INSERT OR IGNORE INTO coding_hidden_recent_project(repository_id) VALUES(?)",id);
+    }
     public CodingProject project(String owner,String id){
         Repository repo=store.repository(id,owner);Binding binding=binding(id);
         if(repo==null || binding==null){throw new ResponseStatusException(HttpStatus.NOT_FOUND,"编程项目不存在");}
         var target=terminals.targetById(binding.workspaceId()).orElse(null);
-        return new CodingProject(id,repo.name(),binding.workspaceId(),target==null?"工作空间已删除":target.name(),target==null?"unknown":target.kind(),binding.directory(),repo.validationCommand(),target!=null && target.enabled() && fingerprint(target).equals(binding.fingerprint()),repo.createdAt());
+        boolean recentHidden=jdbc.queryForObject("SELECT COUNT(*) FROM coding_hidden_recent_project WHERE repository_id=?",Integer.class,id)>0;
+        return new CodingProject(id,repo.name(),binding.workspaceId(),target==null?"工作空间已删除":target.name(),target==null?"unknown":target.kind(),binding.directory(),repo.validationCommand(),target!=null && target.enabled() && fingerprint(target).equals(binding.fingerprint()),repo.createdAt(),recentHidden);
     }
     public CodingProject open(String owner,OpenProject req){
         if(req==null){throw bad("请选择工作空间与项目目录");}
@@ -74,7 +88,10 @@ public class WorkspaceProjects {
         String address="workspace://"+target.id()+"/"+directory;
         synchronized(locks.computeIfAbsent(owner+":"+address,ignored->new Object())){
             var existing=store.repositories(owner).stream().filter(r->r.path().equals(address)).findFirst().orElse(null);
-            if(existing!=null){return project(owner,existing.id());}
+            if(existing!=null){
+                jdbc.update("DELETE FROM coding_hidden_recent_project WHERE repository_id=?",existing.id());
+                return project(owner,existing.id());
+            }
             return tx.execute(status->{
                 Repository repo=store.register(owner,name,address,null,validation);
                 jdbc.update("INSERT INTO coding_workspace_project VALUES(?,?,?,?,?)",repo.id(),target.id(),directory,root,fingerprint(target));
@@ -119,7 +136,8 @@ public class WorkspaceProjects {
         verify(binding(projectId),relative);return browser.read(project.workspaceId(),join(project.directory(),relative));
     }
     private Run requireRun(String owner,String projectId,String runId){Run run=store.run(runId,owner);if(run==null || !run.repositoryId().equals(projectId)){throw bad("任务不属于当前项目");}return run;}
-    public void prepare(Run run) throws Exception {
+    public synchronized void prepare(Run run) throws Exception {
+        files.requireConsistent(run.id());
         if(Files.isRegularFile(files.task(run.id()).resolve("baseline.json"))){verify(binding(run.repositoryId()));return;}
         var snapshot=snapshot(binding(run.repositoryId()),null);
         files.prepareImported(run.id(),snapshot.files(),snapshot.executable());
@@ -159,6 +177,10 @@ public class WorkspaceProjects {
         var snapshot=snapshot(binding(run.repositoryId()),checkout);
         files.replaceImported(run.id(),snapshot.files(),snapshot.executable());
     }
+    public synchronized boolean integrate(Run run) throws Exception {
+        var current=snapshot(binding(run.repositoryId()),null);
+        return files.integrateImported(run.id(),current.files(),current.executable());
+    }
     public synchronized Diff accept(Run run,String hash) throws Exception {
         Binding b=binding(run.repositoryId());Diff diff=files.diff(run.id());
         if(!diff.artifactHash().equals(hash)){throw bad("产物已变化，请重新审阅");}
@@ -168,6 +190,21 @@ public class WorkspaceProjects {
         if(receipt.equals(hash)){if(Files.exists(files.task(run.id()).resolve("accept-journal.json"))){Files.move(files.task(run.id()).resolve("accept-journal.json"),files.task(run.id()).resolve("accepted.json"),StandardCopyOption.REPLACE_EXISTING);}return diff;}
         if(Files.exists(files.task(run.id()).resolve("accept-journal.json"))){throw bad("上次接受结果未确认，请核查工作空间接受日志");}
         var current=snapshot(b,null);var baseline=files.baseline(run.id());
+        var stamps=new TreeMap<String,CodingWorkspace.FileStamp>();
+        current.files().forEach((name,bytes)->stamps.put(name,new CodingWorkspace.FileStamp(CodingWorkspace.hash(bytes),bytes.length,current.executable().contains(name))));
+        if(files.matchesApplied(run.id(),diff,stamps)){
+            // Snapshot evidence alone is insufficient: recheck live paths before confirming the receipt.
+            var expected=files.appliedManifest(run.id(),diff);
+            var confirm=new StringBuilder("set -eu\ncd -- ").append(q(b.root())).append('\n');
+            for(var entry:expected.entrySet()){
+                String path="./"+entry.getKey();confirm.append(safeParents(".",entry.getKey()))
+                        .append("test -f ").append(q(path)).append("\ntest \"$(sha256sum ").append(q(path)).append(" | cut -d ' ' -f1)\" = ").append(q(entry.getValue().hash())).append('\n')
+                        .append(entry.getValue().executable()?"test -x ":"test ! -x ").append(q(path)).append('\n');
+            }
+            for(Change change:diff.changes())if("MISSING".equals(change.afterHash()))confirm.append(safeParents(".",change.path())).append("test ! -e ").append(q("./"+change.path())).append('\n');
+            execute(run,confirm.toString(),8000,30000,true);files.confirmApplied(run.id(),diff);return diff;
+        }
+        if(!baseline.equals(stamps))throw bad("项目基准已变化，请先整合并重新 verify；拒绝覆盖");
         for(var entry:baseline.entrySet()){
             byte[] value=current.files().get(entry.getKey());if(value==null || !CodingWorkspace.hash(value).equals(entry.getValue().hash()) || current.executable().contains(entry.getKey())!=entry.getValue().executable()){throw bad("项目目录已变化："+entry.getKey());}
         }
@@ -175,7 +212,8 @@ public class WorkspaceProjects {
         Map<String,byte[]> payload=new TreeMap<>();Set<String> modes=new HashSet<>();StringBuilder script=new StringBuilder("set -eu\n");
         script.append("cd -- ").append(q(b.root())).append("\n");
         for(var entry:baseline.entrySet()){
-            script.append(safeParents(".",entry.getKey())).append("test \"$(sha256sum ").append(q("./"+entry.getKey())).append(" | cut -d ' ' -f1)\" = ").append(q(entry.getValue().hash())).append("\n");
+            script.append(safeParents(".",entry.getKey())).append("test -f ").append(q("./"+entry.getKey())).append("\ntest \"$(sha256sum ").append(q("./"+entry.getKey())).append(" | cut -d ' ' -f1)\" = ").append(q(entry.getValue().hash())).append("\n")
+                    .append(entry.getValue().executable()?"test -x ":"test ! -x ").append(q("./"+entry.getKey())).append('\n');
         }
         // Stage is resolved independently in the workspace root and passed as an absolute path.
         execute(run,safeParents(".",stage+"/DONE")+"mkdir -p -- "+q(stage),8000,15000,true);
@@ -272,7 +310,14 @@ public class WorkspaceProjects {
         }
         return out.toString();
     }
-    private static String fingerprint(TerminalStore.TargetRow t){return CodingWorkspace.hash(String.join("|",String.valueOf(t.kind()),String.valueOf(t.workdir()),String.valueOf(t.dockerHost()),String.valueOf(t.container()),String.valueOf(t.image()),String.valueOf(t.sshHost()),String.valueOf(t.sshPort()),String.valueOf(t.sshUser())).getBytes(StandardCharsets.UTF_8));}
+    private static String fingerprint(TerminalStore.TargetRow t) {
+        String config = String.join("|", String.valueOf(t.kind()), String.valueOf(t.workdir()),
+                String.valueOf(t.dockerHost()), String.valueOf(t.container()), String.valueOf(t.image()),
+                String.valueOf(t.sshHost()), String.valueOf(t.sshPort()), String.valueOf(t.sshUser()));
+        // Preserve existing project fingerprints when no host directory is bound.
+        if (t.hostWorkdir() != null) config += "|hostWorkdir=" + t.hostWorkdir();
+        return CodingWorkspace.hash(config.getBytes(StandardCharsets.UTF_8));
+    }
     private static String join(String parent,String relative){return parent.equals(".")?relative:relative.equals(".")?parent:parent+"/"+relative;}
     public static String q(String text){return ExecTarget.quote(text);}
     private static ResponseStatusException bad(String text){return new ResponseStatusException(HttpStatus.BAD_REQUEST,text);}

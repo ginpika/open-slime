@@ -14,7 +14,7 @@ import org.springframework.stereotype.Repository;
  *
  * <p>model_id / prompt_id / show_cot / context_trace / max_rounds / show_rounds 为「…」菜单在该会话的选择
  * （会话级配置）：前两者 NULL=回退设置页默认项，show_cot 缺省显示思维链，context_trace 缺省不把思考/工具调用
- * 带入上下文，max_rounds 为单次提问的工具调用轮数上限（缺省 30），show_rounds 缺省不在思维链分段右侧标轮次。
+ * 带入上下文，max_rounds 仅保留旧数据库兼容，不再控制执行，show_rounds 缺省不在思维链分段右侧标轮次。
  *
  * <p>unread 为首页「最近会话」的未读标记：潜意识子代理往会话投递消息时置位，用户打开会话即清零。
  */
@@ -202,7 +202,7 @@ public class HubSessionStore {
                 rs.getString("project_id"),
                 rs.getInt("show_cot") != 0,
                 rs.getInt("context_trace") != 0,
-                rs.getInt("max_rounds"),
+                0,
                 rs.getInt("show_rounds") != 0,
                 rs.getInt("unread") != 0,
                 (Long) rs.getObject("created_at"),

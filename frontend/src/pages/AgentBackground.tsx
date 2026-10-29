@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
+import ComfyImage from '../components/ComfyImage'
 import remarkGfm from 'remark-gfm'
 import {
   ApiError,
@@ -47,6 +48,7 @@ import {
 } from '../api/client'
 import { Card } from '../components/Card'
 import FloatWindow from '../components/FloatWindow'
+import { Select } from '../components/Select'
 import Toast from '../components/Toast'
 import { btnPrimary, btnQuiet, miniBtn } from '../components/ui'
 import { usePageKit } from '../kit'
@@ -270,7 +272,7 @@ export function ResultDetail({ detail, onClose }: { detail: ExecView; onClose: (
             </p>
           )}
           {detail.output ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{detail.output}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ComfyImage }}>{detail.output}</ReactMarkdown>
           ) : (
             <kit.Empty>本次未产出结论文本</kit.Empty>
           )}
@@ -804,14 +806,7 @@ function HeartbeatTab({
 
       <div className="max-w-[260px]">
         <kit.Field label="模型" wrap={false}>
-          <select className={INPUT} value={modelId} onChange={(e) => setModelId(e.target.value)}>
-            <option value="">跟随默认模型</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+          <Select label="模型" value={modelId} onChange={setModelId} searchable options={[{ value: '', label: '跟随默认模型' }, ...models.map(m => ({ value: m.id, label: m.name }))]} />
         </kit.Field>
       </div>
 
@@ -1056,6 +1051,7 @@ const RAG_CHANNEL_TONE: Record<SubRagChannel, 'accent' | 'ok' | 'warn'> = {
   vector: 'accent',
   graph: 'ok',
   memory: 'warn',
+  web: 'accent',
 }
 
 /** 一条召回留痕的详情：查询原文 + 回给模型的 tool 消息原文 */
@@ -1131,14 +1127,15 @@ function RagTab({ peerId, onToast }: { peerId: string; onToast: Notify }) {
     ['vector', SUB_RAG_CHANNEL_LABELS.vector],
     ['graph', SUB_RAG_CHANNEL_LABELS.graph],
     ['memory', SUB_RAG_CHANNEL_LABELS.memory],
+    ['web', SUB_RAG_CHANNEL_LABELS.web],
   ]
 
   return (
     <div className="flex flex-col gap-4">
       <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <p className="max-w-[720px] text-xs leading-relaxed text-muted">
-          这位智能体三路召回（向量 / 图 / 记忆）的留痕：既含每次检索工具调用，也含每轮
-          <b>自动注入的记忆召回</b>——模型问了什么、实际拿到了什么原始数据，都原样记在这里，用来回看检索效果。
+          这位智能体的召回留痕（向量 / 图 / 记忆 / 网页）：既含检索工具调用，也含
+          <b>自动注入的记忆和网页资料</b>。模型问了什么、实际拿到了什么原始数据，都记在这里，用来回看检索效果。
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <div className="mono flex w-fit shrink-0 border border-line-strong">

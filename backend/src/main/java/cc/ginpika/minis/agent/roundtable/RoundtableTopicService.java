@@ -241,6 +241,16 @@ public class RoundtableTopicService {
 
     // ---------- 推进回合 ----------
 
+    /** Main-task control gets one turn; the roundtable consensus algorithm remains for local issues. */
+    public Advance openController(String session, List<AgentRow> peers, AgentRow controller, String text,
+                                  StreamSink sink, boolean userRecorded) {
+        TopicRow topic = topics.openBySession(session).orElseGet(() -> machine.open(session, RoundtableTopicStore.ORIGIN_USER, null));
+        machine.seatAll(topic.id(), peers.stream().map(AgentRow::id).toList());
+        machine.reenter(topic.id());
+        if (!userRecorded && text != null && !text.isBlank()) recordUserMessage(session, text);
+        return openDirected(session, peers, List.of(controller), sink);
+    }
+
     /**
      * 把任务区里受阻条目的负责人请到前排（记一次举手：下一轮优先被叫到）。
      *
@@ -389,6 +399,13 @@ public class RoundtableTopicService {
         messages.insert(sessionId, topicId, RoundtableMessageStore.ROLE_USER, null, null, text,
                 null, null, null, null);
         sessions.touch(sessionId, abbreviate(text));
+    }
+
+    public long recordConversation(String sessionId, String text) {
+        long id=messages.insert(sessionId, null, RoundtableMessageStore.ROLE_USER, null, null, text,
+                null, null, null, null, "conversation");
+        sessions.touch(sessionId, null);
+        return id;
     }
 
     /**

@@ -11,7 +11,8 @@
  */
 import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useState } from 'react'
-import { BRAND } from '../branding'
+import WorkspaceDialog from './WorkspaceDialog'
+import WorkspaceShell from './WorkspaceShell'
 import {
   ApiError,
   createTerminalTarget,
@@ -23,7 +24,6 @@ import {
   loginUrlOf,
   probeTerminalTarget,
   readWorkspaceFile,
-  runTerminalCommand,
   updateTerminalTarget,
   type TerminalCommand,
   type TerminalTarget,
@@ -35,7 +35,6 @@ import {
 import { Card, CardHead } from '../components/Card'
 import FloatWindow from '../components/FloatWindow'
 import Toast from '../components/Toast'
-import { Field, INPUT, ModeBtn, Select, linesToPatterns } from '../components/formKit'
 import { btnIcon, btnOutline, btnPrimary, btnQuiet, miniBtn } from '../components/ui'
 import { usePageKit } from '../kit'
 
@@ -120,337 +119,6 @@ function IconChevron() {
 }
 
 /* ---------------- 新建 / 编辑工作空间 ---------------- */
-
-/** 添加 / 编辑一个工作空间（docker 容器 或 SSH 服务器） */
-function WorkspaceDialog({
-  initial,
-  busy,
-  onClose,
-  onSubmit,
-}: {
-  initial: TerminalTarget | null
-  busy: boolean
-  onClose: () => void
-  onSubmit: (req: TerminalTargetRequest) => void
-}) {
-  const [name, setName] = useState(initial?.name ?? '')
-  const [kind, setKind] = useState<'docker' | 'ssh'>(initial?.kind ?? 'docker')
-  const [enabled, setEnabled] = useState(initial?.enabled ?? true)
-  const [workdir, setWorkdir] = useState(initial?.workdir ?? '')
-  const [timeoutMs, setTimeoutMs] = useState(
-    initial?.timeoutMs != null ? String(initial.timeoutMs) : '',
-  )
-  const [maxOutput, setMaxOutput] = useState(
-    initial?.maxOutput != null ? String(initial.maxOutput) : '',
-  )
-  const [allow, setAllow] = useState((initial?.allowPatterns ?? []).join('\n'))
-  const [deny, setDeny] = useState((initial?.denyPatterns ?? []).join('\n'))
-  const [note, setNote] = useState(initial?.note ?? '')
-  const [dockerHost, setDockerHost] = useState(initial?.dockerHost ?? '')
-  const [image, setImage] = useState(initial?.image ?? '')
-  const [container, setContainer] = useState(initial?.container ?? '')
-  const [sshHost, setSshHost] = useState(initial?.sshHost ?? '')
-  const [sshPort, setSshPort] = useState(initial?.sshPort != null ? String(initial.sshPort) : '')
-  const [sshUser, setSshUser] = useState(initial?.sshUser ?? '')
-  const [sshAuth, setSshAuth] = useState<'password' | 'key'>(initial?.sshAuth ?? 'password')
-  const [sshPassword, setSshPassword] = useState(initial?.sshPassword ?? '')
-  const [sshPrivateKey, setSshPrivateKey] = useState(initial?.sshPrivateKey ?? '')
-  const [sshPassphrase, setSshPassphrase] = useState(initial?.sshPassphrase ?? '')
-  const [hostKeyCheck, setHostKeyCheck] = useState<'known_hosts' | 'accept-all'>(
-    initial?.hostKeyCheck ?? 'known_hosts',
-  )
-
-  const positive = (s: string): number | null => {
-    const n = Number(s.trim())
-    return s.trim() && Number.isFinite(n) && n > 0 ? n : null
-  }
-  const dockerOk = !!(container.trim() || image.trim())
-  const sshOk = !!sshHost.trim() && (sshAuth === 'key' ? !!sshPrivateKey.trim() : !!sshPassword.trim())
-  const valid = !!name.trim() && (kind === 'docker' ? dockerOk : sshOk)
-
-  const submit = () => {
-    if (!valid || busy) return
-    const docker = kind === 'docker'
-    onSubmit({
-      name: name.trim(),
-      kind,
-      enabled,
-      workdir: workdir.trim() || null,
-      timeoutMs: positive(timeoutMs),
-      maxOutput: positive(maxOutput),
-      allowPatterns: linesToPatterns(allow),
-      denyPatterns: linesToPatterns(deny),
-      dockerHost: docker ? dockerHost.trim() || null : null,
-      image: docker ? image.trim() || null : null,
-      container: docker ? container.trim() || null : null,
-      sshHost: docker ? null : sshHost.trim(),
-      sshPort: docker ? null : positive(sshPort),
-      sshUser: docker ? null : sshUser.trim() || null,
-      sshAuth,
-      sshPassword: docker ? null : sshPassword || null,
-      sshPrivateKey: docker ? null : sshPrivateKey || null,
-      sshPassphrase: docker ? null : sshPassphrase || null,
-      hostKeyCheck,
-      note: note.trim() || null,
-    })
-  }
-
-  return (
-    <FloatWindow
-      title={initial ? '编辑工作空间' : '新建工作空间'}
-      onClose={onClose}
-      width={560}
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          submit()
-        }}
-        className="space-y-3"
-      >
-        <div className="flex flex-wrap gap-2">
-          <ModeBtn
-            active={kind === 'docker'}
-            title="Docker 容器"
-            desc="本机 docker 环境：指定既有容器，或给镜像自动起一个会话容器"
-            onClick={() => setKind('docker')}
-          />
-          <ModeBtn
-            active={kind === 'ssh'}
-            title="SSH 服务器"
-            desc="远程服务器：密码或私钥认证，直接操作其物理环境"
-            onClick={() => setKind('ssh')}
-          />
-        </div>
-
-        <Field label="工作空间名" hint="模型用这个名字指认环境，须唯一且好记，例如 web-01 / builder">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className={INPUT}
-            placeholder="web-01"
-            autoFocus
-          />
-        </Field>
-
-        {kind === 'docker' ? (
-          <>
-            <Field label="容器名 / ID" hint="直接 exec 进这个既有容器（与下面的镜像二选一）">
-              <input
-                value={container}
-                onChange={(e) => setContainer(e.target.value)}
-                className={`${INPUT} font-mono`}
-                placeholder={BRAND.backendContainer}
-                spellCheck={false}
-              />
-            </Field>
-            <Field
-              label="镜像"
-              hint={`未指定容器时按此镜像惰性起一个常驻会话容器（${BRAND.termPrefix}<工作空间名>）并复用`}
-            >
-              <input
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-                className={`${INPUT} font-mono`}
-                placeholder="ubuntu:24.04"
-                spellCheck={false}
-              />
-            </Field>
-            <Field
-              label="Docker Host"
-              hint="留空用环境默认；Linux/mac 通常 unix:///var/run/docker.sock，Windows 可填 npipe:////./pipe/docker_engine 或 tcp://localhost:2375"
-            >
-              <input
-                value={dockerHost}
-                onChange={(e) => setDockerHost(e.target.value)}
-                className={`${INPUT} font-mono`}
-                placeholder="（留空 = 环境默认）"
-                spellCheck={false}
-              />
-            </Field>
-          </>
-        ) : (
-          <>
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <Field label="主机">
-                  <input
-                    value={sshHost}
-                    onChange={(e) => setSshHost(e.target.value)}
-                    className={`${INPUT} font-mono`}
-                    placeholder="10.0.0.11 或 example.com"
-                    spellCheck={false}
-                  />
-                </Field>
-              </div>
-              <div className="w-24">
-                <Field label="端口">
-                  <input
-                    value={sshPort}
-                    onChange={(e) => setSshPort(e.target.value.replace(/[^\d]/g, ''))}
-                    className={`${INPUT} font-mono`}
-                    placeholder="22"
-                    inputMode="numeric"
-                    spellCheck={false}
-                  />
-                </Field>
-              </div>
-            </div>
-            <Field label="用户名">
-              <input
-                value={sshUser}
-                onChange={(e) => setSshUser(e.target.value)}
-                className={`${INPUT} font-mono`}
-                placeholder="root"
-                spellCheck={false}
-              />
-            </Field>
-            <Field label="认证方式">
-              <Select
-                value={sshAuth}
-                onChange={(v) => setSshAuth(v as 'password' | 'key')}
-                options={[
-                  { value: 'password', label: '密码' },
-                  { value: 'key', label: '私钥' },
-                ]}
-              />
-            </Field>
-            {sshAuth === 'password' ? (
-              <Field label="密码">
-                <input
-                  value={sshPassword}
-                  onChange={(e) => setSshPassword(e.target.value)}
-                  className={`${INPUT} font-mono`}
-                  type="password"
-                  autoComplete="off"
-                />
-              </Field>
-            ) : (
-              <>
-                <Field label="私钥" hint="直接粘贴 PEM 内容，或填服务器/本机上私钥文件的路径">
-                  <textarea
-                    value={sshPrivateKey}
-                    onChange={(e) => setSshPrivateKey(e.target.value)}
-                    className={`${INPUT} font-mono h-24`}
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY----- …"
-                    spellCheck={false}
-                  />
-                </Field>
-                <Field label="私钥口令" hint="私钥未加密时留空">
-                  <input
-                    value={sshPassphrase}
-                    onChange={(e) => setSshPassphrase(e.target.value)}
-                    className={`${INPUT} font-mono`}
-                    type="password"
-                    autoComplete="off"
-                  />
-                </Field>
-              </>
-            )}
-            <Field
-              label="Host Key 校验"
-              hint="known_hosts：首次连接自动记录该主机指纹并放行，之后逐次校验，指纹变化即拒绝；accept-all 完全不校验，仅限自建内网"
-            >
-              <Select
-                value={hostKeyCheck}
-                onChange={(v) => setHostKeyCheck(v as 'known_hosts' | 'accept-all')}
-                options={[
-                  { value: 'known_hosts', label: 'known_hosts（首次信任，推荐）' },
-                  { value: 'accept-all', label: 'accept-all（不校验）' },
-                ]}
-              />
-            </Field>
-          </>
-        )}
-
-        <Field label="工作目录" hint="工作空间的文件面以此目录为起点；每条命令也先 cd 进来。留空则用远端默认目录">
-          <input
-            value={workdir}
-            onChange={(e) => setWorkdir(e.target.value)}
-            className={`${INPUT} font-mono`}
-            placeholder="/srv/app"
-            spellCheck={false}
-          />
-        </Field>
-
-        <div className="flex gap-3">
-          <div className="flex-1">
-            <Field label="命令超时（毫秒）" hint="留空用全局默认；超时会被真的终止">
-              <input
-                value={timeoutMs}
-                onChange={(e) => setTimeoutMs(e.target.value.replace(/[^\d]/g, ''))}
-                className={`${INPUT} font-mono`}
-                placeholder="60000"
-                inputMode="numeric"
-                spellCheck={false}
-              />
-            </Field>
-          </div>
-          <div className="flex-1">
-            <Field label="输出上限（字符）" hint="留空用全局默认；超出部分截断并标注">
-              <input
-                value={maxOutput}
-                onChange={(e) => setMaxOutput(e.target.value.replace(/[^\d]/g, ''))}
-                className={`${INPUT} font-mono`}
-                placeholder="20000"
-                inputMode="numeric"
-                spellCheck={false}
-              />
-            </Field>
-          </div>
-        </div>
-
-        <Field label="命令白名单" hint="一行一条正则；非空时模型命令必须命中其一才放行">
-          <textarea
-            value={allow}
-            onChange={(e) => setAllow(e.target.value)}
-            className={`${INPUT} font-mono h-20`}
-            placeholder={'^\\s*(ls|cat|grep|df|docker ps)\\b'}
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="命令黑名单" hint="一行一条正则；命中即拒（先于白名单判定）">
-          <textarea
-            value={deny}
-            onChange={(e) => setDeny(e.target.value)}
-            className={`${INPUT} font-mono h-20`}
-            placeholder={'rm\\s+-rf\\s+/'}
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="说明" hint="给模型看的一句话：这台环境是什么、什么时候该用它">
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className={INPUT}
-            placeholder="生产 Web 服务器，只读排查用"
-          />
-        </Field>
-
-        <label className="flex cursor-pointer items-center gap-2 pt-1">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="h-3.5 w-3.5 accent-[color:var(--c-accent)]"
-          />
-          <span className="text-sm text-muted">
-            启用（模型可见可用；不启用则模型完全看不到这台环境）
-          </span>
-        </label>
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" className={btnOutline('rounded-sm')} onClick={onClose}>
-            取消
-          </button>
-          <button type="submit" className={btnPrimary('rounded-sm')} disabled={!valid || busy}>
-            {busy ? '保存中 …' : '保存'}
-          </button>
-        </div>
-      </form>
-    </FloatWindow>
-  )
-}
 
 /* ---------------- 文件浏览 ---------------- */
 
@@ -708,13 +376,7 @@ export default function Workspace() {
   const [probing, setProbing] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('target') || '')
 
-  const [runTargetId, setRunTargetId] = useState('')
-  const [runCmd, setRunCmd] = useState('')
-  const [running, setRunning] = useState(false)
-  const [lastRun, setLastRun] = useState<TerminalCommand | null>(null)
-  const [runErr, setRunErr] = useState<string | null>(null)
-  /* 试跑 / 最近执行收进浮窗，由页头按钮唤起 */
-  const [runDlg, setRunDlg] = useState(false)
+  const [shell, setShell] = useState<{ target: string } | null>(null)
   const [cmdDlg, setCmdDlg] = useState(false)
 
   const fail = useCallback((e: unknown): void => {
@@ -752,16 +414,17 @@ export default function Workspace() {
   /* 选中的工作空间：只有显式点选才激活（选中的被删掉即回到未选中）——渲染期直接推导，
      避免用「同步 state 的 effect」再触发一轮渲染 */
   const selected = targets.find((t) => t.id === selectedId) ?? null
-  const runTarget = targets.find((t) => t.id === runTargetId) ?? null
 
   /** 统一提交：成功后以后端返回的最新视图覆盖本地，并提示结果 */
-  const runView = async (fn: () => Promise<TerminalView>, ok: string): Promise<void> => {
+  const runView = async (fn: () => Promise<TerminalView>, ok: string): Promise<boolean> => {
     setBusy(true)
     try {
       setView(await fn())
       setToast({ kind: 'success', msg: ok })
+      return true
     } catch (e) {
       fail(e)
+      return false
     } finally {
       setBusy(false)
     }
@@ -769,11 +432,11 @@ export default function Workspace() {
 
   const submitTarget = async (req: TerminalTargetRequest) => {
     const editing = dlg?.editing ?? null
-    await runView(
+    const saved = await runView(
       () => (editing ? updateTerminalTarget(editing.id, req) : createTerminalTarget(req)),
       editing ? '工作空间已更新' : '工作空间已创建',
     )
-    setDlg(null)
+    if (saved) setDlg(null)
   }
 
   const removeTarget = (t: TerminalTarget) => {
@@ -800,22 +463,6 @@ export default function Workspace() {
     }
   }
 
-  const runNow = async () => {
-    if (!runTarget || !runCmd.trim()) return
-    setRunning(true)
-    setRunErr(null)
-    try {
-      const r = await runTerminalCommand(runTarget.id, runCmd.trim())
-      setLastRun(r)
-      refreshCommands()
-    } catch (e) {
-      setLastRun(null)
-      setRunErr(errMsg(e))
-    } finally {
-      setRunning(false)
-    }
-  }
-
   return (
     /* 满幅页：lg 档把 kit.Page 的 section 拉伸到视口高（App 路由已给 h-full），
        两栏列表与文件浏览器各自内部滚动 */
@@ -834,7 +481,7 @@ export default function Workspace() {
           </button>
         }
       >
-        {/* 页头动作条：左侧定位说明，右侧收进浮窗的试跑与执行记录（把版面让给文件浏览器） */}
+        {/* 页头动作条：左侧定位说明，右侧收进浮窗的 Shell 与执行记录（把版面让给文件浏览器） */}
         <kit.Toolbar
           left={
             <p className="max-w-2xl leading-relaxed">
@@ -845,8 +492,8 @@ export default function Workspace() {
           }
           right={
             <>
-              <button type="button" className={btnQuiet('rounded-sm')} onClick={() => setRunDlg(true)}>
-                人工试跑
+              <button type="button" className={btnQuiet('rounded-sm')} onClick={() => setShell({ target: selected?.id || targets.find(t => t.enabled)?.id || '' })}>
+                <AppIcon name="terminal" />Shell
               </button>
               <button
                 type="button"
@@ -926,16 +573,13 @@ export default function Workspace() {
                       <button
                         type="button"
                         className={miniBtn}
-                        disabled={busy}
+                        disabled={busy || !t.enabled}
                         onClick={() => {
-                          setRunTargetId(t.id)
                           setSelectedId(t.id)
-                          setLastRun(null)
-                          setRunErr(null)
-                          setRunDlg(true)
+                          setShell({ target: t.id })
                         }}
                       >
-                        试跑
+                        Shell
                       </button>
                       <button type="button" className={miniBtn} disabled={busy} onClick={() => removeTarget(t)}>
                         删除
@@ -960,69 +604,14 @@ export default function Workspace() {
           )}
         </div>
 
-        {/* 人工试跑：页头按钮唤起的浮窗 */}
-        {runDlg && (
-          <FloatWindow title="人工试跑" onClose={() => setRunDlg(false)} width={640}>
-            <p className="text-xs leading-relaxed text-hint">
-              与模型走同一条执行路径：同样上白名单 / 黑名单与超时，同样记入「最近执行」。
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <div className="w-44 shrink-0">
-                <Select
-                  value={runTargetId}
-                  onChange={setRunTargetId}
-                  options={[
-                    { value: '', label: '选择工作空间 …' },
-                    ...targets.map((t) => ({ value: t.id, label: t.name })),
-                  ]}
-                />
-              </div>
-              <input
-                value={runCmd}
-                onChange={(e) => setRunCmd(e.target.value)}
-                className={`${INPUT} min-w-[180px] flex-1 font-mono`}
-                placeholder="uname -a"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                className={btnPrimary('rounded-sm')}
-                disabled={running || !runTarget || !runCmd.trim()}
-                onClick={() => void runNow()}
-              >
-                {running ? '执行中 …' : '执行'}
-              </button>
-            </div>
-            {runErr && (
-              <p className="mt-3 rounded-md border border-danger bg-fg/[0.03] px-3 py-3 text-xs leading-relaxed text-muted">
-                {runErr}
-              </p>
-            )}
-            {lastRun && (
-              <div className="mt-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <kit.Badge tone={lastRun.ok ? 'ok' : 'danger'}>
-                    {lastRun.exitCode == null ? 'exit ?' : `exit ${lastRun.exitCode}`}
-                  </kit.Badge>
-                  <span className="mono text-2xs text-dim">{lastRun.durationMs} ms</span>
-                  {lastRun.timedOut && <kit.Badge tone="warn">已超时终止</kit.Badge>}
-                  {lastRun.truncated && <kit.Badge tone="warn">输出已截断</kit.Badge>}
-                </div>
-                <pre className="scrollbar-slim mt-2 max-h-[45vh] select-text overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.03] p-3 font-mono text-xs leading-5 text-muted">
-                  {lastRun.stdout?.trim() || '（无输出）'}
-                  {lastRun.stderr?.trim() ? `\n--- stderr ---\n${lastRun.stderr.trim()}` : ''}
-                </pre>
-              </div>
-            )}
-          </FloatWindow>
-        )}
+        {shell && <WorkspaceShell targets={targets} initialTarget={shell.target} onClose={() => setShell(null)} />}
 
         {/* 最近执行：页头按钮唤起的浮窗 */}
         {cmdDlg && (
           <FloatWindow title="最近执行" onClose={() => setCmdDlg(false)} width={560}>
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs leading-relaxed text-hint">
-                最近 20 条命令记录，人工试跑与模型执行都在此。
+                最近 20 条单次命令记录；交互式 Shell 命令不在此列表中。
               </p>
               <button type="button" className={`${miniBtn} shrink-0`} onClick={refreshCommands}>
                 刷新

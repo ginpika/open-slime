@@ -16,6 +16,10 @@ import org.springframework.stereotype.Component;
 /** Independent task snapshots. The model never writes into the user's original checkout. */
 @Component
 public class CodingWorkspace {
+    /** A recoverable integration disagreement; neither the project nor this copy was overwritten. */
+    public static final class ApplicationConflict extends IllegalArgumentException {
+        public ApplicationConflict(String path) { super("APPLICATION_CONFLICT：同一路径已被其他执行修改："+path+"；保留当前副本与项目内容，请主控决定整合"); }
+    }
     private final CodingProps props;
     private final ObjectMapper json;
     private String databaseUrl="jdbc:sqlite:../data/minis.db";
@@ -42,6 +46,10 @@ public class CodingWorkspace {
         return root().resolve("runs").resolve(id);
     }
     public Path checkout(String id) { return task(id).resolve("checkout"); }
+    public void requireConsistent(String id) {
+        if(Files.exists(task(id).resolve("integration-journal.json")))
+            throw new IllegalStateException("副本整合曾中断，保留现场，请检查 integration-journal.json 后恢复，不能继续应用");
+    }
     public Path registerPath(String input) {
         try {
             Path source=Path.of(input).toRealPath();
@@ -52,8 +60,9 @@ public class CodingWorkspace {
             return source;
         } catch (Exception e) { throw new IllegalArgumentException("仓库不可用："+e.getMessage(),e); }
     }
-    public void prepare(String id,Repository repo) {
+    public synchronized void prepare(String id,Repository repo) {
         try {
+            requireConsistent(id);
             Path task=task(id), work=checkout(id), baseline=task.resolve("baseline");
             if (Files.exists(task.resolve("baseline.json"))) { if (!Files.isDirectory(work)) { throw new IllegalStateException("任务文件已丢失"); } return; }
             Files.createDirectories(work); Files.createDirectories(baseline);
@@ -84,6 +93,7 @@ public class CodingWorkspace {
     }
     /** Initialize a task from a validated workspace archive; source remains in Docker/SSH. */
     public void prepareImported(String id,Map<String,byte[]> content,Set<String> executable) throws Exception {
+        requireConsistent(id);
         if(Files.isRegularFile(task(id).resolve("baseline.json"))){return;}
         Path work=checkout(id), baseline=task(id).resolve("baseline");
         Files.createDirectories(work);Files.createDirectories(baseline);
@@ -173,7 +183,79 @@ public class CodingWorkspace {
     }
     public String treeHash(String id) { try { return hash(json.writeValueAsBytes(manifest(id))); } catch (Exception e) { throw new IllegalStateException(e); } }
     public Diff diff(String id) {
+        requireConsistent(id);
         synchronized(gitLocks.computeIfAbsent(id,ignored->new Object())){return computeDiff(id);}
+    }
+    /** Refresh untouched paths only. Overlapping edits are a conflict, never a last-writer-wins merge. */
+    public boolean integrateImported(String id,Map<String,byte[]> source,Set<String> executable) throws Exception {
+        synchronized(mutex(id)) {
+            requireConsistent(id);
+            if(Files.exists(task(id).resolve("accept-journal.json")))throw new IllegalStateException("接受结果尚未确认，不能整合");
+            var before=baseline(id); var artifact=diff(id); var incoming=new TreeMap<String,FileStamp>();
+            long size=0;
+            for(var e:source.entrySet()) {
+                resolve(checkout(id),e.getKey(),true); size+=e.getValue().length;
+                if(excluded(e.getKey()))throw new IllegalArgumentException("整合文件路径无效："+e.getKey());
+                incoming.put(e.getKey(),new FileStamp(hash(e.getValue()),e.getValue().length,executable.contains(e.getKey())));
+            }
+            if(source.size()>props.getMaxFiles() || size>props.getMaxWorkspaceBytes())throw new IllegalArgumentException("整合快照超过上限");
+            if(before.equals(incoming) || matchesApplied(id,artifact,incoming))return false;
+            for(Change c:artifact.changes())if(!Objects.equals(before.get(c.path()),incoming.get(c.path())))
+                throw new ApplicationConflict(c.path());
+            var previous=manifest(id); var oldWork=contents(id,previous.keySet(),checkout(id));
+            var oldBase=contents(id,before.keySet(),task(id).resolve("baseline"));
+            var merged=new TreeMap<>(source);var mergedModes=new HashSet<>(executable);
+            for(Change c:artifact.changes()) {
+                if("MISSING".equals(c.afterHash())){merged.remove(c.path());mergedModes.remove(c.path());}
+                else {merged.put(c.path(),oldWork.get(c.path()));if(c.executable())mergedModes.add(c.path());else mergedModes.remove(c.path());}
+            }
+            String head=git(checkout(id),"rev-parse","HEAD").strip();
+            Path journal=task(id).resolve("integration-journal.json");
+            json.writeValue(journal.toFile(),Map.of("head",head,"artifactHash",artifact.artifactHash(),"baseline",before));
+            try {
+                replaceImported(id,source,executable);
+                git(checkout(id),"read-tree","--empty");
+                if(!source.isEmpty())stagePaths(id,source.keySet(),"integration-paths.txt");
+                git(checkout(id),"-c","user.name=Minis Coding","-c","user.email=coding@localhost","commit","--quiet","--allow-empty","--no-verify","-m","Integrated source baseline");
+                replaceBaseline(id,before.keySet(),source,executable);
+                json.writeValue(task(id).resolve("baseline.json").toFile(),incoming);
+                replaceImported(id,merged,mergedModes);
+                Files.delete(journal);
+                return true;
+            } catch(Exception error) {
+                try {
+                    replaceImported(id,oldWork,modes(previous));replaceBaseline(id,incoming.keySet(),oldBase,modes(before));
+                    json.writeValue(task(id).resolve("baseline.json").toFile(),before);
+                    git(checkout(id),"update-ref","HEAD",head);git(checkout(id),"read-tree","HEAD");Files.deleteIfExists(journal);
+                } catch(Exception rollback){error.addSuppressed(rollback);}
+                throw error;
+            }
+        }
+    }
+    private Map<String,byte[]> contents(String id,Collection<String> names,Path root) throws Exception {
+        var out=new TreeMap<String,byte[]>();for(String name:names)out.put(name,Files.readAllBytes(resolve(root,name,false)));return out;
+    }
+    private static Set<String> modes(Map<String,FileStamp> stamps) {
+        var out=new HashSet<String>();stamps.forEach((name,stamp)->{if(stamp.executable())out.add(name);});return out;
+    }
+    private void replaceBaseline(String id,Collection<String> previous,Map<String,byte[]> source,Set<String> modes) throws Exception {
+        Path root=task(id).resolve("baseline");
+        for(String name:previous)if(!source.containsKey(name))writeFile(root,name,null);
+        for(var e:source.entrySet()){writeFile(root,e.getKey(),e.getValue());resolve(root,e.getKey(),false).toFile().setExecutable(modes.contains(e.getKey()),false);}
+    }
+    public synchronized boolean integrate(String id,Repository repo) throws Exception {
+        Path source=registerPath(repo.path());var content=new TreeMap<String,byte[]>();var modes=new HashSet<String>();
+        long size=0;
+        for(String name:git(source,"ls-files","--cached","--others","--exclude-standard","-z").split("\u0000")) {
+            if(name.isBlank() || excluded(name))continue;
+            Path path=resolve(source,name,true);if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS))continue;
+            size+=Files.size(path);
+            if(content.size()>=props.getMaxFiles() || size>props.getMaxWorkspaceBytes())throw new IllegalArgumentException("整合快照超过上限");
+            content.put(name,Files.readAllBytes(path));if(Files.isExecutable(path))modes.add(name);
+        }
+        boolean changed=integrateImported(id,content,modes);
+        if(changed)json.writeValue(task(id).resolve("source.json").toFile(),Map.of("head",git(source,"rev-parse","HEAD").strip(),"path",source.toString()));
+        return changed;
     }
     public Object mutex(String id){return gitLocks.computeIfAbsent(id,ignored->new Object());}
     private Diff computeDiff(String id) {
@@ -252,9 +334,21 @@ public class CodingWorkspace {
     public synchronized Diff accept(String id,Repository repo,String expected) throws Exception {
         Diff diff=diff(id);
         if(!Objects.equals(diff.artifactHash(),expected)) { throw new IllegalArgumentException("产物已变化，请重新审查"); }
+        if(Files.exists(task(id).resolve("accept-journal.json")))throw new IllegalArgumentException("上次接受结果未确认，请先检查接受日志");
         Path source=registerPath(repo.path());
         JsonNode sourceInfo=json.readTree(task(id).resolve("source.json").toFile());
         if(!sourceInfo.path("head").asText().equals(git(source,"rev-parse","HEAD").strip())) { throw new IllegalArgumentException("原仓库 HEAD 已变化，拒绝覆盖"); }
+        var current=new TreeMap<String,FileStamp>();
+        var relevant=new TreeSet<>(baseline(id).keySet());diff.changes().forEach(c->relevant.add(c.path()));
+        for(String name:git(source,"ls-files","--cached","--others","--exclude-standard","-z").split("\u0000"))
+            if(!name.isBlank() && !excluded(name))relevant.add(name);
+        for(String name:relevant){
+            Path path=resolve(source,name,true);
+            if(Files.isRegularFile(path))current.put(name,new FileStamp(hash(Files.readAllBytes(path)),Files.size(path),Files.isExecutable(path)));
+            else if(Files.exists(path))throw new IllegalArgumentException("原仓库路径不是普通文件："+name);
+        }
+        if(matchesApplied(id,diff,current)){confirmApplied(id,diff);return diff;}
+        if(!baseline(id).equals(current))throw new IllegalArgumentException("项目基准已变化，请先整合并重新 verify；拒绝覆盖");
         for(var entry:baseline(id).entrySet()) {
             Path p=resolve(source,entry.getKey(),true);
             if(!Files.exists(p) || !hash(Files.readAllBytes(p)).equals(entry.getValue().hash())) { throw new IllegalArgumentException("原仓库已变化："+entry.getKey()); }
@@ -275,6 +369,27 @@ public class CodingWorkspace {
         }
         Files.move(task(id).resolve("accept-journal.json"),task(id).resolve("accepted.json"),StandardCopyOption.REPLACE_EXISTING);
         return diff;
+    }
+    /** Confirm a complete exact after-image, never merge or overwrite a concurrent source change. */
+    public boolean matchesApplied(String id,Diff diff,Map<String,FileStamp> current){
+        var expected=appliedManifest(id,diff);
+        return expected.equals(current);
+    }
+    public Map<String,FileStamp> appliedManifest(String id,Diff diff){
+        var expected=new TreeMap<>(baseline(id));
+        for(Change change:diff.changes()){
+            if("MISSING".equals(change.afterHash()))expected.remove(change.path());
+            else expected.put(change.path(),new FileStamp(change.afterHash(),change.size(),change.executable()));
+        }
+        return expected;
+    }
+    public void confirmApplied(String id,Diff diff) throws Exception {
+        json.writeValue(task(id).resolve("application-confirmed.json").toFile(),Map.of("artifactHash",diff.artifactHash(),"mode","EXISTING_CONTENT","confirmedAt",System.currentTimeMillis()));
+        json.writeValue(task(id).resolve("accepted.json").toFile(),diff);
+    }
+    public boolean confirmedExisting(String id,String hash) throws Exception {
+        Path receipt=task(id).resolve("application-confirmed.json");
+        return Files.isRegularFile(receipt) && hash.equals(json.readTree(receipt.toFile()).path("artifactHash").asText());
     }
     private void writeFile(Path root,String path,byte[] bytes) throws Exception {
         Path target=resolve(root,path,true);

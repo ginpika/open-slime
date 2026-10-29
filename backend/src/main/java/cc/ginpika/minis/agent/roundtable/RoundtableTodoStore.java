@@ -12,8 +12,8 @@ import org.springframework.stereotype.Repository;
  * 圆桌共享任务区（{@code roundtable_todo}）的读写口：讨论态与执行态之间的任务板。
  *
  * <p>与 {@code chat_todo}（单会话、全量覆盖、写者自用）不同，这是<b>会话级共享板</b>：
- * 同一张桌子上所有成员都能看到、都能增删改；每一项可指定负责人（{@code owner_peer}），
- * 未指定即公共。它是「讨论 → 开工 → 遇阻 → 再讨论」这条全链路 loop 的共享状态。
+ * 同一张桌子上所有成员都能看到；计划修改权由主控工具边界控制。每一项可指定负责人（{@code owner_peer}），
+ * 未指定即历史公共条目。它是「规划 → 执行 → 检查 → 主控决策」闭环的共享状态。
  *
  * <p>状态：{@code pending}（待做）→ {@code doing}（进行中）→ {@code done}（完成）；
  * 途中卡住置 {@code blocked}（附原因，等讨论处理）；不再需要的置 {@code dropped}。
@@ -29,6 +29,8 @@ public class RoundtableTodoStore {
     public static final String STATUS_PENDING = "pending";
     /** 进行中 */
     public static final String STATUS_DOING = "doing";
+    public static final String STATUS_REVIEWING = "reviewing";
+    public static final String STATUS_CHECKING = "checking";
     /** 受阻（等讨论处理） */
     public static final String STATUS_BLOCKED = "blocked";
     /** 已完成 */
@@ -138,6 +140,56 @@ public class RoundtableTodoStore {
     public Optional<TodoRow> todo(String id) {
         return jdbc.query("SELECT " + COLS + " FROM roundtable_todo WHERE id = ?",
                 RoundtableTodoStore::map, id).stream().findFirst();
+    }
+
+    /** SQL compare-and-set is the ownership boundary, including for public work. */
+    public Optional<TodoRow> claim(String sessionId, String peerId) {
+        for (TodoRow candidate : claimable(sessionId, peerId)) {
+            if (jdbc.update("UPDATE roundtable_todo SET status='doing',owner_peer=?,updated_at=? "
+                    + "WHERE id=? AND session_id=? AND status='pending' "
+                    + "AND (owner_peer=? OR owner_peer IS NULL)", peerId, System.currentTimeMillis(),
+                    candidate.id(), sessionId, peerId) == 1) return todo(candidate.id());
+        }
+        return Optional.empty();
+    }
+
+    /** A controller dispatch grants exactly one item; never fall through to another pending item. */
+    public Optional<TodoRow> claimAssigned(String session, String peer, String todo, boolean review) {
+        if (review) {
+            return reviewable(session, peer).stream().filter(t -> t.id().equals(todo)).findFirst()
+                    .filter(t -> transition(todo, session, STATUS_REVIEWING, STATUS_CHECKING, null, null))
+                    .flatMap(t -> todo(todo));
+        }
+        return claimable(session, peer).stream().filter(t -> t.id().equals(todo)).findFirst()
+                .filter(t -> jdbc.update("UPDATE roundtable_todo SET status='doing',owner_peer=?,updated_at=? "
+                        + "WHERE id=? AND session_id=? AND status='pending' AND (owner_peer=? OR owner_peer IS NULL)",
+                        peer, System.currentTimeMillis(), todo, session, peer) == 1).flatMap(t -> todo(todo));
+    }
+
+    public void revise(String id, String title, String dependsOn) {
+        jdbc.update("UPDATE roundtable_todo SET title=COALESCE(?,title),depends_on=COALESCE(?,depends_on),updated_at=? WHERE id=?",
+                title, dependsOn, System.currentTimeMillis(), id);
+    }
+
+    public List<TodoRow> reviewable(String sessionId, String peerId) {
+        return jdbc.query("SELECT " + COLS + " FROM roundtable_todo WHERE session_id=? "
+                + "AND status='reviewing' AND owner_peer IS NOT NULL AND owner_peer<>? ORDER BY seq",
+                RoundtableTodoStore::map, sessionId, peerId);
+    }
+
+    public Optional<TodoRow> claimReview(String sessionId, String peerId) {
+        for (TodoRow candidate : reviewable(sessionId, peerId)) {
+            if (transition(candidate.id(), sessionId, STATUS_REVIEWING, STATUS_CHECKING, null, null))
+                return todo(candidate.id());
+        }
+        return Optional.empty();
+    }
+
+    /** Expected state prevents a late worker from overwriting user intervention. */
+    public boolean transition(String id, String session, String expected, String status, String result, String reason) {
+        return jdbc.update("UPDATE roundtable_todo SET status=?,result=COALESCE(?,result),block_reason=?,updated_at=? "
+                + "WHERE id=? AND session_id=? AND status=?", status, result, reason,
+                System.currentTimeMillis(), id, session, expected) == 1;
     }
 
     /** 改状态（可同时写结论 / 受阻原因 / 负责人） */

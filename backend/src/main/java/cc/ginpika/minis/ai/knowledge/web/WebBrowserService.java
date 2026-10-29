@@ -28,6 +28,7 @@ public class WebBrowserService {
     @Value("${minis.web.timezone:Asia/Shanghai}") private String timezone = "Asia/Shanghai";
     private String userAgent;
     private final Map<String, Session> sessions = new LinkedHashMap<>();
+    private long selectionOrder;
     private final Map<String, OwnedCapture> captures = new LinkedHashMap<>();
     private Playwright playwright;
     private Browser browser;
@@ -38,11 +39,13 @@ public class WebBrowserService {
         final String id = UUID.randomUUID().toString();
         final String owner, chat;
         final BrowserContext context;
+        final boolean interactive;
         final Page page;
         int status;
         long touched = System.currentTimeMillis();
-        Session(String owner, String chat, BrowserContext context) {
-            this.owner = owner; this.chat = chat; this.context = context; this.page = context.newPage();
+        long selected;
+        Session(String owner, String chat, BrowserContext context, boolean interactive) {
+            this.owner = owner; this.chat = chat; this.context = context; this.interactive = interactive; this.page = context.newPage();
         }
     }
     private record OwnedCapture(String owner, WebDtos.Capture capture) {}
@@ -109,7 +112,7 @@ public class WebBrowserService {
         }
     }
 
-    private Session newSession(String owner, String chat) {
+    private Session newSession(String owner, String chat, boolean interactive) {
         launch();
         if (sessions.size() >= 8) throw new IllegalStateException("浏览器会话已达 8 个，请先关闭不用的浏览器");
         BrowserContext context = browser.newContext(new Browser.NewContextOptions()
@@ -120,45 +123,102 @@ public class WebBrowserService {
         context.route("**/*", route -> {
             try {
                 String method = route.request().method();
-                if (!Set.of("GET", "HEAD", "OPTIONS").contains(method)) { route.abort(); return; }
+                if (!interactive && !Set.of("GET", "HEAD", "OPTIONS").contains(method)) { route.abort(); return; }
                 policy.validate(route.request().url());
                 route.resume();
             } catch (Exception e) { route.abort(); }
         });
-        context.routeWebSocket("**/*", socket -> socket.close());
+        context.routeWebSocket("**/*", socket -> {
+            try {
+                if (!interactive) { socket.close(new WebSocketRoute.CloseOptions().setCode(1008).setReason("Read-only browser")); return; }
+                policy.validate(socket.url().replaceFirst("(?i)^wss:","https:").replaceFirst("(?i)^ws:","http:"));
+                socket.connectToServer();
+            } catch (Exception e) { socket.close(new WebSocketRoute.CloseOptions().setCode(1008).setReason("Public connections only")); }
+        });
         context.addInitScript("window.RTCPeerConnection = undefined;");
         context.setDefaultTimeout(8_000);
         context.setDefaultNavigationTimeout(25_000);
-        Session session = new Session(owner, chat, context);
+        Session session = new Session(owner, chat, context, interactive);
         session.page.onResponse(response -> {
             if (response.request().isNavigationRequest() && response.request().frame() == session.page.mainFrame()) session.status = response.status();
         });
         session.page.onDialog(Dialog::dismiss);
         context.onPage(page -> { if (page != session.page) page.close(); });
         sessions.put(session.id, session);
+        touch(session);
         return session;
+    }
+
+    private void touch(Session session) {
+        session.touched = System.currentTimeMillis();
+        session.selected = ++selectionOrder;
     }
 
     private Session session(String id, String owner) {
         Session session = sessions.get(id);
         if (session == null || !session.owner.equals(owner)) throw new IllegalArgumentException("浏览器会话不存在或不属于当前执行，请重新打开");
-        session.touched = System.currentTimeMillis();
+        touch(session);
         return session;
     }
 
+    private Session currentSession(String owner, String chat) {
+        if (chat == null || chat.isBlank()) return null;
+        return sessions.values().stream()
+                .filter(s -> s.owner.equals(owner) && chat.equals(s.chat))
+                .max(Comparator.comparingLong(s -> s.selected)).orElse(null);
+    }
+
+    private Session resolveSession(String id, String owner, String chat) {
+        if (id != null && !id.isBlank()) {
+            Session s = sessions.get(id);
+            if (s == null || !s.owner.equals(owner) || !Objects.equals(s.chat, chat))
+                throw new IllegalArgumentException("浏览器会话不存在或不属于当前会话，请先 list 查看已有页面");
+            return session(id, owner);
+        }
+        Session s = currentSession(owner, chat);
+        if (s == null) throw new IllegalArgumentException("当前没有打开的网页，请先 open 一个网页");
+        touch(s);
+        return s;
+    }
+
+    public List<WebDtos.BrowserTab> tabs(String owner, String chat) {
+        return execute(() -> {
+            Session current = currentSession(owner, chat);
+            return sessions.values().stream()
+                    .filter(s -> s.owner.equals(owner) && Objects.equals(chat, s.chat))
+                    .map(s -> new WebDtos.BrowserTab(s.id, s.page.url(), s.page.title(), s == current))
+                    .toList();
+        });
+    }
+
     public WebDtos.BrowserView command(String owner, String chat, WebDtos.Command command, boolean screenshot) {
+        return command(owner,chat,command,screenshot,false);
+    }
+
+    /** Only an authenticated human controller can create or operate an interactive economic browser. */
+    public WebDtos.BrowserView interactiveCommand(String owner, WebDtos.Command command) {
+        if (!owner.startsWith("human:")) throw new IllegalArgumentException("交互浏览器仅向用户开放");
+        return command(owner,null,command,true,true);
+    }
+
+    private WebDtos.BrowserView command(String owner, String chat, WebDtos.Command command, boolean screenshot, boolean interactive) {
         if (command == null || command.action() == null) throw new IllegalArgumentException("缺少浏览器 action");
         return execute(() -> {
-            boolean creating = command.browserId() == null || command.browserId().isBlank();
-            if (creating && !"open".equals(command.action())) throw new IllegalArgumentException("请先 open 一个网页，然后带 browser_id 操作");
-            if ("open".equals(command.action())) policy.validate(command.url());
-            Session s = creating
-                    ? newSession(owner, chat) : session(command.browserId(), owner);
+            boolean implicit = command.browserId() == null || command.browserId().isBlank();
+            boolean opening = "open".equals(command.action()) || "new_tab".equals(command.action());
+            String url = opening ? policy.validate(command.url()) : null;
+            boolean creating = "new_tab".equals(command.action())
+                    || ("open".equals(command.action()) && implicit && currentSession(owner, chat) == null);
+            if ("new_tab".equals(command.action()) && !implicit)
+                throw new IllegalArgumentException("new_tab 不接受 browser_id；导航已有页面请使用 open");
+            Session s = creating ? newSession(owner, chat, interactive) : resolveSession(command.browserId(), owner, chat);
+            if (s.interactive != interactive && !"read".equals(command.action())) throw new IllegalArgumentException("浏览器用途不匹配，请重新打开");
             Page page = s.page;
             try {
             switch (command.action()) {
-                case "open" -> {
-                    String url = policy.validate(command.url());
+                case "open", "new_tab" -> {
+                    // A model may repeat open after losing tool history. Preserve the live DOM and scroll position.
+                    if (!creating && implicit && url.equals(page.url())) break;
                     Response response = page.navigate(url, new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
                     policy.validate(page.url());
                     if (response != null && response.status() >= 400 && response.status() != 403 && response.status() != 429)
@@ -166,6 +226,11 @@ public class WebBrowserService {
                 }
                 case "read" -> { }
                 case "click" -> {
+                    if (command.ref() == null && command.x() != null && command.y() != null) {
+                        page.mouse().click(coordinate(command.x(), 1279), coordinate(command.y(), 799),
+                                new Mouse.ClickOptions().setClickCount("double".equals(command.text()) ? 2 : 1));
+                        break;
+                    }
                     Locator target = target(page, command.ref());
                     target.evaluate("e => { if(e.tagName === 'A') e.target='_self'; }");
                     target.click();
@@ -173,8 +238,22 @@ public class WebBrowserService {
                 case "fill" -> target(page, command.ref()).fill(command.text() == null ? "" : command.text());
                 case "press" -> {
                     String key = command.text() == null ? "Enter" : command.text();
-                    if (!Set.of("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp").contains(key)) throw new IllegalArgumentException("不支持的按键");
-                    target(page, command.ref()).press(key);
+                    if (!Set.of("Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Backspace", "Delete", "ControlOrMeta+A", "+", "-").contains(key)) throw new IllegalArgumentException("不支持的按键");
+                    if (command.ref() == null) page.keyboard().press(key);
+                    else target(page, command.ref()).press(key);
+                }
+                case "type" -> {
+                    if (command.text() == null || command.text().length() > 4000) throw new IllegalArgumentException("输入文字最多 4000 字符");
+                    page.keyboard().insertText(command.text());
+                }
+                case "double_click" -> page.mouse().dblclick(coordinate(command.x(),1279), coordinate(command.y(),799));
+                case "drag" -> {
+                    double x = coordinate(command.x(),1279), y = coordinate(command.y(),799);
+                    if (command.deltaX() == null || command.deltaY() == null) throw new IllegalArgumentException("缺少拖动终点");
+                    double endX = coordinate(x + command.deltaX(),1279), endY = coordinate(y + command.deltaY(),799);
+                    page.mouse().move(x,y); page.mouse().down();
+                    try { page.mouse().move(endX,endY,new Mouse.MoveOptions().setSteps(12)); }
+                    finally { page.mouse().up(); }
                 }
                 case "scroll" -> {
                     if (command.x() != null && command.y() != null)
@@ -202,6 +281,12 @@ public class WebBrowserService {
         Locator locator = page.locator("[data-minis-ref=\"" + ref + "\"]");
         if (locator.count() != 1) throw new IllegalArgumentException("元素已过期，请重新 read");
         return locator;
+    }
+
+    private static double coordinate(Number value, int max) {
+        if (value == null || !Double.isFinite(value.doubleValue()) || value.doubleValue() < 0 || value.doubleValue() > max)
+            throw new IllegalArgumentException("浏览器坐标超出画面范围");
+        return value.doubleValue();
     }
 
     private static double wheelDelta(double delta) {
@@ -246,9 +331,15 @@ public class WebBrowserService {
     }
 
     public WebDtos.Capture capture(String owner, String browserId, WebDtos.MediaOptions options) {
+        return capture(owner, null, browserId, options);
+    }
+
+    public WebDtos.Capture capture(String owner, String chat, String browserId, WebDtos.MediaOptions options) {
         WebDtos.MediaOptions media = options == null ? WebDtos.MediaOptions.defaults() : options;
         return execute(() -> {
-            Session s = session(browserId, owner);
+            // Existing direct API callers identify an owned browser; Agent calls also enforce the chat boundary.
+            Session s = chat == null && browserId != null && !browserId.isBlank()
+                    ? session(browserId, owner) : resolveSession(browserId, owner, chat);
             policy.validate(s.page.url());
             String body = s.page.locator("body").innerText();
             if (isBlocked(s, body)) throw new IllegalStateException("当前页面为验证或访问拦截页" + (s.status >= 400 ? "（HTTP " + s.status + "）" : "") + "，请先在浏览器中处理");

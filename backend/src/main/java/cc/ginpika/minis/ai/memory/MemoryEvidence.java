@@ -11,9 +11,13 @@ public final class MemoryEvidence {
     private MemoryEvidence() { }
 
     public static String ref(String kind, long id, String text) {
+        return ref(kind, id, text, System.currentTimeMillis());
+    }
+
+    public static String ref(String kind, long id, String text, long observedAt) {
         ArrayNode refs = JSON.createArrayNode();
         refs.addObject().put("ref", kind + ":" + id).put("text", text == null ? "" : text)
-                .put("observedAt", System.currentTimeMillis());
+                .put("observedAt", observedAt);
         return refs.toString();
     }
 
@@ -36,6 +40,22 @@ public final class MemoryEvidence {
     public static int count(String refs) {
         try { return JSON.readTree(merge(null, refs)).size(); }
         catch (Exception ignored) { return 0; }
+    }
+
+    /** 兼容早期的事件 ID 数组和现在的带类型证据引用。 */
+    public static java.util.Set<String> references(String refs) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        try {
+            JsonNode arr = JSON.readTree(refs == null ? "[]" : refs);
+            if (arr != null && arr.isArray()) {
+                for (JsonNode n : arr) {
+                    String ref = n.isObject() ? n.path("ref").asText("")
+                            : n.isNumber() ? "memory_event:" + n.asLong() : n.asText("");
+                    if (!ref.isBlank()) { out.add(ref); }
+                }
+            }
+        } catch (Exception ignored) { }
+        return out;
     }
 
     public static long latestObservation(String refs) {

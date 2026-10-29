@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { deleteStatsPrice, loginUrlOf, saveStatsPrice, type StatsModel, type StatsPrice, type StatsView } from '../../api/client'
 import { Button } from '../../components/ui'
+import { Select } from '../../components/Select'
 import { amount, statsError } from './format'
 
 export function PriceEditor({ data, target, onSaved }: {
@@ -52,7 +53,7 @@ export function PriceEditor({ data, target, onSaved }: {
         <label className="usage-field usage-field--wide"><span>供应商端点</span><input value={provider} onChange={e => setProvider(e.target.value)} placeholder="https://api.example.com/v1" maxLength={2000} /><small>留空仅匹配供应商未知的历史记录。不要填写密钥。</small></label>
         <label className="usage-field"><span>模型名</span><input required value={model} onChange={e => setModel(e.target.value)} maxLength={300} /></label>
         <label className="usage-field"><span>生效日期</span><input required type="date" min="1970-01-01" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} /></label>
-        <label className="usage-field"><span>币种</span><select value={currency} onChange={e => setCurrency(e.target.value)}>{[...new Set(['CNY', 'USD', 'EUR', 'JPY', 'GBP', 'HKD', currency])].map(c => <option key={c}>{c}</option>)}</select></label>
+        <div className="usage-field"><span>币种</span><Select label="币种" value={currency} onChange={setCurrency} size="compact" options={[...new Set(['CNY', 'USD', 'EUR', 'JPY', 'GBP', 'HKD', currency])].map(c => ({ value: c, label: c }))} /></div>
         <label className="usage-field"><span>输入 / 百万 Token</span><input required type="number" min="0" max="1000000000" step="0.00000001" value={input} onChange={e => setInput(e.target.value)} placeholder="未配置" /></label>
         <label className="usage-field"><span>输出 / 百万 Token</span><input required type="number" min="0" max="1000000000" step="0.00000001" value={output} onChange={e => setOutput(e.target.value)} placeholder="未配置" /></label>
         <label className="usage-field"><span>缓存命中 / 百万 Token</span><input type="number" min="0" max="1000000000" step="0.00000001" value={cached} onChange={e => setCached(e.target.value)} placeholder="未知，可留空" /><small>有缓存用量而缓存单价未知时，该调用不计价。</small></label>

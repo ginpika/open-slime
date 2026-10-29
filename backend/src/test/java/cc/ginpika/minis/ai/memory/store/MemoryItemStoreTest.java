@@ -21,7 +21,7 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 class MemoryItemStoreTest {
 
     private static final String DDL = """
-            CREATE TABLE memory_item(
+            CREATE TABLE graph_claim(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               agent_id TEXT, scope TEXT NOT NULL, title TEXT, body TEXT NOT NULL,
               confidence REAL NOT NULL DEFAULT 0.5, source TEXT NOT NULL DEFAULT 'auto',
@@ -43,6 +43,8 @@ class MemoryItemStoreTest {
         for (String stmt : DDL.split("\\n(?=CREATE )")) {
             j.execute(stmt);
         }
+        try { org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(ds.getConnection(),new org.springframework.core.io.ClassPathResource("schema.sql")); }
+        catch(Exception e) { throw new IllegalStateException(e); }
         return j;
     }
 

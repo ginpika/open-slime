@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Select } from './Select'
 import type { Prop, PropType } from '../api/client'
 import Toast from './Toast'
 import { btnPrimary, btnQuiet, miniBtn } from './ui'
@@ -146,17 +147,7 @@ export default function PropsEditor({ props, readOnlyProps, onSave }: Props) {
               placeholder="key"
               className={`${inputCls} flex-1`}
             />
-            <select
-              value={p.t}
-              onChange={(e) => patch(i, { t: e.target.value as PropType })}
-              className={`${inputCls} w-16 shrink-0`}
-            >
-              {TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+            <Select label={`属性 ${p.k || i + 1} 的类型`} value={p.t} onChange={value => patch(i, { t: value as PropType })} options={TYPES.map(t => ({ value: t, label: t }))} size="compact" className="w-24 shrink-0" />
             {p.t === 'bool' ? (
               <label className="flex shrink-0 cursor-pointer items-center px-0.5">
                 <input

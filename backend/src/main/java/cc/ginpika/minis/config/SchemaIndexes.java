@@ -29,14 +29,14 @@ public class SchemaIndexes {
     /** 依赖 memory-v5 新列的索引（schema.sql 里刻意不建，见该文件注释） */
     private static final List<String> INDEXES = List.of(
             "CREATE INDEX IF NOT EXISTS idx_memory_item_owner "
-                    + "ON memory_item(owner, project_id, agent_id, domain, status)",
+                    + "ON graph_claim(owner, project_id, agent_id, domain, status)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_item_fp "
-                    + "ON memory_item(fingerprint) WHERE status IN ('active','conflicted')",
+                    + "ON graph_claim(fingerprint) WHERE status IN ('active','conflicted')",
             /* memory-v6 §6.3：按层检索、L3 会话隔离读（依赖 identity / session_id 等新列） */
             "CREATE INDEX IF NOT EXISTS idx_memory_item_layer "
-                    + "ON memory_item(owner, layer, status)",
+                    + "ON graph_claim(owner, layer, status)",
             "CREATE INDEX IF NOT EXISTS idx_memory_item_session "
-                    + "ON memory_item(session_id, status)");
+                    + "ON graph_claim(session_id, status)");
 
     private final JdbcTemplate jdbc;
 

@@ -25,6 +25,7 @@
 
 mod backend;
 mod config;
+mod economy_capture;
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1548,6 +1549,8 @@ fn main() {
         }))
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
+            economy_capture::economy_windows,
+            economy_capture::economy_capture_window,
             desktop_state,
             desktop_users,
             desktop_switch_user,

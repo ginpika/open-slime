@@ -48,6 +48,24 @@ class ProjectWorkflowTest {
         public void close() { ds.destroy(); MemoryLiveContext.clear(); MemoryLiveContext.takeCaptured(); }
     }
 
+    @Test void roundtableHistoryCanJoinAProjectWithoutMovingOrRewritingItsMessages() throws Exception {
+        try (var f = new Fixture()) {
+            var roundtables = new cc.ginpika.minis.agent.roundtable.RoundtableSessionStore(
+                    f.jdbc);
+            String id = roundtables.insert("[\"a\",\"b\"]");
+            f.pair(id, "历史目标", "已留存的发言");
+            var project = f.service.createProject("协作项目", "software", false, null);
+            f.service.organizeExisting(id, project.id());
+            assertEquals(project.id(), roundtables.findById(id).orElseThrow().projectId());
+            assertEquals(project.id(), roundtables.latest().orElseThrow().projectId());
+            assertEquals(project.id(), roundtables.listAll().getFirst().projectId());
+            assertEquals("multi-agent", f.sessions.findById(id).orElseThrow().mode());
+            assertEquals("已留存的发言", f.jdbc.queryForObject(
+                    "SELECT content FROM chat_message WHERE session_id=? AND role='assistant'", String.class, id));
+            assertEquals(1, f.jdbc.queryForObject("SELECT COUNT(*) FROM hub_session", Integer.class));
+        }
+    }
+
     @Test void newContinuationPreservesAgentAndReadsLatestBeforeExtraction() throws Exception {
         try(var f=new Fixture()) {
             f.session("source","agent",null);
@@ -58,7 +76,7 @@ class ProjectWorkflowTest {
             assertEquals(1,material.size());
             assertTrue(material.get(0).messageIds().contains(latest));
             assertTrue(material.get(0).body().contains("下一步准备第二幕"));
-            assertEquals(0,f.jdbc.queryForObject("SELECT COUNT(*) FROM memory_item",Integer.class));
+            assertEquals(0,f.jdbc.queryForObject("SELECT COUNT(*) FROM graph_claim",Integer.class));
             f.pair("source","新进展","第二幕也已经完成");
             assertTrue(f.progress.visible(f.exec(next.id())).get(0).body().contains("第二幕也已经完成"));
         }

@@ -5,6 +5,7 @@ import cc.ginpika.minis.ai.terminal.TerminalService;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
+import cc.ginpika.minis.ai.core.tool.chat.RequestUserInputTool;
 import cc.ginpika.minis.ai.core.tool.memory.ManageProjectTool;
 import cc.ginpika.minis.ai.core.tool.heartbeat.CreatePlanTool;
 import cc.ginpika.minis.ai.core.tool.heartbeat.DelegatePlanTool;
@@ -65,6 +66,16 @@ public class ChatToolDispatcher {
                 call.path("function").path("arguments").asText(""));
         if (invalid != null) {
             return invalid;
+        }
+        if (RequestUserInputTool.NAME.equals(name)) {
+            try {
+                var question = RequestUserInputTool.read(om,
+                        call.path("function").path("arguments").asText("{}"));
+                question.put("status", "waiting_for_user");
+                return question.toString();
+            } catch (IllegalArgumentException error) {
+                return "询问参数无效：" + error.getMessage();
+            }
         }
         if (cc.ginpika.minis.coding.integration.CodingTaskTool.NAME.equals(name)) {
             String owner=cc.ginpika.minis.ai.core.UserScope.get();

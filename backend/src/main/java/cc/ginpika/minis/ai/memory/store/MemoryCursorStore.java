@@ -44,6 +44,6 @@ public class MemoryCursorStore {
 
     /** 清空全部水位（设置页「重置知识库」连带清除记忆时用） */
     public int clearAll() {
-        return jdbc.update("DELETE FROM memory_cursor");
+        return jdbc.update("DELETE FROM memory_cursor WHERE session_id NOT LIKE 'reset:%'");
     }
 }

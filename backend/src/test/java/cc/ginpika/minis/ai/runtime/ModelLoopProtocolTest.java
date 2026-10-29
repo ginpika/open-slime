@@ -21,7 +21,7 @@ class ModelLoopProtocolTest {
         @Override public long retryDelayMillis(int retry){return 0;}
         @Override public void retrying(int round,int retry,int maximum,long delay,RuntimeException error){attempts.add(retry);}
     };}
-    private ModelLoop.Result run(ObjectNode body,ModelLoop.Hooks hooks){return new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body,3,false,calls->List.of(),hooks,null));}
+    private ModelLoop.Result run(ObjectNode body,ModelLoop.Hooks hooks){return new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body,false,calls->List.of(),hooks,null));}
 
     @Test void plainAnswerAndContinuedAnswerPreserveTheExactProviderReasoning(){
         when(client.chatRaw(any(),any(),any(),anyString())).thenReturn(answer());
@@ -55,7 +55,7 @@ class ModelLoopProtocolTest {
     @Test void cancellationDuringBackoffStopsBeforeAnotherRequest(){
         var control=new OpenAiChatClient.CallControl();when(client.chatRaw(any(),any(),any(),anyString(),any())).thenThrow(new OpenAiChatClient.ChatFailure(0,"connection reset",null));
         var hooks=new ModelLoop.Hooks(){@Override public int maxRequestRetries(){return 3;}@Override public void retrying(int round,int retry,int maximum,long delay,RuntimeException error){control.cancel();}};
-        assertThrows(CancellationException.class,()->new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body(),3,false,calls->List.of(),hooks,control)));
+        assertThrows(CancellationException.class,()->new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body(),false,calls->List.of(),hooks,control)));
         verify(client).chatRaw(any(),any(),any(),anyString(),any());
     }
     @Test void retriesNeverRedispatchToolsFromThePreviousRound(){
@@ -63,8 +63,20 @@ class ModelLoopProtocolTest {
         when(client.chatRaw(any(),any(),any(),anyString())).thenReturn(new OpenAiChatClient.RawResult(tool,"raw","tool_calls"))
                 .thenThrow(new OpenAiChatClient.ChatFailure(502,"bad gateway",null)).thenReturn(answer());
         AtomicInteger dispatched=new AtomicInteger();var body=body();
-        var result=new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body,3,false,calls->{dispatched.incrementAndGet();return List.of("file contents");},retries(new ArrayList<>()),null));
+        var result=new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body,false,calls->{dispatched.incrementAndGet();return List.of("file contents");},retries(new ArrayList<>()),null));
         assertEquals(ModelLoop.End.ANSWERED,result.end());assertEquals(1,dispatched.get());assertEquals(3,body.path("messages").size());
         assertEquals("read first",body.path("messages").get(1).path("reasoning_content").asText());
     }
+    @Test void anUnboundedToolLoopStillStopsImmediatelyWhenCancelled(){
+        var control=new OpenAiChatClient.CallControl();var executed=new AtomicInteger();
+        var tool=json.createObjectNode().put("role","assistant");
+        tool.putArray("tool_calls").addObject().put("id","read-1").putObject("function").put("name","read_file").put("arguments","{}");
+        when(client.chatRaw(any(),any(),any(),anyString(),any())).thenReturn(new OpenAiChatClient.RawResult(tool,"raw"));
+        assertThrows(CancellationException.class,()->new ModelLoop(client).run(new ModelLoop.Spec(null,"coding",body(),false,calls->{
+            if(executed.incrementAndGet()==256) control.cancel();
+            return List.of("result");
+        },null,control)));
+        assertEquals(256,executed.get());
+    }
+
 }

@@ -21,13 +21,16 @@ import java.util.List;
 public final class MemoryStage {
 
     private static final ThreadLocal<List<Runnable>> PENDING = new ThreadLocal<>();
+    private static final java.util.concurrent.atomic.AtomicLong GENERATION = new java.util.concurrent.atomic.AtomicLong();
+    private static final ThreadLocal<Long> STARTED = new ThreadLocal<>();
+    public static void invalidateAll() { GENERATION.incrementAndGet(); }
 
     private MemoryStage() {
     }
 
     /** 开启本轮的写缓冲区（执行入口调用；重复 begin 复用缓冲，提交责任由执行入口管理） */
     public static void begin() {
-        if (PENDING.get() == null) { PENDING.set(new ArrayList<>()); }
+        if (PENDING.get() == null) { PENDING.set(new ArrayList<>()); STARTED.set(GENERATION.get()); }
     }
 
     public static boolean active() { return PENDING.get() != null; }
@@ -41,6 +44,7 @@ public final class MemoryStage {
             return false;
         }
         List<Runnable> list = PENDING.get();
+        if(list!=null && !java.util.Objects.equals(STARTED.get(),GENERATION.get())) return true;
         if (list == null || (props != null && !props.getStaging().isEnabled())) {
             action.run();
             return false;
@@ -62,12 +66,14 @@ public final class MemoryStage {
      */
     public static int commit() {
         List<Runnable> list = PENDING.get();
+        Long generation=STARTED.get(); STARTED.remove();
         PENDING.remove();
         if (list == null || list.isEmpty()) {
             return 0;
         }
         int done = 0;
         for (Runnable action : list) {
+            if(!java.util.Objects.equals(generation,GENERATION.get())) break;
             try {
                 action.run();
                 done++;
@@ -81,5 +87,6 @@ public final class MemoryStage {
     /** 丢弃本轮缓冲（异常路径用：不留半截写入） */
     public static void clear() {
         PENDING.remove();
+        STARTED.remove();
     }
 }

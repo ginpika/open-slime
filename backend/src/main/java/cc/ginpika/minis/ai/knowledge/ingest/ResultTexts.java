@@ -5,7 +5,7 @@ import cc.ginpika.minis.ai.knowledge.retrieval.EntityEnricher;
 import cc.ginpika.minis.ai.knowledge.retrieval.GraphExplorer;
 import cc.ginpika.minis.ai.knowledge.retrieval.GraphPathFinder;
 import cc.ginpika.minis.ai.knowledge.store.ChunkStore;
-import cc.ginpika.minis.ai.knowledge.store.DocumentStore;
+
 import cc.ginpika.minis.ai.knowledge.store.GraphStore;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,9 +25,6 @@ public final class ResultTexts {
     /** 单次工具注入的 chunk 上限与单块字符截断 */
     private static final int TOOL_TOP_CHUNKS = 6;
     private static final int CHUNK_CHAR_LIMIT = 1200;
-    /** 单次文档查询注入的文档条数上限与摘要截断（只给标题/摘要，不给正文） */
-    private static final int TOOL_TOP_DOCS = 10;
-    private static final int DOC_SUMMARY_LIMIT = 200;
     /** Header/questions 前缀（语义定位信息）注入时的整体字符上限 */
     private static final int CHUNK_PREFIX_LIMIT = 600;
     /** 图谱查询结果注入上限：实体条数 / 关系条数（渲染与调用方截断共用） */
@@ -50,8 +47,17 @@ public final class ResultTexts {
             ChunkStore.Row r = rows.get(i);
             sb.append('[').append(i + 1).append("] ")
                     .append(r.title() == null || r.title().isBlank() ? "chunk " + r.id() : r.title())
-                    .append("（source: ").append(r.source()).append(", ref: ").append(r.sourceRef()).append("）\n")
-                    .append(indexText(r)).append("\n\n");
+                    .append("（chunk_id: ").append(r.id()).append(", doc_id: ").append(r.docId())
+                    .append(", source: ").append(r.source()).append(", ref: ").append(r.sourceRef());
+            if ("snapshot".equals(r.source()) && r.sourceRef() != null && r.sourceRef().startsWith("snapshot:")) {
+                String id = r.sourceRef().substring("snapshot:".length());
+                sb.append(", snapshot_id: ").append(id).append(", local_url: #/snapshots/").append(id);
+            } else if ("blog".equals(r.source()) && r.sourceRef() != null) {
+                sb.append(", local_url: #/article/").append(r.sourceRef());
+            } else if (r.docId() != null) {
+                sb.append(", local_url: #/analyze?doc=").append(r.docId());
+            }
+            sb.append("）\n").append(indexText(r)).append("\n\n");
         }
         return sb.toString().stripTrailing();
     }
@@ -87,30 +93,6 @@ public final class ResultTexts {
         return prefix.length() > CHUNK_PREFIX_LIMIT
                 ? prefix.substring(0, CHUNK_PREFIX_LIMIT) + "…"
                 : prefix;
-    }
-
-    /** 文档标题命中 → 注入上下文的文本（标题/来源/摘要，限量截断）；空命中返回提示语 */
-    public static String documentsText(List<DocumentStore.DocHit> docs) {
-        if (docs.isEmpty()) {
-            return "（知识库中没有标题命中该关键词的文档）";
-        }
-        StringBuilder sb = new StringBuilder();
-        int n = Math.min(docs.size(), TOOL_TOP_DOCS);
-        for (int i = 0; i < n; i++) {
-            DocumentStore.DocHit d = docs.get(i);
-            sb.append('[').append(i + 1).append("] ").append(d.title())
-                    .append("（doc_id: ").append(d.id()).append(", source: ").append(d.source())
-                    .append(d.url() != null ? ", url: " + d.url() : "").append("）\n");
-            String summary = d.summary() == null ? "" : d.summary().replaceAll("\\s+", " ").strip();
-            if (!summary.isEmpty()) {
-                sb.append("  摘要: ")
-                        .append(summary.length() > DOC_SUMMARY_LIMIT
-                                ? summary.substring(0, DOC_SUMMARY_LIMIT) + "…" : summary)
-                        .append('\n');
-            }
-            sb.append('\n');
-        }
-        return sb.toString().stripTrailing();
     }
 
     /**
@@ -155,7 +137,7 @@ public final class ResultTexts {
         for (int i = 0; i < n; i++) {
             GraphStore.Entity e = entities.get(i);
             sb.append('[').append(i + 1).append("] ").append(e.name())
-                    .append("（type: ").append(entityType(e)).append("）\n");
+                      .append("（type: ").append(entityType(e)).append("；id: ").append(e.id()).append("）\n");
             String props = propsText(e.props());
             if (!props.isEmpty()) {
                 sb.append("  属性: ").append(props).append('\n');
@@ -329,6 +311,7 @@ public final class ResultTexts {
             return "";
         }
         StringBuilder sb = new StringBuilder();
+        if(edge.claimId()!=null) sb.append("事实 id=").append(edge.claimId()).append("; 证据可用 recall_memory mode=evidence 读取; ");
         String props = propsText(edge.props());
         if (!props.isEmpty()) {
             sb.append("属性: ").append(props);

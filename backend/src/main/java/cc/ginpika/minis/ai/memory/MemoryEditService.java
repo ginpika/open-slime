@@ -83,6 +83,7 @@ public class MemoryEditService {
         if (n == 0) {
             return Outcome.fail("这条记忆刚被别的写入改过（版本冲突），请重新读取后再改：item=" + it.id());
         }
+        if(scope.taskId()!=null) items.attachEvidence(it.id(),MemoryEvidence.ref("task",scope.taskId(),null));
         log.debug("Agent 改写记忆：item={} by {}（turn={}）", it.id(), scope.agentOrBuiltin(),
                 scope.turnId());
         return Outcome.done("已更新记忆 item=" + it.id() + "（标题：" + (newTitle == null ? "未变" : newTitle)

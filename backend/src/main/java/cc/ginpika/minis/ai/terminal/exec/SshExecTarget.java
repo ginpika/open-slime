@@ -121,6 +121,43 @@ public class SshExecTarget implements ExecTarget {
         }
     }
 
+    @Override
+    public Shell openShell(TerminalStore.TargetRow target, String command, int cols, int rows) throws IOException {
+        // Dedicated connection: closing a terminal must never cancel an Agent's command channel.
+        SSHClient ssh = connect(target);
+        try {
+            Session session = ssh.startSession();
+            session.allocatePTY("xterm-256color", cols, rows, 0, 0, java.util.Map.of());
+            Session.Command channel = session.exec("exec sh -lc " + ExecTarget.quote(command));
+            return new SshShell(ssh, session, channel);
+        } catch (Exception error) {
+            try { ssh.close(); } catch (IOException cleanup) { error.addSuppressed(cleanup); }
+            if (error instanceof IOException io) throw io;
+            throw new IOException("SSH 终端启动失败", error);
+        }
+    }
+
+    /** Explicit constructor keeps the shell independent of anonymous-class capture ordering. */
+    private static final class SshShell implements Shell {
+        private final SSHClient ssh;
+        private final Session session;
+        private final Session.Command channel;
+        private final Session.Shell window;
+
+        SshShell(SSHClient ssh, Session session, Session.Command channel) {
+            this.ssh = ssh;
+            this.session = session;
+            this.channel = channel;
+            // SSHJ's SessionChannel implements the PTY resize API for exec requests too.
+            this.window = (Session.Shell) session;
+        }
+
+        public InputStream output() { return channel.getInputStream(); }
+        public java.io.OutputStream input() { return channel.getOutputStream(); }
+        public void resize(int width, int height) throws IOException { window.changeWindowDimensions(width, height, 0, 0); }
+        public void close() throws IOException { try { session.close(); } finally { ssh.close(); } }
+    }
+
     /** 关掉全部复用连接（应用停止时） */
     @PreDestroy
     void shutdown() {
@@ -191,13 +228,18 @@ public class SshExecTarget implements ExecTarget {
         } else {
             ssh.addHostKeyVerifier(knownHosts());
         }
-        ssh.connect(target.sshHost(), port(target));
-        if (AUTH_KEY.equalsIgnoreCase(target.sshAuth())) {
-            ssh.authPublickey(user(target), keyProvider(ssh, target));
-        } else {
-            ssh.authPassword(user(target), target.sshPassword() == null ? "" : target.sshPassword());
+        try {
+            ssh.connect(target.sshHost(), port(target));
+            if (AUTH_KEY.equalsIgnoreCase(target.sshAuth())) {
+                ssh.authPublickey(user(target), keyProvider(ssh, target));
+            } else {
+                ssh.authPassword(user(target), target.sshPassword() == null ? "" : target.sshPassword());
+            }
+            return ssh;
+        } catch (IOException | RuntimeException error) {
+            close(ssh);
+            throw error;
         }
-        return ssh;
     }
 
     /**

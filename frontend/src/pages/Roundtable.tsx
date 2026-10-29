@@ -1,22 +1,7 @@
 /**
- * 圆桌页：一群具名成员在同一张圆桌上轮流说话。
- *
- * <p>与成员页（/multi-agent）分开成两个页面：这一页只负责「对话」，成员是谁、长什么样
- * 都在成员页维护。入口是首页的「群聊」（{@code #/roundtable}）——打开最近一次会话。
- *
- * <p>说一句话会依次引出一串成员发言：谁先说、说到哪、谁沉默了、谁提议结束、话题何时收束，
- * 全部实时可见（成员状态条与消息流都随 SSE 增量更新）。流式口径：一次发言 = 一段 SSE
- * （speaker → 增量 → speakerEnd），下一位紧接着再来一段。<b>已落库的以服务端为准</b>——
- * 人的话、状态机动作、说完的发言一落库就重取，正在说话的那一位单独渲染成一条「直播中」的气泡；
- * 「实时看到的」与「刷新之后看到的」因此是同一个形状。
- *
- * <p><b>发言期间可以随便走开</b>：这一轮的运行时状态在应用级模块仓
- * （{@link useRoundtableRun}，见 components/roundtableLive），不在本组件里——切会话、切 tab、
- * 切路由都只是「不再渲染」，成员照说；回到这张桌子即从仓里把进度接回来（谁是发言人、说到哪、
- * 话题什么状态），发送键也按「这张桌子在不在跑」各自判定，别的会话因此照常可用。
- *
- * <p>与首页对话页不复用：多智能体有自己的会话与消息（后端 ma_* 一套表），
- * 页面也因此自成一套——左侧选会话，右侧是这张圆桌。
+ * 协作工作台：项目 / 协作会话为边界，当前局面、讨论、协作图与执行记录共享上下文。
+ * 发言和停止沿用 roundtableLive 的应用级运行时，切换视图不会中断执行。
+ * 文件名保留旧入口兼容，页面布局与项目视图位于 collaboration/。
  */
 
 import { AppIcon } from '../components/AppIcon'
@@ -30,12 +15,13 @@ import {
   useState,
 } from 'react'
 import ReactMarkdown from 'react-markdown'
+import ComfyImage from '../components/ComfyImage'
 import remarkGfm from 'remark-gfm'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ApiError,
-  deleteMaSession,
-  createMaSession,
+  listProjects,
+  organizeSessionProject,
   getSettings,
   listMaPeers,
   listMaSessions,
@@ -50,15 +36,16 @@ import {
   type MaSession,
   type MaTopic,
   type TraceSegment,
+  type MaWorkflowEvent,
+  type Project,
 } from '../api/client'
 import { Card, CardHead } from '../components/Card'
-import { btnOutline, btnPrimary, miniBtn } from '../components/ui'
-import { Select } from '../components/formKit'
+import { btnOutline, miniBtn } from '../components/ui'
 import PageBoundary from '../components/PageBoundary'
 import PeerAvatar from '../components/PeerAvatar'
 import {
   clearRunError,
-  getRunningSessionIds,
+  clearRoundtableRun,
   onRoundtableSettled,
   startRoundtable,
   stopRoundtable,
@@ -67,8 +54,24 @@ import {
 } from '../components/roundtableLive'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
-import { SideDrawer } from '../components/SideDrawer'
-import { useMediaQuery } from '../components/useMediaQuery'
+import FloatWindow from '../components/FloatWindow'
+import ProjectDialog from '../components/ProjectDialog'
+import ProjectGraph from './collaboration/ProjectGraph'
+import ProjectPages from './collaboration/ProjectPages'
+import CollaborationDialog from './collaboration/CollaborationDialog'
+import { ConclusionDialog, GraphActivity, IssueCard, TodoPanel } from './collaboration/SessionPanels'
+import { collaborationHref, useCollaborationNavigation } from './collaboration/navigation'
+import { collaborationWorkspace, createCollaborationTask, createCollaborationIssue, concludeCollaborationIssue, rewindCollaborationSession, type CollaborationWorkspace, type CollaborationIssue } from '../api/collaboration'
+import ProjectSettings from './collaboration/ProjectSettings'
+import TaskActions from './collaboration/TaskActions'
+import PlanStatus from './collaboration/PlanStatus'
+import RallyNotice from './collaboration/RallyNotice'
+import ProjectWorkspaceDialog from './collaboration/ProjectWorkspaceDialog'
+import { Detail, TodoMenu } from './WorkflowDetails'
+import { useProjectWorkflow } from './collaboration/useProjectWorkflow'
+import { projectMemberIds, projectStatus, readingMessages, type CollaborationView, type WorkSelection } from './collaboration/model'
+import './collaboration/workspace.css'
+import './collaboration/layout.css'
 import { resetWindowStates, useDraftState, useRememberedState } from '../components/windowState'
 
 /** 「不显示思维链」偏好的本地存储 key：离开圆桌再回来不用重设 */
@@ -173,6 +176,7 @@ type Option = { value: string; label: string }
  */
 type FeedItem =
   | { key: string; kind: 'msg'; msg: MaMessage }
+  | { key: string; kind: 'issue'; issue: CollaborationIssue }
   | { key: string; kind: 'live'; content: string; trace: TraceSegment[] | null; streaming: boolean }
 
 function errMsg(e: unknown): string {
@@ -215,8 +219,7 @@ function detectMention(value: string, caret: number): { start: number; query: st
 }
 
 /** 圆桌页（路由 /roundtable）：左侧选会话，右侧是这张圆桌。 */
-export default function Roundtable() {
-  const kit = usePageKit()
+export default function Roundtable({ initialView = 'discussion' }: { initialView?: CollaborationView }) {
   const [peers, setPeers] = useState<MaPeer[]>([])
   const [modelOptions, setModelOptions] = useState<Option[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
@@ -256,25 +259,10 @@ export default function Roundtable() {
   }, [peers])
 
   return (
-    /* kit.Page 出扇区头；圆桌本体占满剩余高度，滚动都发生在容器内部——底部的输入框因此始终可见。
-       [&>*]:h-full 把高度传给 kit 渲染的 <section>，于是各主题的 Page 都能撑满整页。
-       本页是 fullBleed（main 不自带内边距），留白全由这里给；顶部一律不加 pt——
-       kit.Page 的 pt-6 已是顶部留白，再叠一层会让圆桌标题比别的内容页高出一大块。 */
-    <div className="h-full [&>*]:h-full px-3 pb-3 lg:px-5 lg:pb-5">
-      <kit.Page
-        title="圆桌"
-        en="ROUNDTABLE"
-        meta={
-          <span className="flex items-center gap-3">
-            <span className="text-sm text-muted">{peers.length} 位成员</span>
-            <a href="#/multi-agent" className={btnOutline('rounded-lg')}>
-              管理成员
-            </a>
-          </span>
-        }
-      >
+    <div className="h-full flex min-h-0 flex-col">
         <PageBoundary>
           <RoundtableBoard
+            initialView={initialView}
             peers={peers}
             peerById={peerById}
             modelOptions={modelOptions}
@@ -287,7 +275,6 @@ export default function Roundtable() {
           kind={toast?.kind === 'err' ? 'error' : 'success'}
           onClose={() => setToast(null)}
         />
-      </kit.Page>
     </div>
   )
 }
@@ -295,11 +282,13 @@ export default function Roundtable() {
 /* ---------------- 圆桌本体 ---------------- */
 
 function RoundtableBoard({
+  initialView,
   peers,
   peerById,
   modelOptions,
   notify,
 }: {
+  initialView: CollaborationView
   peers: MaPeer[]
   peerById: Map<string, MaPeer>
   modelOptions: Option[]
@@ -307,11 +296,47 @@ function RoundtableBoard({
 }) {
   const kit = usePageKit()
   const [sessions, setSessions] = useState<MaSession[]>([])
-  const [sessionId, setSessionId] = useRememberedState<string | null>('roundtable:session', null)
-  const [messages, setMessages] = useState<MaMessage[]>([])
-  const [topics, setTopics] = useState<MaTopic[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const { location, navigate } = useCollaborationNavigation()
+  const sessionId = location.issueId || location.taskId
+  const [redirectWork, setRedirectWork] = useState(false)
+  useEffect(() => setRedirectWork(false), [sessionId])
+  const activeProjectId = location.projectId || sessions.find(s => s.id === location.taskId)?.projectId || ''
+  const [workspace, setWorkspace] = useState<CollaborationWorkspace>({ issues: [], projectMembers: {} })
+  const rootSessions = useMemo(() => sessions.filter(s => !workspace.issues.some(i => i.sessionId === s.id)), [sessions, workspace.issues])
+  const currentIssue = workspace.issues.find(i => i.sessionId === location.issueId && i.parentSessionId === location.taskId)
+  const taskIssues = useMemo(() => workspace.issues.filter(i => i.parentSessionId === location.taskId), [workspace.issues, location.taskId])
+  const archived = workspace.archivedTasks?.includes(location.taskId || '') ?? false
+  const mainSession = sessions.find(s => s.id === location.taskId)
+  const project = projects.find(p => p.id === activeProjectId)
+  const sessionsRequest = useRef(0)
+  const openProject = (id: string) => navigate({ projectId: id, taskId: null, issueId: null })
+  const openTask = (id: string, projectId = activeProjectId) => navigate({ projectId, taskId: id, issueId: null })
+  const openIssue = (issue: CollaborationIssue) => navigate({ projectId: activeProjectId, taskId: issue.parentSessionId, issueId: issue.sessionId })
+  const [loadedMessages, setMessages] = useState<MaMessage[]>([])
+  const [loadedTopics, setTopics] = useState<MaTopic[]>([])
+  const [loadedSessionId, setLoadedSessionId] = useState<string | null>(null)
+  const messages = useMemo(() => loadedSessionId === sessionId ? loadedMessages : [], [loadedSessionId, sessionId, loadedMessages])
+  const topics = useMemo(() => loadedSessionId === sessionId ? loadedTopics : [], [loadedSessionId, sessionId, loadedTopics])
+  const activeSession = useRef(sessionId)
+  activeSession.current = sessionId
+  const messageRequest = useRef(0)
+  const [messageError, setMessageError] = useState<string | null>(null)
+  const [sessionsLoading, setSessionsLoading] = useState(true)
+  const [sessionsError, setSessionsError] = useState<string | null>(null)
+  const [view, setView] = useRememberedState<CollaborationView>(`collaboration:v2:${location.taskId ?? 'new'}:view`, initialView === 'graph' ? 'graph' : 'discussion')
+  const [taskId, setTaskId] = useRememberedState<string | null>(`collaboration:${sessionId ?? 'new'}:task`, null)
+  const [detail, setDetail] = useState<WorkSelection | null>(null)
+  const [selectedEvent, setSelectedEvent] = useState<MaWorkflowEvent | null>(null)
+  const [workflowRevision, setWorkflowRevision] = useState(0)
+  const workflow = useProjectWorkflow(location.taskId, workflowRevision)
+  const selectedTask = workflow.data?.todos.find(t => t.id === taskId) ?? null
+  const selection: WorkSelection | null = selectedTask ? { kind: 'todo', id: selectedTask.id } : null
+  const [reading, setReading] = useRememberedState('collaboration:reading', true)
+  useEffect(() => { setDetail(null); setSelectedEvent(null); setMessageError(null) }, [sessionId])
+  useEffect(() => { if (initialView === 'graph' || new URLSearchParams(window.location.hash.split('?')[1]).get('view') === 'graph') setView('graph') }, [initialView, location.taskId, setView])
   const [modelId, setModelId] = useState('')
-  const [input, setInput, inputState] = useDraftState(`roundtable:${sessionId ?? 'new'}:input`, '')
+  const [input, setInput, inputState] = useDraftState(`roundtable:${sessionId ?? `new:${activeProjectId || 'unfiled'}`}:input`, '')
   /**
    * 这张桌子当前那一轮发言的运行时（跑没跑、谁在说、说到哪）：状态在应用级模块仓里，
    * 组件只是订阅者——本页卸载（切会话 / 切 tab / 切路由）不会中断它，回来接着看（见 roundtableLive）。
@@ -334,9 +359,17 @@ function RoundtableBoard({
   /** 点开一条发言，回看它当时真正发出去的原始上下文 */
   const [contextView, setContextView] = useState<{ title: string; text: string } | null>(null)
   /** 新建会话的选人弹窗开着没 */
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const smallScreen = useMediaQuery('(max-width: 900px)')
-  const [directoryOpen, setDirectoryOpen] = useState(false)
+  const [createDialog, setCreateDialog] = useState<'task' | 'issue' | null>(null)
+  const [conclusionOpen, setConclusionOpen] = useState(false)
+  const [mobileTodos, setMobileTodos] = useState(false)
+  const scrollPositions = useRef(new Map<string, { top: number; bottom: boolean }>())
+  const restoreScrollRef = useRef<number | null>(null)
+  const [projectSettings, setProjectSettings] = useState(false)
+  const [workspaceDialog, setWorkspaceDialog] = useState(false)
+  const [organizeOpen, setOrganizeOpen] = useState(false)
+  const [preparing, setPreparing] = useState(false)
+  const [rewinding, setRewinding] = useState(false)
+  const [taskMenuOpen, setTaskMenuOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 会话的消息列表 ajax 回读到位时置位：等下一次提交（layout effect）把视图落到底 */
   const pendingBottomRef = useRef(false)
@@ -346,12 +379,13 @@ function RoundtableBoard({
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  /** 候选成员：按 @ 后面的片段过滤（空片段=全桌），名字与后端 @ 解析用的是同一个 */
+  /** 候选只来自当前会话；进入议题时使用议题成员，尚未加载时不回退到全局名册。 */
   const mentionMatches = useMemo(() => {
     if (!mention) return []
     const q = mention.query.toLowerCase()
-    return q ? peers.filter((p) => p.name.toLowerCase().includes(q)) : peers
-  }, [mention, peers])
+    const memberIds = sessions.find(s => s.id === sessionId)?.memberIds ?? []
+    return peers.filter(p => memberIds.includes(p.id) && (!q || p.name.toLowerCase().includes(q)))
+  }, [mention, peers, sessions, sessionId])
 
   /** 高亮项下标：候选变少时收回最后一项，避免越界 */
   const mentionActive = mention ? Math.min(mention.index, mentionMatches.length - 1) : 0
@@ -387,31 +421,32 @@ function RoundtableBoard({
   }
 
   const reloadSessions = useCallback(async () => {
+    const request = ++sessionsRequest.current
     try {
-      const list = await listMaSessions()
-      setSessions(list)
-      setSessionId((current) => {
-        if (current && list.some(s => s.id === current)) return current
-        /* 还没选中任何一条：优先落在「正在发言」的那张桌子上——离开再回来要接上的正是它；
-           没有在跑的，就打开最近一次（列表本来就是按最近排序的） */
-        const live = getRunningSessionIds().find((id) => list.some((s) => s.id === id))
-        return live ?? list[0]?.id ?? null
-      })
+      const [list, projectList, metadata] = await Promise.all([listMaSessions(), listProjects(), collaborationWorkspace()])
+      if (request !== sessionsRequest.current) return
+      setSessions(list); setProjects(projectList); setWorkspace(metadata); setSessionsError(null)
     } catch (e) {
-      notify(errMsg(e), 'err')
-    }
-  }, [notify, setSessionId])
+      if (request === sessionsRequest.current) { setSessionsError(errMsg(e)); notify(errMsg(e), 'err') }
+    } finally { if (request === sessionsRequest.current) setSessionsLoading(false) }
+  }, [notify])
 
   const reloadSession = useCallback(
-    async (id: string, pinBottom = false) => {
+    async (id: string, pinBottom = false, background = false) => {
+      const request = ++messageRequest.current
       try {
         const [msgs, tps] = await Promise.all([maMessages(id), maTopics(id)])
+        if (activeSession.current !== id || request !== messageRequest.current) return
         setMessages(msgs)
         setTopics(tps)
+        setLoadedSessionId(id)
+        setMessageError(null)
         /* ajax 回来、消息列表即将替换：请求下一次提交后把视图落到底（进入会话的默认姿态） */
         if (pinBottom) pendingBottomRef.current = true
       } catch (e) {
-        notify(errMsg(e), 'err')
+        if (activeSession.current !== id || request !== messageRequest.current) return
+        setMessageError(errMsg(e))
+        if (!background) notify(errMsg(e), 'err')
       }
     },
     [notify],
@@ -421,6 +456,29 @@ function RoundtableBoard({
     void reloadSessions()
   }, [reloadSessions])
 
+  useEffect(() => {
+    if (sessionsLoading || !/^#\/(workflow|roundtable)(\?|$)/.test(window.location.hash)) return
+    const latest = rootSessions[0]
+    if (latest && !location.taskId) window.location.hash = collaborationHref({ projectId: latest.projectId || '', taskId: latest.id, issueId: null }) + (window.location.hash.split('?')[0] === '#/workflow' ? '&view=graph' : '')
+  }, [sessionsLoading, rootSessions, location, initialView])
+
+  useEffect(() => {
+    if (!location.taskId) return
+    const timer = window.setInterval(() => void reloadSessions(), 10000)
+    return () => window.clearInterval(timer)
+  }, [location.taskId, reloadSessions])
+
+  useEffect(() => {
+    if (!mobileTodos) return
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('[role="dialog"]')) { setMobileTodos(false); event.preventDefault() }
+    }
+    const media = window.matchMedia('(max-width: 760px)')
+    const resized = () => { if (!media.matches) setMobileTodos(false) }
+    document.addEventListener('keydown', escape); media.addEventListener('change', resized)
+    return () => { document.removeEventListener('keydown', escape); media.removeEventListener('change', resized) }
+  }, [mobileTodos])
+
   /**
    * 重取这张桌子的消息与话题：会话换了要取，这一轮有新内容落库（run.revision 自增）也要取
    * ——已落库的一律以服务端为准，正在说话的那一位则由仓里的直播气泡补在末尾。
@@ -428,10 +486,48 @@ function RoundtableBoard({
   useEffect(() => {
     if (!sessionId) return
     /* 只有「换了会话」才把视图落到底；同一会话因新内容（run.revision）重取时要保持用户当前姿态 */
-    const pinBottom = pinnedSessionRef.current !== sessionId
+    const saved = scrollPositions.current.get(sessionId)
+    const pinBottom = pinnedSessionRef.current !== sessionId && !saved
+    if (saved) restoreScrollRef.current = saved.top
     pinnedSessionRef.current = sessionId
     void reloadSession(sessionId, pinBottom)
   }, [sessionId, reloadSession, run?.revision])
+
+  /* SSE 断开也不重发用户消息：独立回读正本，返回页面与恢复网络时立即补载。议题用自己的会话。 */
+  useEffect(() => {
+    if (!sessionId) return
+    let alive = true, loading = false, queued = false
+    let timer: ReturnType<typeof setTimeout>
+    const refresh = async () => {
+      if (!alive) return
+      if (loading) { queued = true; return }
+      loading = true
+      clearTimeout(timer)
+      try { await reloadSession(sessionId, false, true) }
+      finally {
+        loading = false
+        if (alive) timer = setTimeout(refresh, queued ? 0 : document.hidden ? 15000 : 3000)
+        queued = false
+      }
+    }
+    const visible = () => { if (!document.hidden) void refresh() }
+    const reconnect = () => { void refresh() }
+    timer = setTimeout(refresh, 3000)
+    window.addEventListener('online', reconnect)
+    window.addEventListener('focus', visible)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      alive = false; clearTimeout(timer)
+      window.removeEventListener('online', reconnect)
+      window.removeEventListener('focus', visible)
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [sessionId, reloadSession])
+
+  const latestActivity = workflow.data?.events[0]?.id
+  useEffect(() => {
+    if (sessionId && latestActivity) void reloadSession(sessionId)
+  }, [sessionId, latestActivity, reloadSession])
 
   /* 一轮说完（跑完 / 失败）：会话列表的标题与排序都在此时定下来，刷新一次 */
   useEffect(() => onRoundtableSettled(() => void reloadSessions()), [reloadSessions])
@@ -455,10 +551,11 @@ function RoundtableBoard({
 
   /** 消息区滚动：记下用户是否还贴着底（48px 容差） */
   const onMessagesScroll = () => {
-    if (programmaticRef.current) return
+    if (programmaticRef.current || loadedSessionId !== sessionId || restoreScrollRef.current !== null) return
     const el = scrollRef.current
     if (!el) return
     const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    if (sessionId) scrollPositions.current.set(sessionId, { top: el.scrollTop, bottom })
     atBottomRef.current = bottom
     setAtBottom((prev) => (prev === bottom ? prev : bottom))
   }
@@ -513,9 +610,17 @@ function RoundtableBoard({
     return () => document.removeEventListener('keydown', onKey)
   }, [contextView])
 
+  useLayoutEffect(() => {
+    const saved = sessionId ? scrollPositions.current.get(sessionId) : null
+    atBottomRef.current = saved?.bottom ?? true
+    setAtBottom(saved?.bottom ?? true)
+    setMention(null)
+  }, [sessionId])
+
   /* 话题状态条看的是「此刻这一轮」的快照：仓里有一份就用它（边聊边刷新），
      没有（没在跑 / 刚进来）就用回读来的最后一条 */
-  const current = run?.topic ?? (topics.length > 0 ? topics[topics.length - 1] : null)
+  const persistedTopic = topics.length > 0 ? topics[topics.length - 1] : null
+  const current = busy ? run?.topic ?? persistedTopic : persistedTopic ?? run?.topic
 
   /**
    * 有人调了 ask_user：话题置 waiting，全桌就此暂停、等用户这一句话。
@@ -527,29 +632,43 @@ function RoundtableBoard({
       ? (Object.entries(current.states).find(([, s]) => s === 'AWAIT_USER')?.[0] ?? null)
       : null
 
-  /** 新建会话：勾选的成员上桌（空选 = 全体名册），建完直接切过去 */
-  const newSession = async (memberIds: string[]) => {
+  const rewindDisabled = archived || busy || preparing || rewinding || currentIssue?.status === 'resolved'
+    || !!workflow.data?.advancing || !!workflow.data?.agents.some(a => a.working)
+  const rewindTo = useCallback(async (target: MaMessage) => {
+    if (!sessionId || rewindDisabled || target.role !== 'user' || target.id < 0) return
+    const id = sessionId
+    setRewinding(true)
     try {
-      const created = await createMaSession(memberIds)
-      await reloadSessions()
-      setSessionId(created.sessionId)
-      setMessages([])
+      await rewindCollaborationSession(id, target.id)
+      clearRoundtableRun(id)
+      if (activeSession.current !== id) return
+      ++messageRequest.current
+      setMessages(rows => rows.filter(m => m.id < target.id || ['task_context', 'issue_context', 'issue_open', 'issue_resolved'].includes(m.kind || '')))
       setTopics([])
-      setPickerOpen(false)
-    } catch (e) {
-      notify(errMsg(e), 'err')
-    }
-  }
+      setInput(target.content)
+      setMention(null)
+      setTaskId(null)
+      setDetail(null)
+      pendingBottomRef.current = true
+      await Promise.all([reloadSession(id, true), reloadSessions()])
+      if (activeSession.current === id) requestAnimationFrame(() => inputRef.current?.focus())
+    } catch (e) { notify(`回退失败：${errMsg(e)}`, 'err') }
+    finally { setRewinding(false) }
+  }, [sessionId, rewindDisabled, setInput, setTaskId, reloadSession, reloadSessions, notify])
 
-  const removeSession = async (id: string) => {
-    try {
-      await deleteMaSession(id)
-      resetWindowStates(`roundtable:${id}:`)
-      setSessionId(current => current === id ? null : current)
-      await reloadSessions()
-    } catch (e) {
-      notify(errMsg(e), 'err')
+  const lifecycleChanged = async (deleted: boolean) => {
+    setProjectSettings(false)
+    if (deleted && location.taskId) {
+      for (const id of [location.taskId, ...taskIssues.map(i => i.sessionId)]) {
+        clearRoundtableRun(id)
+        resetWindowStates('roundtable:' + id + ':')
+        resetWindowStates('collaboration:' + id + ':')
+        resetWindowStates('collaboration:v2:' + id + ':')
+      }
+      openProject(activeProjectId)
     }
+    await reloadSessions()
+    setWorkflowRevision(v => v + 1)
   }
 
   /** 点开一条成员发言：取它当时真正发出去的请求体（system + 历史 + 末尾交代 + 工具面） */
@@ -574,30 +693,39 @@ function RoundtableBoard({
    *
    * <p>本组件只是发起者：这一轮跑起来之后，本页卸载（切会话 / 切 tab / 切路由）都不影响它，
    * 进度、直播气泡与「停止」都从仓里读——所以这里不需要 await，也不需要自己维护在途状态。
-   * 本张桌子已在发言时再发一句 = 插话：会打断正在说话的那位、把新一轮排进议程（随时可加入讨论）。
+   * 已建立计划后默认只交谈；勾选「调整任务」才撤销旧派工并重新规划。
    */
-  const send = () => {
-    const text = input.trim()
-    /* 讨论进行中也能发：这一句会打断正在说话的那位、并把新一轮排进议程——
-       随时加入讨论、补充信息是核心设计，故不因 busy 拒绝 */
-    if (!text) return
+  const send = async () => {
+    const body = input.trim()
+    const text = selectedTask ? `围绕工作「${selectedTask.title}」（任务 ${selectedTask.id}）：\n${body}` : body
+    /* 普通对话可与工作并行，不因 busy 拒绝。 */
+    if (archived || !body || preparing || rewinding || sessionsLoading || !mainSession || !sessionId || (location.issueId && !currentIssue) || currentIssue?.status === 'resolved') return
     if (peers.length === 0) {
-      notify('圆桌上还没有人，先去「多智能体」页加几位成员', 'err')
+      notify('还没有协作成员，请先去「智能体」页添加成员', 'err')
       return
     }
-    inputState.accept('')
-    setMention(null)
-    startRoundtable({
-      sessionId,
+    const targetSession = sessionId
+    setPreparing(true)
+    try {
+      inputState.accept('', input)
+      setMention(null)
+      startRoundtable({
+      sessionId: targetSession,
       input: text,
+      redirectWork,
       modelId: modelId || undefined,
       speakerStrategy,
       /* 草稿态（还没有会话）时后端会建一个：把它切过去，左侧列表随本轮收尾一起刷新 */
       onSession: (id) => {
-        if (!sessionId) inputState.moveTo(`roundtable:${id}:input`)
-        setSessionId(id)
+        if (id !== targetSession) void reloadSessions()
       },
-    })
+      })
+      setRedirectWork(false)
+    } catch (e) {
+      notify(errMsg(e), 'err')
+    } finally {
+      setPreparing(false)
+    }
   }
 
   const stop = async () => {
@@ -606,7 +734,7 @@ function RoundtableBoard({
     if (!id) return
     try {
       await stopRoundtable(id)
-      notify('已请当前发言人打住', 'ok')
+      notify('已停止当前协作与执行', 'ok')
     } catch (e) {
       notify(errMsg(e), 'err')
     }
@@ -678,7 +806,11 @@ function RoundtableBoard({
    */
   const feedItems = useMemo<FeedItem[]>(() => {
     const items: FeedItem[] = []
-    for (const m of messages) {
+    const issueByMessage = new Map(taskIssues.map(i => [i.messageId, i]))
+    const source = reading && hideCot && !allowContext ? readingMessages(messages, new Set(['issue_open', 'issue_resolved', 'task_context', 'issue_context', 'runtime_paused', 'ask_user'])) : messages
+    for (const m of source) {
+      const issue = !location.issueId ? issueByMessage.get(m.id) : undefined
+      if (issue) { items.push({ key: 'issue:' + issue.id, kind: 'issue', issue }); continue }
       if (!showEventLine(m, showPresence, peerById)) continue
       items.push({ key: `m:${m.id}`, kind: 'msg', msg: m })
     }
@@ -699,7 +831,7 @@ function RoundtableBoard({
       }
     }
     return items
-  }, [messages, showPresence, peerById, optimisticUser, live])
+  }, [messages, showPresence, peerById, optimisticUser, live, reading, hideCot, allowContext, taskIssues, location.issueId])
 
   /* 虚拟化：只渲染视口内（含一段缓冲）的那几条。消息一多，打字卡顿的根因就是整列表每敲一个字都重渲一遍
      （每条都跑 ReactMarkdown），这里把渲染量钉在视口大小上，再把每条 memo 住，输入便与列表长度无关 */
@@ -715,7 +847,12 @@ function RoundtableBoard({
   /* 「显示思维链」开关会整体改变每条气泡的高度：清掉已测高度，让它们按新形态重新测量 */
   useEffect(() => {
     virtualizer.measure()
-  }, [hideCot, virtualizer])
+    /* 清缓存后尺寸未变的节点不会再次触发 ResizeObserver，须补测已挂载项。 */
+    scrollRef.current?.querySelectorAll<HTMLElement>('[data-index]').forEach(el => {
+      virtualizer.resizeItem(Number(el.dataset.index), el.getBoundingClientRect().height)
+    })
+    if (view === 'discussion' && atBottomRef.current) scrollToBottom()
+  }, [hideCot, reading, view, virtualizer, scrollToBottom])
 
   /* 新内容到达：只有用户本来就在底部时才跟着滚——否则让他自己看。
      讨论滚得太快，无条件到底会把正在围观的人不断拽走（他还想视奸 AGENT 怎么吵）。
@@ -736,6 +873,12 @@ function RoundtableBoard({
      触发时机落在「消息列表 ajax 回读到位」之后（见 reloadSession 置的 pendingBottomRef），
      这里在浏览器绘制前消费它——用 layout effect 而非 effect，落底先于首帧，免得先闪一下顶部再跳 */
   useLayoutEffect(() => {
+    if (restoreScrollRef.current !== null && loadedSessionId === sessionId) {
+      const top = restoreScrollRef.current
+      restoreScrollRef.current = null
+      if (scrollRef.current) scrollRef.current.scrollTop = top
+      return
+    }
     if (!pendingBottomRef.current) return
     pendingBottomRef.current = false
     /* 会话一换就把「贴底」姿态复位，顺着落底一起摆正 */
@@ -744,117 +887,41 @@ function RoundtableBoard({
     /* 空会话没有可聚焦的最新消息；等第一条发言（live/optimisticUser）出现时再落底 */
     if (messages.length === 0 && !live && !optimisticUser) return
     scrollToBottom()
-  }, [messages, live, optimisticUser, scrollToBottom])
+  }, [messages, live, optimisticUser, scrollToBottom, loadedSessionId, sessionId])
 
-  const directory = (
-      <aside className="flex min-h-0 w-[164px] shrink-0 flex-col gap-2 border-r border-line p-3 lg:w-[220px]">
-        <button
-          type="button"
-          className={`${btnOutline('rounded-lg')} shrink-0`}
-          onClick={() => { setDirectoryOpen(false); setPickerOpen(true) }}
-        >
-          + 新会话
-        </button>
-        {/* 兜底模型放在上面：它的下拉往会话列表的方向展开，不会被容器底边切掉 */}
-        <div className="shrink-0">
-          <kit.Field label="兜底模型" hint="成员没指定模型时用它" wrap={false}>
-            <Select value={modelId} onChange={setModelId} options={modelOptions} />
-          </kit.Field>
-        </div>
-        <div className="scrollbar-slim flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {sessions.map((s) => (
-            /* 会话行：分隔线 + 悬停黄晕染（kit.Row）；选中态用左侧黄条 + 柔黄底标出 */
-            <kit.Row
-              key={s.id}
-              className={`group ${
-                s.id === sessionId
-                  ? 'bg-accent-soft shadow-[inset_3px_0_0_var(--c-accent)]'
-                  : ''
-              }`}
-            >
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left"
-                onClick={() => { setSessionId(s.id); setDirectoryOpen(false) }}
-              >
-                {/* 这一行要说的不是「这个会话叫什么」，而是「和谁在说」：头像 + 人数 */}
-                <span className="flex items-center gap-1">
-                  {membersOf(s.memberIds)
-                    .slice(0, SESSION_AVATAR_LIMIT)
-                    .map((p) => (
-                      <PeerAvatar
-                        key={p.id}
-                        name={p.name}
-                        avatar={p.avatar}
-                        size="h-5 w-5"
-                        textClass="text-[9px]"
-                      />
-                    ))}
-                  {s.memberIds.length > SESSION_AVATAR_LIMIT && (
-                    <span className="text-2xs text-hint">
-                      +{s.memberIds.length - SESSION_AVATAR_LIMIT}
-                    </span>
-                  )}
-                </span>
-                <span className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-                  {runningSessions.includes(s.id) && (
-                    /* 这张桌子正在发言：离开页面也照跑，点回来就能接着看 */
-                    <span
-                      className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
-                      title="正在发言"
-                      aria-label="正在发言"
-                    />
-                  )}
-                  {s.memberIds.length > 0 ? `${s.memberIds.length} 人会话` : '暂无成员'}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="roundtable-session-delete shrink-0 text-xs text-hint opacity-100 transition md:opacity-0 md:group-hover:opacity-100 group-focus-within:opacity-100 hover:text-danger focus-visible:opacity-100"
-                onClick={() => void removeSession(s.id)}
-              >
-                删除
-              </button>
-            </kit.Row>
-          ))}
-          {sessions.length === 0 && (
-            <p className="px-3 py-2 text-xs text-hint">还没有会话，点上面新建一个</p>
-          )}
-        </div>
-        {seated.length > 0 && (
-          <div className="scrollbar-slim mt-1 flex max-h-40 shrink-0 flex-col gap-1.5 overflow-y-auto border-t border-line pt-3">
-            <p className="ui-label">在座</p>
-            {seated.map((p) => (
-              <span key={p.id} className="flex items-center gap-2 text-xs text-muted">
-                <PeerAvatar
-                  name={p.name}
-                  avatar={p.avatar}
-                  size="h-6 w-6"
-                  textClass="text-[10px]"
-                />
-                <span className="truncate">{p.name}</span>
-              </span>
-            ))}
-          </div>
-        )}
-      </aside>
-  )
-
+  const selectWork = (selected: WorkSelection) => {
+    setDetail(selected)
+    if (selected.kind === 'todo') setTaskId(selected.id)
+    setTaskMenuOpen(false)
+  }
+  const discuss = (task?: NonNullable<typeof selectedTask>) => {
+    if (task) setTaskId(task.id)
+    setMobileTodos(false)
+    setView('discussion')
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+  const status = archived ? '已归档 · 只读' : projectStatus(workflow.data, busy, awaiting)
+  const invalidLocation = !sessionsLoading && !sessionsError && !!location.taskId && (!mainSession
+    || workspace.issues.some(i => i.sessionId === location.taskId)
+    || (location.projectId && mainSession.projectId !== location.projectId)
+    || (!!location.issueId && !currentIssue))
   return (
-    /* 一张主容器：左边是贴着它的目录（会话 / 配置 / 在座），右边整块留给这张圆桌。
-       容器交给 Card：描边环 / 面板底随主题（内部还是左目录 + 右圆桌的横排章法）。
-       两个弹层是 fixed 定位，放在 Card 外——切角主题会裁剪内部超出容器的绘制 */
     <>
-    <SideDrawer open={smallScreen && directoryOpen} title="会话与成员" onClose={() => setDirectoryOpen(false)}>{directory}</SideDrawer>
-    <Card pad="none" className="ui-card--row flex min-h-0 flex-1">
-      {/* 左：目录。会话列表自己滚，底下的配置与在座钉住不动 */}
-      {!smallScreen && directory}
-
-      {/* 右：这一张圆桌 */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {smallScreen && <div className="roundtable-mobile-bar"><button type="button" className={btnOutline()} aria-expanded={directoryOpen} onClick={() => setDirectoryOpen(true)}>会话与成员</button><span>{seated.length} 位在座</span></div>}
+    <div className="collab-workspace collab-v2">
+      {invalidLocation ? <div className="collab-page-empty"><h1>这个会话或议题不属于当前位置</h1><button className="ui-btn ui-btn--outline" onClick={() => openProject(activeProjectId)}>返回项目</button></div> : !location.taskId ? <ProjectPages key={activeProjectId} projectId={activeProjectId} projects={projects} sessions={rootSessions} peers={peers} configuredMembers={workspace.projectMembers} workspaceBindings={workspace.workspaceBindings} archivedTasks={workspace.archivedTasks} plans={workspace.plans} runningSessions={runningSessions} loading={sessionsLoading} error={sessionsError} onProject={openProject} onTask={s => openTask(s.id, s.projectId || '')} onNewTask={() => setCreateDialog('task')} onReload={reloadSessions} /> : <>
+        <header className="collab-session-header"><nav aria-label="协作位置"><button onClick={() => openProject('')}>协作</button><AppIcon name="chevron-right" /><button onClick={() => openProject(activeProjectId)}>{project?.name || '未归档记录'}</button><AppIcon name="chevron-right" /><span>{mainSession?.title || '协作会话'}</span></nav><div className="collab-session-title"><div className="collab-session-heading"><h1>{mainSession?.title || '协作会话'}</h1><span className="collab-session-status" role="status">{status}</span></div><div className="collab-session-actions">{mainSession?.projectId && <button className="ui-btn ui-btn--quiet collab-project-docs-link" aria-label="项目资料" title="查看项目资料与进度" onClick={() => { window.location.hash = collaborationHref({ projectId: activeProjectId, taskId: null, issueId: null }) + '&section=knowledge' }}><AppIcon name="doc" /><span>项目资料</span></button>}{mainSession?.projectId && <button className="ui-btn ui-btn--outline collab-workspace-link" aria-label={workspace.workspaceBindings?.some(b => b.projectId === mainSession.projectId && b.enabled) ? '工作目录' : '设置工作目录'} title="查看或设置项目工作目录" disabled={busy || !!workflow.data?.agents.some(a => a.working)} onClick={() => setWorkspaceDialog(true)}><AppIcon name="folder" /><span>{workspace.workspaceBindings?.some(b => b.projectId === mainSession.projectId && b.enabled) ? '工作目录' : '设置工作目录'}</span></button>}<button className="ui-btn ui-btn--outline" onClick={() => setCreateDialog('issue')} disabled={archived || sessionsLoading || !mainSession || !!currentIssue}><AppIcon name="branch" />发起议题</button><button className="ui-btn ui-btn--quiet collab-mobile-todo" aria-expanded={mobileTodos} onClick={() => setMobileTodos(v => !v)}><AppIcon name="todo" />工作 {workflow.data?.todos.filter(t => ['pending', 'doing', 'blocked', 'reviewing', 'checking'].includes(t.status)).length || 0}</button><button className="ui-btn ui-btn--quiet collab-session-settings" aria-label="会话设置与成员" title="会话设置与成员" onClick={() => setProjectSettings(true)}><AppIcon name="sliders" /></button></div></div></header>
+        {sessionsError && <div className="collab-error" role="alert"><span>{sessionsError}</span><button className="ui-btn ui-btn--outline" onClick={() => void reloadSessions()}>重试</button></div>}
+        {archived && mainSession && <div className="collab-archived-notice"><p>会话已归档，消息、工作条目和议题仍可查阅。</p><TaskActions id={mainSession.id} title={mainSession.title || '未命名会话'} archived busy={false} onChanged={lifecycleChanged} /></div>}
+        {workspace.plans?.filter(p => p.sessionId === location.taskId).map(plan => <PlanStatus key={plan.sessionId} plan={plan} peers={peers} />)}
+        <div className={'collab-session-grid' + (mobileTodos ? ' show-mobile-todos' : '')}>
+          <div className="collab-main" inert={mobileTodos}>
+            <div className="collab-viewbar"><nav role="tablist" aria-label="任务视图">{([['discussion', '消息'], ['graph', '协作图']] as const).map(([value, label]) => <button type="button" role="tab" id={'collab-tab-' + value} aria-controls={'collab-panel-' + value} aria-selected={view === value} key={value} onClick={() => setView(value)}>{label}</button>)}</nav>{view === 'discussion' && <div className="collab-reading-tools"><button className="ui-btn ui-btn--quiet" aria-pressed={reading} onClick={() => setReading(v => !v)}>{reading ? '完整记录' : '连续阅读'}</button></div>}</div>
+            {location.issueId && <div className="collab-issue-header"><button className="ui-btn ui-btn--quiet" onClick={() => location.taskId && openTask(location.taskId)}><AppIcon name="arrow-left" />返回主会话</button><div><span className="collab-secondary">议题 · {currentIssue?.status === 'resolved' ? '已形成结论' : '独立讨论'}</span><h2>{currentIssue?.title || '正在载入议题…'}</h2></div>{!archived && currentIssue?.status === 'open' && <button className="ui-btn ui-btn--outline" disabled={busy} onClick={() => setConclusionOpen(true)}>提交结论</button>}</div>}
+            {view === 'graph' && <GraphActivity data={workflow.data} issues={taskIssues} onIssue={issue => { setView('discussion'); openIssue(issue) }} onEvent={event => { setSelectedEvent(event); if (event.taskId) setTaskId(event.taskId) }} />}
+            {view === 'graph' && !workflow.data && <div className="collab-loading">{workflow.error || '正在载入协作关系…'}</div>}
+            {workflow.data && <div id="collab-panel-graph" role="tabpanel" aria-labelledby="collab-tab-graph" className="collab-content collab-content--graph" style={{ display: view === 'graph' ? 'flex' : 'none' }}><ProjectGraph key={location.taskId} data={workflow.data} peers={peers} selected={selection} event={selectedEvent} active={view === 'graph'} stale={!!workflow.error} onSelect={selectWork} onDiscuss={() => discuss()} /></div>}
         {/* 话题状态条：内容全部挂在当前话题上——还没开谈时整条不出现，别留一条空横栏 */}
-        {current && (
+        {current && view === 'discussion' && (
           <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2.5">
             <div className="flex flex-wrap items-center gap-1">
               {Object.entries(current.states).map(([name, state]) => {
@@ -866,7 +933,7 @@ function RoundtableBoard({
                       name={name}
                       avatar={avatarOfName(name)}
                       size="h-4 w-4"
-                      textClass="text-[8px]"
+                      textClass="text-[12px]"
                     />
                     <span className="ml-1">
                       {name} · {MA_STATE_LABELS[state] ?? state}
@@ -888,12 +955,18 @@ function RoundtableBoard({
 
         {/* 消息：这一块自己滚（min-h-0 才真的滚得起来），把输入框留给容器底部 */}
         <div
+          id="collab-panel-discussion"
+          role="tabpanel"
+          aria-labelledby="collab-tab-discussion"
           ref={scrollRef}
           onScroll={onMessagesScroll}
           className="scrollbar-slim min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4"
+          style={{ display: view === 'discussion' ? undefined : 'none' }}
         >
-          {messages.length === 0 && !live && !optimisticUser && (
-            <kit.Empty>说一句话，圆桌上的人会依次应答</kit.Empty>
+          {sessionId && loadedSessionId !== sessionId && !messageError && <div className="collab-loading" role="status"><AppIcon name="loading" className="motion-safe:animate-spin" />正在载入讨论记录…</div>}
+          {messageError && <div className="collab-error" role="alert"><span>讨论记录加载失败：{messageError}</span><button type="button" className={btnOutline()} onClick={() => sessionId && void reloadSession(sessionId)}>重试讨论</button></div>}
+          {(!sessionId || loadedSessionId === sessionId) && messages.length === 0 && !live && !optimisticUser && (
+            <kit.Empty>描述一个目标，让成员一起讨论并推进</kit.Empty>
           )}
           {/* 虚拟列表：外层固定为「总高度」的定位容器，只有视口内（含缓冲）的项被真正渲染 */}
           <div style={{ position: 'relative', height: virtualizer.getTotalSize(), width: '100%' }}>
@@ -913,7 +986,7 @@ function RoundtableBoard({
                     transform: `translateY(${vi.start}px)`,
                   }}
                 >
-                  {item.kind === 'msg' ? (
+                  {item.kind === 'issue' ? <IssueCard issue={item.issue} members={(sessions.find(s => s.id === item.issue.sessionId)?.memberIds || []).map(id => peerById.get(id)?.name || id)} running={runningSessions.includes(item.issue.sessionId)} onOpen={() => openIssue(item.issue)} /> : item.kind === 'msg' ? (
                     <MessageItem
                       msg={item.msg}
                       avatar={avatarOf(item.msg.peerId)}
@@ -923,6 +996,8 @@ function RoundtableBoard({
                          这个入口也由「⋯」菜单里的开关控制，默认关 */
                       allowContext={allowContext}
                       onOpenContext={openContext}
+                      onRewind={rewindTo}
+                      rewindDisabled={rewindDisabled}
                     />
                   ) : (
                     /* 正在说话的那一位：一次发言可能分好几段（边说边想），一段一个气泡；
@@ -962,7 +1037,7 @@ function RoundtableBoard({
         {/* 等待用户：某位成员请了用户表态（话题置 waiting），全桌暂停——这条提示贴在输入框正上方，
             免得「现在轮到你」只藏在状态条那个「等待用户」里。正在跑一轮（busy）时不出现，
             因为此刻还轮不到人说话 */}
-        {awaiting && !busy && (
+        {!archived && view === 'discussion' && awaiting && !busy && currentIssue?.status !== 'resolved' && (
           <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-line bg-accent-soft px-4 py-2">
             <span
               className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent"
@@ -971,14 +1046,20 @@ function RoundtableBoard({
             <p className="text-sm font-medium text-fg">
               {awaitingName ? `${awaitingName} 在等你表态` : '圆桌在等你表态'}
             </p>
-            <p className="text-xs text-muted">全桌已暂停，说一句就继续</p>
+            <p className="text-xs text-muted">请回复你的决定；要继续工作，请明确提出恢复或调整要求。</p>
           </div>
         )}
 
         {/* 输入：钉在容器底部，永远看得见。
             输入框与发送按钮包在同一个边框里，并用 items-center 对齐——两者天然在同一条水平线上 */}
-        <div className="shrink-0 border-t border-line px-4 py-3">
-          <div className="relative flex items-center gap-2 rounded-2xl border border-line bg-bg py-1.5 pl-4 pr-1.5 transition hover:border-line-strong focus-within:border-accent">
+        {!archived && view === 'discussion' && currentIssue?.status !== 'resolved' && <div className="collab-composer shrink-0 border-t border-line px-4 py-3">
+          <div className="collab-compose-scope"><span><AppIcon name="reply" />{selectedTask ? `围绕工作：${selectedTask.title}` : currentIssue ? '发往议题：' + currentIssue.title : '发往主会话'}</span>{selectedTask && <button type="button" className="ui-btn ui-btn--quiet ui-btn--sm" onClick={() => setTaskId(null)}>清除待办引用</button>}{busy && <span className="collab-secondary">{live?.peerName ? `${live.peerName} 正在发言` : '成员正在协作'}</span>}</div>
+          {!currentIssue && <label className="collab-compose-intent" title="勾选后，本条消息会停止当前执行并交由主控重新规划">
+            <input type="checkbox" checked={redirectWork} onChange={e => setRedirectWork(e.target.checked)} />
+            调整任务
+            <span>{redirectWork ? '停止当前执行，按本条要求重新规划' : '普通交流不中断工作；明确的恢复、调整或停止指令由成员识别后执行'}</span>
+          </label>}
+          <div className="collab-compose-box relative flex items-center gap-2 rounded-2xl border border-line bg-bg py-1.5 pl-4 pr-1.5 transition hover:border-line-strong focus-within:border-accent">
             {mention && mentionMatches.length > 0 && (
               <MentionMenu
                 peers={mentionMatches}
@@ -990,7 +1071,7 @@ function RoundtableBoard({
               ref={inputRef}
               className="scrollbar-slim max-h-40 min-h-[40px] w-full resize-none bg-transparent py-2 text-base leading-relaxed text-fg outline-none placeholder:text-hint"
               rows={2}
-              placeholder="说点什么…（@名字 只让指定的人应答）"
+              placeholder={redirectWork ? '描述新的工作要求或调整…' : selectedTask ? '询问这项工作的进度、问题或验收结果…' : currentIssue ? '围绕议题补充意见…（@名字 定向沟通）' : '输入消息或本次目标，@成员定向沟通…'}
               value={input}
               onChange={(e) => {
                 setInput(e.target.value)
@@ -1045,13 +1126,13 @@ function RoundtableBoard({
               speakerStrategy={speakerStrategy}
               onChangeSpeakerStrategy={changeSpeakerStrategy}
             />
-            {/* 强制暂停：只在有人说话时出现，且**不占发送键**——用户随时可以发言（核心设计） */}
-            {busy && (
+            {/* 明确停止同时作用于执行与对话；普通发送保持独立。 */}
+            {(busy || workflow.data?.agents.some(agent => agent.working)) && (
               <button
                 type="button"
                 onClick={() => void stop()}
-                title="中断全部发言"
-                aria-label="中断全部发言"
+                title="停止协作（包括执行与发言）"
+                aria-label="停止协作"
                 className="ui-btn ui-btn--outline h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
               >
                 <AppIcon name="stop" className="h-3.5 w-3.5" />
@@ -1063,23 +1144,29 @@ function RoundtableBoard({
               onClick={() => void send()}
               title="发送"
               aria-label="发送"
+              disabled={preparing || rewinding || sessionsLoading}
               className="ui-btn ui-btn--primary h-11 w-11 shrink-0 [--ui-btn-px:0px] [--ui-btn-py:0px]"
             >
               <AppIcon name="send" className="h-4 w-4" />
             </button>
           </div>
+        </div>}
+        {view === 'discussion' && currentIssue?.status === 'resolved' && <div className="collab-resolved"><AppIcon name="check" /><div><strong>议题结论已带回主会话</strong><p>{currentIssue.conclusion}</p></div><button className="ui-btn ui-btn--outline" onClick={() => location.taskId && openTask(location.taskId)}>回到主会话继续</button></div>}
+          </div>
+          <TodoPanel readOnly={archived} data={workflow.data} loading={workflow.loading} error={workflow.error} onRetry={() => setWorkflowRevision(v => v + 1)} onSelect={id => selectWork({ kind: 'todo', id })} onDiscuss={discuss} />
         </div>
-      </div>
-    </Card>
+      </>}
+    </div>
+
+      {projectSettings && <ProjectSettings session={sessions.find(s => s.id === sessionId)} issue={!!currentIssue} hasIssues={taskIssues.length > 0} archived={archived} members={seated} modelId={modelId} models={modelOptions} busy={busy || !!workflow.data?.agents.some(a => a.working)} onModel={setModelId} onOrganize={() => { setProjectSettings(false); setOrganizeOpen(true) }} onLifecycle={lifecycleChanged} onClose={() => setProjectSettings(false)} />}
+      {organizeOpen && sessionId && <ProjectDialog organize initialName={sessions.find(s => s.id === sessionId)?.title || '协作项目'} projects={projects} onClose={() => setOrganizeOpen(false)} onConfirm={async choice => { await organizeSessionProject(sessionId, { name: choice.name, kind: choice.kind, note: choice.note, projectId: choice.projectId }); await reloadSessions() }} />}
+      {detail && workflow.data && <FloatWindow title={detail.kind === 'todo' ? '工作详情与执行记录' : '成员在当前项目中的活动'} onClose={() => { setDetail(null); setTaskMenuOpen(false) }} width={detail.kind === 'todo' ? 1120 : 600} expandable={detail.kind === 'todo'} contentClassName={detail.kind === 'todo' ? 'work-review-window' : ''}><div className="collab-detail"><Detail key={`${sessionId}:${detail.kind}:${detail.id}`} sel={detail} data={workflow.data} onSelect={selectWork} agentOf={id => workflow.data?.agents.find(a => a.id === id)} todoOf={id => workflow.data?.todos.find(t => t.id === id)} />{!archived && detail.kind === 'todo' && workflow.data.todos.find(t => t.id === detail.id) && <div className="collab-detail-actions"><button type="button" className={btnOutline()} onClick={() => { const t = workflow.data?.todos.find(t => t.id === detail.id); if (t) discuss(t); setDetail(null) }}><AppIcon name="chat" />讨论这项工作</button><div className="relative"><button type="button" className={btnOutline()} onClick={() => setTaskMenuOpen(v => !v)} aria-expanded={taskMenuOpen}><AppIcon name="more" />工作操作</button>{taskMenuOpen && <TodoMenu t={workflow.data.todos.find(t => t.id === detail.id)!} onClose={() => { setTaskMenuOpen(false); setWorkflowRevision(v => v + 1) }} />}</div></div>}</div></FloatWindow>}
 
       {/* 新建会话的选人弹窗 */}
-      {pickerOpen && (
-        <NewSessionDialog
-          peers={peers}
-          onCancel={() => setPickerOpen(false)}
-          onCreate={(ids) => void newSession(ids)}
-        />
-      )}
+      {workspaceDialog && mainSession?.projectId && <ProjectWorkspaceDialog projectId={mainSession.projectId} projectName={project?.name || '当前项目'} binding={workspace.workspaceBindings?.find(b => b.projectId === mainSession.projectId)} onSaved={reloadSessions} onClose={() => setWorkspaceDialog(false)} />}
+      {createDialog === 'task' && <CollaborationDialog chooseCoordinator title="新建协作会话" label="这次希望推进什么？" peers={peers} initialMembers={projectMemberIds(activeProjectId, workspace.projectMembers, rootSessions, peers)} submitLabel="创建会话" onClose={() => setCreateDialog(null)} onSubmit={async (name, _note, ids, coordinator) => { const result = await createCollaborationTask(activeProjectId, name, ids, coordinator); await reloadSessions(); openTask(result.sessionId) }} />}
+      {createDialog === 'issue' && mainSession && <CollaborationDialog title="发起议题" label="需要一起解决什么问题？" peers={peers.filter(p => mainSession.memberIds.includes(p.id))} initialMembers={mainSession.memberIds} submitLabel="创建并讨论" onClose={() => setCreateDialog(null)} onSubmit={async (name, _note, ids) => { const issue = await createCollaborationIssue(mainSession.id, name, ids); await reloadSessions(); openIssue(issue); startRoundtable({ sessionId: issue.sessionId, input: name, modelId: modelId || undefined, speakerStrategy }) }} />}
+      {conclusionOpen && currentIssue && <ConclusionDialog onClose={() => setConclusionOpen(false)} onSubmit={async text => { await concludeCollaborationIssue(currentIssue.id, text); await reloadSessions(); openTask(currentIssue.parentSessionId) }} />}
 
       {/* 原始上下文浮层：点开一条发言时打开；Esc 或点背景关闭 */}
       {contextView && (
@@ -1424,7 +1511,7 @@ function MentionMenu({
               i === activeIndex ? 'bg-fg/5 text-fg' : 'text-muted hover:bg-fg/5 hover:text-fg'
             }`}
           >
-            <PeerAvatar name={p.name} avatar={p.avatar} size="h-7 w-7" textClass="text-[11px]" />
+            <PeerAvatar name={p.name} avatar={p.avatar} size="h-7 w-7" textClass="text-[12px]" />
             <span className="flex-1 truncate text-sm">{p.name}</span>
           </button>
         ))}
@@ -1435,7 +1522,6 @@ function MentionMenu({
 }
 
 /** 会话行里最多画几个头像，多出来的用 +N 表示（左栏窄，画不下太多） */
-const SESSION_AVATAR_LIMIT = 4
 
 /** 成员气泡里头像那一格的尺寸：状态行要用同样的宽度空出这一格，才能和气泡正文左对齐 */
 const BUBBLE_AVATAR_SIZE = 'h-14 w-14'
@@ -1477,6 +1563,8 @@ function Bubble({
   createdAt,
   showCot,
   onClick,
+  onRewind,
+  rewindDisabled = false,
 }: {
   role: string
   name: string | null
@@ -1493,6 +1581,8 @@ function Bubble({
   /** 是否渲染思维链（「⋯」菜单里那个开关；关掉后气泡只留发言正文） */
   showCot: boolean
   onClick?: () => void
+  onRewind?: () => void
+  rewindDisabled?: boolean
 }) {
   const mine = role === 'user'
   const label = mine ? '你' : name ?? '成员'
@@ -1510,7 +1600,7 @@ function Bubble({
     <div
       onClick={onClick}
       title={onClick ? '点开看它这次发言的原始上下文' : undefined}
-      className={`rounded-2xl border px-3.5 py-2.5 text-md leading-relaxed ${
+      className={`collab-message-body ${mine ? 'is-user' : 'is-agent'} rounded-2xl border px-3.5 py-2.5 text-md leading-relaxed ${
         mine
           ? 'border-line bg-fg/5 text-fg'
           : `${BUBBLE_MAX_W} border-line bg-fg/[0.04] text-fg`
@@ -1520,7 +1610,7 @@ function Bubble({
       {showCot && <CotBlocks reasoning={reasoning} trace={trace} live={!!streaming} />}
       {content ? (
         <div className="prose-chat [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ComfyImage }}>{content}</ReactMarkdown>
         </div>
       ) : streaming ? (
         <TypingDots />
@@ -1547,6 +1637,12 @@ function Bubble({
       <div className="flex flex-col items-end gap-1">
         {meta}
         {block}
+        {onRewind && <button type="button" aria-label="回到这条提问之前"
+          title="回退本会话的这条提问及后续对话，提问放回输入框；项目工作、议题和已执行的操作保留"
+          disabled={rewindDisabled} onClick={onRewind}
+          className="mt-1 inline-flex items-center gap-1 self-end rounded px-2 py-1 text-sm text-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">
+          <AppIcon name="reply" size={14} />回退
+        </button>}
       </div>
     )
   }
@@ -1712,26 +1808,10 @@ function EventLine({
   const kit = usePageKit()
   /* 系统提示（全桌已收到受阻 / 报告、正在重新处理）：一条醒目的高亮提示，居中。
      它不是某个成员对话题的表态，用户最需要一眼看到的正是「其他成员已经在接手」 */
-  if (kind === 'rally') {
-    return (
-      <div className="flex justify-center px-1">
-        <span
-          className="inline-flex max-w-[min(100%,36rem)] min-w-0 items-center gap-1.5 rounded-full px-3 py-1 text-center text-xs leading-relaxed"
-          style={{
-            background: 'color-mix(in srgb, var(--c-accent) 15%, transparent)',
-            color: 'var(--c-accent)',
-          }}
-        >
-          {/* 信号灯钉在最左、相对整块标签垂直居中（多行文案时不再偏到首行） */}
-          <span
-            className="inline-block h-1.5 w-1.5 shrink-0 self-center animate-pulse rounded-full"
-            style={{ background: 'var(--c-accent)' }}
-          />
-          <span className="min-w-0 whitespace-normal break-words">{text}</span>
-        </span>
-      </div>
-    )
-  }
+  if (kind === 'task_context' || kind === 'issue_context') return <details className="collab-context-note"><summary>{kind === 'task_context' ? '本次目标与项目方向' : '议题发起时的上下文'}</summary><p>{text}</p></details>
+  if (kind === 'issue_resolved') return <div className="collab-conclusion-notice"><span className="collab-secondary">议题结论 · 已带回主会话</span><details><summary>查看本次结论</summary><p>{text}</p></details></div>
+  if (kind === 'ask_user') return <div className="border-l-2 border-accent pl-4"><p className="text-xs text-muted">需要你表态</p><p className="whitespace-pre-wrap break-words text-base leading-relaxed text-fg">{text}</p></div>
+  if (kind === 'rally') return <RallyNotice text={text} />
   const { peer, name, action, reason } = parseEventLine(text, peerId, peerName, peerById, kind)
 
   if (kind === 'topic_open' || action === '话题开始') {
@@ -1764,7 +1844,7 @@ function EventLine({
 
   /* 理由可能是一整句：单独成 chip，限宽并允许换行——绝不撑出消息容器的横向滚动条 */
   const reasonChip = reason ? (
-    <span className="min-w-0 max-w-full whitespace-normal break-words rounded-full bg-fg/[0.07] px-1.5 py-0.5 font-mono text-2xs leading-relaxed text-hint">
+    <span className="collab-event-reason min-w-0 max-w-full whitespace-normal break-words rounded-full bg-fg/[0.07] px-1.5 py-0.5 font-mono text-2xs leading-relaxed text-hint">
       {reason}
     </span>
   ) : null
@@ -1786,7 +1866,7 @@ function EventLine({
                 name={name}
                 avatar={peer?.avatar ?? null}
                 size="h-4 w-4"
-                textClass="text-[8px]"
+                textClass="text-[12px]"
               />
             </span>
           )}
@@ -1808,7 +1888,7 @@ function EventLine({
                 name={name}
                 avatar={peer?.avatar ?? null}
                 size="h-4 w-4"
-                textClass="text-[8px]"
+                textClass="text-[12px]"
               />
             </span>
           )}
@@ -1855,7 +1935,7 @@ function TransitionCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <PeerAvatar name={name ?? '成员'} avatar={avatar} size="h-5 w-5" textClass="text-[9px]" />
+          <PeerAvatar name={name ?? '成员'} avatar={avatar} size="h-5 w-5" textClass="text-[12px]" />
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">
             {name ?? '成员'}
           </span>
@@ -1872,7 +1952,7 @@ function TransitionCard({
           </span>
         </div>
         {reason && (
-          <p className="min-w-0 whitespace-normal break-words text-xs leading-relaxed text-fg-2">
+          <p className="collab-event-reason min-w-0 whitespace-normal break-words text-xs leading-relaxed text-fg-2">
             {reason}
           </p>
         )}
@@ -1910,6 +1990,8 @@ const MessageItem = memo(function MessageItem({
   peerById,
   allowContext,
   onOpenContext,
+  onRewind,
+  rewindDisabled,
 }: {
   msg: MaMessage
   avatar?: string | null
@@ -1920,6 +2002,8 @@ const MessageItem = memo(function MessageItem({
   allowContext: boolean
   /** 点开一条成员发言时的回调（稳定引用，memo 依赖它保持稳定） */
   onOpenContext: (m: MaMessage) => void
+  onRewind: (m: MaMessage) => void
+  rewindDisabled: boolean
 }) {
   if (msg.role === 'event') {
     return (
@@ -1945,128 +2029,8 @@ const MessageItem = memo(function MessageItem({
       showCot={showCot}
       /* 只有成员发言才有原始上下文可看（人的话不是一次模型调用）；入口由「⋯」菜单里的开关控制 */
       onClick={allowContext && msg.role === 'peer' ? () => void onOpenContext(msg) : undefined}
+      onRewind={msg.role === 'user' && msg.id > 0 ? () => onRewind(msg) : undefined}
+      rewindDisabled={rewindDisabled}
     />
   )
 })
-
-/**
- * 新建会话的选人弹窗：一面头像墙，鼠标移到谁身上、谁就渐入一张卡片（名称 + 备注），
- * 点一下选中。选中的几位组成这张桌子。
- *
- * <p>一位都不选也建得出来——那是「全体名册」（后端在没有会话时自动开的那一桌也是这种）。
- */
-function NewSessionDialog({
-  peers,
-  onCancel,
-  onCreate,
-}: {
-  peers: MaPeer[]
-  onCancel: () => void
-  onCreate: (memberIds: string[]) => void
-}) {
-  const kit = usePageKit()
-  const [picked, setPicked] = useState<string[]>([])
-  const toggle = (id: string) =>
-    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-  const allPicked = peers.length > 0 && picked.length === peers.length
-  return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-6"
-      onClick={onCancel}
-    >
-      <Card
-        pad="none"
-        className="flex max-h-[82vh] w-full max-w-2xl flex-col shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <CardHead
-          title="新建会话 · 选人上桌"
-          meta={
-            <button type="button" className={miniBtn} onClick={onCancel}>
-              取消
-            </button>
-          }
-        />
-        <p className="border-b border-line px-4 py-2 text-xs leading-relaxed text-hint">
-          勾选的成员组成这张桌子，没勾的不会出现在这次会话里；一位都不勾就是全体名册。
-          选了就定下来——以后往名册里加人，也不会自动加进这张桌子。
-        </p>
-        <div className="scrollbar-slim flex min-h-[7rem] flex-1 flex-wrap gap-3 overflow-y-auto px-4 py-4">
-          {peers.map((p) => (
-            <MemberTile
-              key={p.id}
-              peer={p}
-              picked={picked.includes(p.id)}
-              onToggle={() => toggle(p.id)}
-            />
-          ))}
-          {peers.length === 0 && (
-            <kit.Empty>名册还是空的：先去「多智能体 · 成员」页添几位</kit.Empty>
-          )}
-        </div>
-        <div className="flex items-center gap-2 border-t border-line px-4 py-3">
-          <span className="mr-auto text-xs text-muted">
-            {picked.length > 0 ? `已选 ${picked.length} 位` : '未选 = 全体名册上桌'}
-          </span>
-          {peers.length > 0 && (
-            <button
-              type="button"
-              className={miniBtn}
-              onClick={() => setPicked(allPicked ? [] : peers.map((p) => p.id))}
-            >
-              {allPicked ? '全不选' : '全选'}
-            </button>
-          )}
-          <button type="button" className={btnPrimary()} onClick={() => onCreate(picked)}>
-            创建
-          </button>
-        </div>
-      </Card>
-    </div>
-  )
-}
-
-/**
- * 选人弹窗里的一格：默认只看得到头像；hover 或已选中时，那张卡片（名称 + 备注）渐入。
- *
- * <p>卡片与头像叠在同一格里做交叉渐入（而不是浮在格子外）——浮层会撑大滚动区域，
- * 靠边的格子还会带出一条横向滚动条。
- */
-function MemberTile({
-  peer,
-  picked,
-  onToggle,
-}: {
-  peer: MaPeer
-  picked: boolean
-  onToggle: () => void
-}) {
-  const kit = usePageKit()
-  return (
-    /* kit.Tile 出切角仪表块（角标 + 悬停切环）；选中态黄环 + 柔黄底都由 ui-card--accent 出 */
-    <kit.Tile
-      onClick={onToggle}
-      className={`group h-28 w-28 shrink-0 ${picked ? 'ui-card--accent' : ''}`}
-    >
-      <span
-        className={`absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-150 ${
-          picked ? 'opacity-0' : 'opacity-100 group-hover:opacity-0'
-        }`}
-      >
-        <PeerAvatar name={peer.name} avatar={peer.avatar} size="h-16 w-16" textClass="text-[22px]" />
-      </span>
-      <span
-        className={`absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 px-2 text-center transition-opacity duration-150 ${
-          picked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-        }`}
-      >
-        <span className="line-clamp-1 w-full text-sm font-medium text-fg">{peer.name}</span>
-        {peer.note && (
-          <span className="line-clamp-3 w-full text-2xs leading-snug text-muted">
-            {peer.note}
-          </span>
-        )}
-      </span>
-    </kit.Tile>
-  )
-}

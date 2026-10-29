@@ -12,16 +12,26 @@ import SnapshotImageExport from '../components/SnapshotImageExport'
 import SnapshotRename from '../components/SnapshotRename'
 
 const stamp = (time: number) => new Date(time).toLocaleString()
+const TAB_STORAGE_KEY = 'minis.snapshots.tab'
 
 export default function Snapshots({ id }: { id?: string }) {
   const kit = usePageKit()
-  const [tab, setTab] = useState<'capture' | 'library'>('capture')
+  const [tab, setTab] = useState<'capture' | 'library'>(() => {
+    // A detail may also be opened directly from chat or search; returning should show its library.
+    if (id) return 'library'
+    try { return localStorage.getItem(TAB_STORAGE_KEY) === 'library' ? 'library' : 'capture' }
+    catch { return 'capture' }
+  })
   const [items, setItems] = useState<WebSnapshot[]>([])
   const [selected, setSelected] = useState<WebSnapshot | null>(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    try { localStorage.setItem(TAB_STORAGE_KEY, tab) }
+    catch { /* Storage restrictions must not prevent switching tabs. */ }
+  }, [tab])
   const fail = useCallback((e: unknown) => {
     const login = loginUrlOf(e)
     if (login) window.location.assign(login)
@@ -72,8 +82,9 @@ export default function Snapshots({ id }: { id?: string }) {
         <div className="flex items-center justify-center gap-4"><button type="button" className={WEB_BUTTON} disabled={page === 1 || loading} onClick={() => setPage(p => p - 1)}>上一页</button><span className="text-sm text-muted">第 {page} 页</span><button type="button" className={WEB_BUTTON} disabled={items.length < 20 || loading} onClick={() => setPage(p => p + 1)}>下一页</button></div>
       </>}
       {id && !loading && selected && <>
-        <a href="#/snapshots" className="inline-flex text-sm text-muted hover:text-accent">← 返回快照</a>
+        <a href="#/snapshots" className="inline-flex text-sm text-muted hover:text-accent">← 返回快照库</a>
         <section className="space-y-4 rounded-xl border border-line bg-bg p-5">
+          {selected.indexStatus === 'reset' && <p className="mb-3 text-sm text-muted">知识索引已清空，网页原件仍保留。重新入库后可生成向量。</p>}
           <div className="flex flex-wrap items-start justify-between gap-3"><h2 className="min-w-0 flex-1 break-words text-2xl font-semibold text-fg">{selected.title}</h2><span className="rounded-full bg-accent/10 px-3 py-1 text-xs text-accent">{selected.enabled ? INDEX_LABEL[selected.indexStatus] || selected.indexStatus : '已停用'}</span></div>
           <SnapshotRename key={selected.id} id={selected.id} title={selected.title} disabled={busy} onError={fail} onRenamed={title => setSelected(previous => previous?.id === selected.id ? { ...previous, title } : previous)} />
           <a href={selected.url} target="_blank" rel="noreferrer" className="block break-all text-sm text-accent hover:underline">{readableUrl(selected.url)}</a>
@@ -83,7 +94,7 @@ export default function Snapshots({ id }: { id?: string }) {
           <div className="flex flex-wrap gap-2">
             <button type="button" className={WEB_BUTTON} disabled={busy} onClick={() => void action(() => downloadSnapshot(selected.id))}>下载离线 HTML</button>
             <button type="button" className={WEB_BUTTON} disabled={busy} onClick={() => void action(async () => setSelected(await toggleSnapshot(selected.id, !selected.enabled)))}>{selected.enabled ? '停用检索' : '启用检索'}</button>
-            {selected.enabled && <button type="button" className={WEB_BUTTON} disabled={busy || selected.indexStatus === 'indexing'} onClick={() => void action(async () => setSelected(await indexSnapshot(selected.id)))}>重新生成向量</button>}
+            {selected.enabled && <button type="button" className={WEB_BUTTON} disabled={busy || selected.indexStatus === 'indexing' || selected.indexStatus === 'reset'} onClick={() => void action(async () => setSelected(await indexSnapshot(selected.id)))}>重新生成向量</button>}
             {selected.docId && <a href={`#/analyze?doc=${selected.docId}`} className={WEB_BUTTON}>审核图谱提取</a>}
             <button type="button" className={`${WEB_BUTTON} text-red-500 sm:ml-auto`} disabled={busy} onClick={() => {
               if (!window.confirm('删除此快照及其检索分块、向量和来源关系？')) return

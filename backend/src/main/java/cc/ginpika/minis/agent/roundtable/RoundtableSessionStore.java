@@ -1,6 +1,5 @@
 package cc.ginpika.minis.agent.roundtable;
 
-import cc.ginpika.minis.config.RoundtableProps;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -25,17 +24,15 @@ public class RoundtableSessionStore {
     public static final String MODE = "multi-agent";
 
     public record SessionRow(String id, String title, String modelId, String memberIds, Long createdAt,
-                             Long updatedAt) {
+                             Long updatedAt, String projectId) {
     }
 
-    private static final String COLS = "id, title, model_id, member_ids, created_at, updated_at";
+    private static final String COLS = "id, title, model_id, member_ids, created_at, updated_at, project_id";
 
     private final JdbcTemplate jdbc;
-    private final RoundtableProps props;
 
-    public RoundtableSessionStore(JdbcTemplate jdbc, RoundtableProps props) {
+    public RoundtableSessionStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
-        this.props = props;
     }
 
     /**
@@ -44,8 +41,7 @@ public class RoundtableSessionStore {
      * <p>{@code memberIds} 是这张圆桌的成员（{@code agent.id} 的 JSON 数组）；传 null 表示
      * 「全体名册」——首页「和所有智能体对话」直接开说、以及加这一列之前建的旧会话都是这种。
      *
-     * <p>max_rounds 取圆桌自己的上限：首页会话级那个「轮数上限」旋钮属于人与单人模型的对话，
-     * 圆桌的轮数由 RoundtableProps 定。context_trace / show_cot 与旧行为一致地置 1
+     * <p>max_rounds 是历史兼容列，写 0，不再参与执行。context_trace / show_cot 与旧行为一致地置 1
      * （圆桌的请求体不走 History，这两列实际不影响它）。
      */
     public String insert(String memberIds) {
@@ -53,7 +49,7 @@ public class RoundtableSessionStore {
         long now = System.currentTimeMillis();
         jdbc.update("INSERT INTO hub_session(id, title, mode, member_ids, max_rounds, context_trace, "
                         + "show_cot, created_at, updated_at) VALUES(?,?,?,?,?,1,1,?,?)",
-                id, null, MODE, memberIds, Math.max(1, props.getMaxToolRounds()), now, now);
+                id, null, MODE, memberIds, 0, now, now);
         return id;
     }
 
@@ -93,9 +89,33 @@ public class RoundtableSessionStore {
         return jdbc.update("DELETE FROM hub_session WHERE id = ? AND mode = ?", id, MODE);
     }
 
+    public boolean hasIssueRelations(String id) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM collaboration_issue "
+                + "WHERE parent_session_id=? OR session_id=?)", Boolean.class, id, id));
+    }
+
+    public boolean isResolvedIssue(String id) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM collaboration_issue "
+                + "WHERE session_id=? AND status='resolved')", Boolean.class, id));
+    }
+
+    public List<String> archivedIds() {
+        return jdbc.queryForList("SELECT session_id FROM collaboration_task_archive",String.class);
+    }
+
+    public boolean archived(String id) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM collaboration_task_archive a WHERE a.session_id=? "
+                +"OR a.session_id=(SELECT parent_session_id FROM collaboration_issue WHERE session_id=?))",Boolean.class,id,id));
+    }
+
+    public void requireWritable(String id) {
+        if(archived(id))throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT,"任务已归档，请先恢复后继续");
+    }
+
     private static SessionRow map(ResultSet rs, int rowNum) throws SQLException {
         return new SessionRow(rs.getString("id"), rs.getString("title"), rs.getString("model_id"),
                 rs.getString("member_ids"), RoundtableRows.nullableLong(rs, "created_at"),
-                RoundtableRows.nullableLong(rs, "updated_at"));
+                RoundtableRows.nullableLong(rs, "updated_at"), rs.getString("project_id"));
     }
 }

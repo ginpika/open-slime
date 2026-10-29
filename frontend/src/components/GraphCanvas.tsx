@@ -2,12 +2,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useId,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { GraphEdge, GraphNode } from '../api/client'
 import { hslToHex } from '../theme/color'
+import { edgeGeometry, edgeKey, edgeSlots, topologyKey, type GraphSel } from './graphRendering'
 import {
   forceLayout,
   physicsTick,
@@ -15,6 +17,7 @@ import {
   type PhysicsState,
   type Pt,
 } from './graphLayout'
+export type { GraphSel } from './graphRendering'
 
 /**
  * 图谱页交互画布：世界坐标力布局（graphLayout）+ pan/zoom 视口变换。
@@ -58,11 +61,6 @@ export function typeColorMap(types: Iterable<string>): Map<string, string> {
 /** 节点半径：基础 8（中心/选中 11），随度数线性小步增长（每条边 +2），封顶 16 */
 const radiusOf = (degree: number, emphasized: boolean) =>
   Math.min(R_MAX, (emphasized ? 11 : 8) + degree * 2)
-
-/** 画布选中对象：节点或边（key = from|predicate|to） */
-export type GraphSel =
-  | { kind: 'node'; id: string }
-  | { kind: 'edge'; key: string }
 
 type Props = {
   nodes: GraphNode[]
@@ -119,6 +117,7 @@ export default function GraphCanvas({
   physics,
   fitOnUpdate = true,
 }: Props) {
+  const markerId = useId().replace(/[^a-zA-Z0-9]/g, '')
   const selNodeId = selected?.kind === 'node' ? selected.id : null
   const boxRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -128,6 +127,17 @@ export default function GraphCanvas({
   const [needFit, setNeedFit] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [hoverEdge, setHoverEdge] = useState<string | null>(null)
+  const visibleEdges = useMemo(
+    () => edges.filter((e) => !hiddenPredicates.has(e.predicate)),
+    [edges, hiddenPredicates],
+  )
+  const pairSlots = useMemo(() => edgeSlots(visibleEdges), [visibleEdges])
+  const labelWidths = useMemo(() => {
+    const ctx = document.createElement('canvas').getContext('2d')
+    if (ctx) ctx.font = `14px ${getComputedStyle(document.body).fontFamily}`
+    return new Map([...nodes.map(n => n.name), ...visibleEdges.map(e => e.predicate)]
+      .map(text => [text, ctx?.measureText(text).width ?? Array.from(text).length * 14]))
+  }, [nodes, visibleEdges])
 
   /* 实体度数（全量边，过滤不影响大小）：高连接实体按比例变大 */
   const degreeOf = useMemo(() => {
@@ -155,14 +165,25 @@ export default function GraphCanvas({
         )
         const ext = r + (node.id === centerId ? 5 : node.id === selNodeId ? 3 : 0)
         const yMax = p.y + ext + 27 // 标签绘制在节点下方
-        if (p.x - ext < minX) minX = p.x - ext
-        if (p.x + ext > maxX) maxX = p.x + ext
+        const halfWidth = Math.max(ext, (labelWidths.get(node.name) ?? 0) / 2 + 4)
+        if (p.x - halfWidth < minX) minX = p.x - halfWidth
+        if (p.x + halfWidth > maxX) maxX = p.x + halfWidth
         if (p.y - ext < minY) minY = p.y - ext
         if (yMax > maxY) maxY = yMax
       }
+      for (const e of visibleEdges) {
+        const a = pos.get(e.from), b = pos.get(e.to)
+        if (!a || !b) continue
+        const geometry = edgeGeometry(e, a, b, R_MAX + 2, R_MAX + 7, pairSlots.get(edgeKey(e)))
+        const halfWidth = (labelWidths.get(e.predicate) ?? 0) / 2 + 4
+        minX = Math.min(minX, geometry.bounds.minX, geometry.label.x - halfWidth)
+        maxX = Math.max(maxX, geometry.bounds.maxX, geometry.label.x + halfWidth)
+        minY = Math.min(minY, geometry.bounds.minY, geometry.label.y - 14)
+        maxY = Math.max(maxY, geometry.bounds.maxY, geometry.label.y + 4)
+      }
       return minX === Infinity ? null : { minX, minY, maxX, maxY }
     },
-    [nodes, degreeOf, centerId, selNodeId],
+    [nodes, degreeOf, centerId, selNodeId, labelWidths, visibleEdges, pairSlots],
   )
   const bounds = useMemo(() => boundsOf(positions), [positions, boundsOf])
 
@@ -203,8 +224,8 @@ export default function GraphCanvas({
   }, [physics])
 
   const dragRef = useRef<
-    | { kind: 'node'; id: string; startClient: Pt; origin: Pt; moved: boolean }
-    | { kind: 'pan'; startClient: Pt; startT: { x: number; y: number }; moved: boolean }
+    | { kind: 'node'; pointerId: number; id: string; startClient: Pt; origin: Pt; moved: boolean }
+    | { kind: 'pan'; pointerId: number; startClient: Pt; startT: { x: number; y: number }; moved: boolean }
     | null
   >(null)
   const suppressClickRef = useRef(false)
@@ -231,10 +252,6 @@ export default function GraphCanvas({
   }, [])
 
   /* ids / 可见边弹簧：物理循环每帧经 ref 读取最新拓扑 */
-  const visibleEdges = useMemo(
-    () => edges.filter((e) => !hiddenPredicates.has(e.predicate)),
-    [edges, hiddenPredicates],
-  )
   useEffect(() => {
     idsRef.current = nodes.map((n) => n.id)
     springsRef.current = visibleEdges.map((e) => ({ from: e.from, to: e.to }))
@@ -270,6 +287,7 @@ export default function GraphCanvas({
       s.running = false
     }
   }, [])
+  useEffect(() => stopLoop, [stopLoop])
 
   /* 物理开关：开启时从当前位置重新加热启动；关闭时停帧冻结在原地 */
   useEffect(() => {
@@ -289,16 +307,25 @@ export default function GraphCanvas({
    * 整图替换（fitOnUpdate）→ 自动适配视角；增量展开 → 保持用户当前视角，
    * 新节点在视野外由用户自行缩放/平移探索。
    * 视口尺寸不在此依赖中：resize 只改变观察方式，不再重排整图 */
+  const topology = topologyKey(nodes, visibleEdges)
+  const layoutRef = useRef({ topology: '', centerId })
   useEffect(() => {
+    if (layoutRef.current.topology === topology && layoutRef.current.centerId === centerId) return
+    const reset = layoutRef.current.centerId !== centerId
+    layoutRef.current = { topology, centerId }
     if (nodes.length === 0) {
+      stopLoop()
+      simRef.current.alpha = 0
+      window.clearTimeout(settleTimerRef.current)
       applyPos(new Map())
       simRef.current.pos = new Map()
       simRef.current.vel = new Map()
       return
     }
-    const seed = posRef.current.size > 0 ? posRef.current : undefined
-    const pts = forceLayout(nodes, edges, {
+    const seed = !reset && posRef.current.size > 0 ? posRef.current : undefined
+    const pts = forceLayout(nodes, visibleEdges, {
       seedById: seed,
+      preserveSeed: true,
       centerId,
     })
     const m = new Map<string, Pt>()
@@ -314,11 +341,11 @@ export default function GraphCanvas({
       s.alpha = 1
       ensureLoop()
     }
-  }, [nodes, edges, applyPos, ensureLoop, centerId])
+  }, [nodes, visibleEdges, topology, applyPos, ensureLoop, centerId, stopLoop])
 
   /* 适应视图：包围盒完整装入视口（contain 语义，四周留 15% 边距，居中） */
   const fit = useCallback(() => {
-    if (!size) return
+    if (!size || size.w <= 0 || size.h <= 0) return
     const b = boundsOf(posRef.current)
     if (!b) return
     setT(containTransform(b, size.w, size.h))
@@ -331,7 +358,7 @@ export default function GraphCanvas({
   /* 缩放基准 fitK：contain 适配的缩放系数——布局稳定后自动 fit 的目标尺度，
    * 用户缩放范围限制在其倍率区间内，任意图规模手感一致 */
   const fitK = useMemo(() => {
-    if (!size || !bounds) return 1
+    if (!size || size.w <= 0 || size.h <= 0 || !bounds) return 1
     return containTransform(bounds, size.w, size.h).k
   }, [size, bounds])
   const fitKRef = useRef(fitK)
@@ -340,13 +367,14 @@ export default function GraphCanvas({
   }, [fitK])
 
   useEffect(() => {
-    if (!needFit) return
+    if (!needFit || !size || size.w <= 0 || size.h <= 0) return
+    window.clearTimeout(settleTimerRef.current)
     fit()
     setNeedFit(false)
     /* 物理模拟还会继续推挤节点：布局稳定（约 2s 沉降）后重算包围盒二次适配，
      * 用户交互（缩放 / 平移 / 拖拽）会取消该校准 */
-    settleTimerRef.current = window.setTimeout(() => fitRef.current(), 2000)
-  }, [needFit, fit])
+    if (physOnRef.current) settleTimerRef.current = window.setTimeout(() => fitRef.current(), 2000)
+  }, [needFit, fit, size])
 
   /* 卸载时清理校准定时器 */
   useEffect(() => () => window.clearTimeout(settleTimerRef.current), [])
@@ -378,23 +406,19 @@ export default function GraphCanvas({
     return () => svg.removeEventListener('wheel', onWheel)
   }, [])
 
-  const clientTo = (ev: { clientX: number; clientY: number }): Pt => {
-    const rect = svgRef.current?.getBoundingClientRect()
-    return rect
-      ? { x: ev.clientX - rect.left, y: ev.clientY - rect.top }
-      : { x: 0, y: 0 }
-  }
-
   const onNodeDown = (id: string, ev: ReactPointerEvent<SVGGElement>) => {
+    if (ev.button !== 0 || dragRef.current) return
     ev.stopPropagation()
     /* 拖拽节点时禁用浏览器默认行为（选中文本 / 拖动选择等） */
     ev.preventDefault()
+    suppressClickRef.current = false
     window.clearTimeout(settleTimerRef.current)
-    const origin = positions.get(id)
+    const origin = posRef.current.get(id)
     if (!origin) return
     ;(ev.currentTarget as Element).setPointerCapture(ev.pointerId)
     dragRef.current = {
       kind: 'node',
+      pointerId: ev.pointerId,
       id,
       startClient: { x: ev.clientX, y: ev.clientY },
       origin,
@@ -409,6 +433,7 @@ export default function GraphCanvas({
   }
 
   const onBgDown = (ev: ReactPointerEvent<SVGSVGElement>) => {
+    if (ev.button !== 0 || dragRef.current) return
     if (ev.target !== ev.currentTarget) return
     /* 平移画布时禁用浏览器默认行为（选中文本 / 松开触发搜索等） */
     ev.preventDefault()
@@ -416,6 +441,7 @@ export default function GraphCanvas({
     svgRef.current?.setPointerCapture(ev.pointerId)
     dragRef.current = {
       kind: 'pan',
+      pointerId: ev.pointerId,
       startClient: { x: ev.clientX, y: ev.clientY },
       startT: { x: t.x, y: t.y },
       moved: false,
@@ -425,13 +451,12 @@ export default function GraphCanvas({
 
   const onPointerMove = (ev: ReactPointerEvent) => {
     const d = dragRef.current
-    if (!d) return
+    if (!d || d.pointerId !== ev.pointerId) return
     /* 拖拽进行中持续阻止默认行为（文本选择 / 自动滚动等） */
     if (ev.cancelable) ev.preventDefault()
     if (d.kind === 'node') {
-      const c = clientTo(ev)
-      const wx = (c.x - t.x) / t.k
-      const wy = (c.y - t.y) / t.k
+      const wx = d.origin.x + (ev.clientX - d.startClient.x) / t.k
+      const wy = d.origin.y + (ev.clientY - d.startClient.y) / t.k
       if (Math.hypot(ev.clientX - d.startClient.x, ev.clientY - d.startClient.y) > 3) {
         d.moved = true
       }
@@ -459,17 +484,19 @@ export default function GraphCanvas({
     }
   }
 
-  const endDrag = () => {
+  const endDrag = (ev: ReactPointerEvent) => {
     const d = dragRef.current
-    if (d && d.kind === 'node' && d.moved) {
+    if (!d || d.pointerId !== ev.pointerId) return
+    if (d.kind === 'node' && d.moved && ev.type === 'pointerup') {
       suppressClickRef.current = true
     }
     /* 空白点击（未拖动）→ 取消选中 */
-    if (d && d.kind === 'pan' && !d.moved) {
+    if (d.kind === 'pan' && !d.moved && ev.type === 'pointerup') {
       onSelect(null)
     }
     dragRef.current = null
     setDragging(false)
+    if (ev.currentTarget.hasPointerCapture(ev.pointerId)) ev.currentTarget.releasePointerCapture(ev.pointerId)
   }
 
   const onNodeClick = (id: string) => {
@@ -481,20 +508,6 @@ export default function GraphCanvas({
   }
 
   const showAllLabels = visibleEdges.length <= 18
-  const edgeKey = (e: GraphEdge) => `${e.from}|${e.predicate}|${e.to}`
-
-  /* 同一对实体间的多条边：按无向对分组，渲染时垂直错开成弧线避免重叠 */
-  const pairSlots = useMemo(() => {
-    const m = new Map<string, string[]>()
-    for (const e of visibleEdges) {
-      const pk = e.from < e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`
-      const arr = m.get(pk)
-      if (arr) arr.push(edgeKey(e))
-      else m.set(pk, [edgeKey(e)])
-    }
-    return m
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEdges])
 
   return (
     <div
@@ -509,14 +522,15 @@ export default function GraphCanvas({
         onPointerDown={onBgDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
-        onPointerLeave={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
         role="img"
         aria-label="知识图谱"
         style={{ touchAction: 'none' }}
       >
         <defs>
           <marker
-            id="gc-arr-weak"
+            id={`gc-arr-${markerId}-weak`}
             viewBox="0 0 8 8"
             refX="8"
             refY="4"
@@ -527,7 +541,7 @@ export default function GraphCanvas({
             <path d="M0,0 L8,4 L0,8 z" style={{ fill: 'var(--c-faint)' }} />
           </marker>
           <marker
-            id="gc-arr-strong"
+            id={`gc-arr-${markerId}-strong`}
             viewBox="0 0 8 8"
             refX="8"
             refY="4"
@@ -555,41 +569,15 @@ export default function GraphCanvas({
               ) + 2
             const rb =
               radiusOf(degreeOf.get(e.to) ?? 0, e.to === centerId || e.to === selNodeId) + 7
-            const dx = b.x - a.x
-            const dy = b.y - a.y
-            const d = Math.max(0.001, Math.hypot(dx, dy))
-            const ux = dx / d
-            const uy = dy / d
-            const x1 = a.x + ux * ra
-            const y1 = a.y + uy * ra
-            const x2 = b.x - ux * rb
-            const y2 = b.y - uy * rb
+            const { path, label } = edgeGeometry(e, a, b, ra, rb, pairSlots.get(key))
             const showLabel = showAllLabels || hi || hoverEdge === key
-            /* 多重边错开：按无向对分槽，控制点沿垂线偏移成弧；单边保持直线 */
-            const pk = e.from < e.to ? `${e.from}|${e.to}` : `${e.to}|${e.from}`
-            const slots = pairSlots.get(pk)
-            const n = slots?.length ?? 1
-            const slot = slots ? slots.indexOf(key) : 0
-            const p1 = e.from < e.to ? a : b
-            const p2 = e.from < e.to ? b : a
-            const bdx = p2.x - p1.x
-            const bdy = p2.y - p1.y
-            const bd = Math.hypot(bdx, bdy)
-            let cx = (x1 + x2) / 2
-            let cy = (y1 + y2) / 2
-            if (n > 1 && slot >= 0 && bd > 0.001) {
-              const off = (slot - (n - 1) / 2) * bd * 0.14
-              cx += (-bdy / bd) * off
-              cy += (bdx / bd) * off
-            }
-            const path = `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`
             return (
               <g key={key}>
                 <path
                   d={path}
                   fill="none"
                   strokeWidth={hi ? 1.6 : 1}
-                  markerEnd={`url(#gc-arr-${hi ? 'strong' : 'weak'})`}
+                  markerEnd={`url(#gc-arr-${markerId}-${hi ? 'strong' : 'weak'})`}
                   style={{ stroke: hi ? 'var(--c-fg)' : 'var(--c-line)' }}
                 />
                 {/* 加宽透明命中区：悬停显示标签，点击选中该关系 */}
@@ -604,8 +592,8 @@ export default function GraphCanvas({
                 />
                 {showLabel && (
                   <text
-                    x={(x1 + 2 * cx + x2) / 4}
-                    y={(y1 + 2 * cy + y2) / 4 - 4}
+                    x={label.x}
+                    y={label.y}
                     fontSize="14"
                     textAnchor="middle"
                     style={{

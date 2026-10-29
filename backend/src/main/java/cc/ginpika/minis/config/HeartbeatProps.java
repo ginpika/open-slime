@@ -24,9 +24,6 @@ public class HeartbeatProps {
     /** 单拍派活上限：主会话一拍里最多派出的子代理数（每次派活都是一轮完整的 LLM 往返） */
     private int maxAgentsPerBeat = 8;
 
-    /** 单个 sub-agent 的工具往返上限：超过后撤掉 tools 强制产出结论 */
-    private int maxToolRounds = 3;
-
     /** 启动后到第一次心跳扫描的延迟（毫秒）：给应用启动留出余量 */
     private long initialDelayMs = 15_000L;
 
@@ -60,14 +57,6 @@ public class HeartbeatProps {
 
     public void setMaxAgentsPerBeat(int maxAgentsPerBeat) {
         this.maxAgentsPerBeat = maxAgentsPerBeat;
-    }
-
-    public int getMaxToolRounds() {
-        return maxToolRounds;
-    }
-
-    public void setMaxToolRounds(int maxToolRounds) {
-        this.maxToolRounds = maxToolRounds;
     }
 
     public long getInitialDelayMs() {

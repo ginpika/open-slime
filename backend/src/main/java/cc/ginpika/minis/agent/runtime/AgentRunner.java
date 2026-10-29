@@ -12,7 +12,6 @@ import cc.ginpika.minis.ai.memory.MemoryIngest;
 import cc.ginpika.minis.ai.memory.MemoryWriter;
 import cc.ginpika.minis.config.ModelTarget;
 import cc.ginpika.minis.config.SettingsService;
-import cc.ginpika.minis.config.HeartbeatProps;
 import cc.ginpika.minis.stats.TokenUsageService;
 import java.util.List;
 import org.springframework.stereotype.Component;
@@ -29,8 +28,7 @@ import org.springframework.stereotype.Component;
  * 把结论与过程落库（含任务产物与记忆投影）。
  *
  * <p>没有状态：给模型的 messages 每次现造，引擎自己不缓存任何东西（这正是「LLM 无状态、
- * 状态在库里」的落点）。工具往返上限见 {@code minis.heartbeat.max-tool-rounds}，
- * 最后一轮撤掉 tools 逼模型给出结论（见 {@link AgentRuntime}）。
+ * 状态在库里」的落点）。工具能力持续保留，执行到回答、取消或失败（见 {@link AgentRuntime}）。
  */
 @Component
 public class AgentRunner {
@@ -66,7 +64,6 @@ public class AgentRunner {
         }
     }
 
-    private final HeartbeatProps props;
     private final SettingsService settings;
     /** Agent 内核：本次执行的循环由它跑 */
     private final AgentRuntime runtime;
@@ -86,10 +83,9 @@ public class AgentRunner {
     /** 校验节点（STEP 4）：写入 / 执行类工具落地前过一道参数自检（只读放行） */
     private final ToolValidator validator;
 
-    public AgentRunner(HeartbeatProps props, SettingsService settings, AgentRuntime runtime,
+    public AgentRunner(SettingsService settings, AgentRuntime runtime,
                        ExecStore execs, TaskStore tasks, ChangeSetStore changes, ObjectMapper om,
                        MemoryWriter memory, MemoryIngest memoryIngest, ToolValidator validator) {
-        this.props = props;
         this.settings = settings;
         this.runtime = runtime;
         this.execs = execs;
@@ -134,7 +130,7 @@ public class AgentRunner {
             return new Outcome(execId, "failed", null, "LLM 未配置");
         }
 
-        /* 请求体：model + messages（内核就地往它追加工具往返）+ tools；最后一轮由内核用去掉 tools 的副本 */
+        /* 请求体：model + messages（内核就地往它追加工具往返）+ tools；工具持续可用直到完成或停止 */
         ObjectNode body = om.createObjectNode();
         body.put("model", target.model());
         body.set("messages", req.messages().deepCopy());
@@ -142,7 +138,6 @@ public class AgentRunner {
             body.set("tools", req.toolSchemas());
         }
         AgentRuntime.RunState state = new AgentRuntime.RunState();
-        int maxRounds = Math.max(0, props.getMaxToolRounds());
 
         /* 逐轮把这一轮产出就地落库：于是这条执行在跑的过程中也读得到进度——
            派它的人据此知道它跑到哪一步，不必等它出结论。这是本类特有的落点，循环本身在内核里 */
@@ -168,7 +163,7 @@ public class AgentRunner {
                         return req.dispatch().parallelizable(name);
                     }
                 },
-                maxRounds, listener, state));
+                listener, state));
 
         if (result.end() != AgentRuntime.End.ANSWERED) {
             execs.finishExec(execId, "failed", state.reasoning(),

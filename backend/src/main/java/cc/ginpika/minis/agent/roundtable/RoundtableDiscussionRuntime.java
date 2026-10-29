@@ -83,9 +83,14 @@ public class RoundtableDiscussionRuntime {
     private final RoundtableMessageStore messages;
     /** 共享任务区：一轮讨论告一段落后判断「还有没有活要干」（自动复工） */
     private final RoundtableTodoStore taskBoard;
+    private final RoundtableProgress progress;
+    private final CollaborationPlan plans;
+    private final CollaborationStore collaboration;
 
     /** 会话 id → 正在跑的那次推进（供取消 / 插话中断） */
     private final Map<String, Advance> running = new ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.atomic.AtomicInteger> conversations = new ConcurrentHashMap<>();
+    private final Map<String, java.util.concurrent.atomic.AtomicInteger> conversationStops = new ConcurrentHashMap<>();
     /** 会话 id → 正在跑的那次执行的标识（设计二 §三：取消要有独立标识） */
     private final Map<String, ExecutionId> executions = new ConcurrentHashMap<>();
     /** 会话 id → 本轮待处理的事件类型队列（事件驱动的输入：两次跃迁之间被 drain） */
@@ -115,7 +120,8 @@ public class RoundtableDiscussionRuntime {
                                        SpeechPacer pacer, RoundtableSessionStore sessions,
                                        AgentDirectory directory, SpeakerPicker picker,
                                        TopicStateMachine machine, RoundtableMessageStore messages,
-                                       RoundtableTodoStore taskBoard) {
+                                       RoundtableTodoStore taskBoard, RoundtableProgress progress,
+                                       CollaborationPlan plans, CollaborationStore collaboration) {
         this.topics = topics;
         this.chat = chat;
         this.revisions = revisions;
@@ -129,12 +135,12 @@ public class RoundtableDiscussionRuntime {
         this.machine = machine;
         this.messages = messages;
         this.taskBoard = taskBoard;
+        this.progress = progress;
+        this.plans = plans; this.collaboration = collaboration;
         /* 全局订阅：执行态把「全员顺利做完」报到桌面（{@link RuntimeEventType#ALL_WORK_DONE}）。
            这条信号常在「当前没有一轮在跑」时到达，按会话订阅只在推进期间有效，接不到它 */
         events.subscribeAll(row -> {
-            if (RuntimeEventType.ALL_WORK_DONE.name().equals(row.type())) {
-                handleAllWorkDone(row.sessionId());
-            }
+            dispatch(RuntimeEventBus.event(row));
             return true;
         });
     }
@@ -150,13 +156,36 @@ public class RoundtableDiscussionRuntime {
     public void onEvent(RuntimeEvent event) {
         /* 先落正本再处理：任何输入都先成为事件，再被折叠成调度决策（设计一 §二） */
         events.publish(event);
+    }
+
+    private void dispatch(RuntimeEvent event) {
+        if(sessions.archived(event.sessionId()))return;
         switch (event.type()) {
             case USER_MESSAGE -> handleUserMessage(event);
-            case CANCEL_REQUESTED -> applyStop(event.sessionId());
-            case INTERRUPT_REQUESTED -> applyStop(event.sessionId());
+            case CANCEL_REQUESTED -> {
+                conversationStops.computeIfAbsent(event.sessionId(), key -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+                progress.pause(event.sessionId(), "用户已停止，发言后继续");
+                resumeRequested.remove(event.sessionId());
+                applyStop(event.sessionId());
+            }
+            case INTERRUPT_REQUESTED -> {
+                conversationStops.computeIfAbsent(event.sessionId(), key -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+                applyStop(event.sessionId());
+            }
+            case ALL_WORK_DONE -> { if (plans.find(event.sessionId()).isEmpty()) handleAllWorkDone(event.sessionId()); }
+            case ISSUE_RESOLVED -> {
+                if (plans.find(event.sessionId()).isPresent()) report(event.sessionId(), "runtime",
+                        "议题已回传结论，请主控核对并决定原条目如何推进：" + event.text("conclusion", ""), null);
+            }
             /* 场外报告 / 请求讨论 / 任务受阻：都是「有人往桌上发信号」——写进记录、唤醒相关成员，
                并自主续推一轮。**受阻尤其不能默默卡着**：那位成员正空载等着讨论给她一个说法。 */
-            case AGENT_REPORT, DISCUSSION_REQUESTED, TASK_BLOCKED -> handleReport(event);
+            case AGENT_REPORT -> handleReport(event);
+            case DISCUSSION_REQUESTED, TASK_BLOCKED -> {
+                var plan = plans.find(event.sessionId()).orElse(null);
+                if (plan != null && !parseTargets(event.target()).contains("user")) break;
+                // Work-related peer requests become isolated issues; user requests pause the whole task.
+                if (event.taskId() == null || parseTargets(event.target()).contains("user")) handleReport(event);
+            }
             default -> {
                 /* 其余事件（成员发言 / 工具 / 任务）不改变本轮的推进权，状态由订阅方与状态机维护 */
             }
@@ -165,7 +194,8 @@ public class RoundtableDiscussionRuntime {
 
     /** 会话快照（只读）：编排水位 + 话题 + 各成员二维状态 */
     public ConversationSnapshot snapshot(String conversationId) {
-        boolean running = this.running.containsKey(conversationId);
+        boolean running = this.running.containsKey(conversationId) || pending.containsKey(conversationId)
+                || conversations.containsKey(conversationId);
         Optional<AgentDtos.TopicView> topic = topics.currentTopic(conversationId);
         if (topic.isEmpty()) {
             return new ConversationSnapshot(conversationId, RoundtableChatService.MODE, running,
@@ -178,6 +208,13 @@ public class RoundtableDiscussionRuntime {
 
     // ---------- 命令入口 ----------
 
+    public void resetAfterRewind(String sessionId) {
+        resumeRequested.remove(sessionId);
+        resumeTarget.remove(sessionId);
+        resumeAfterInterrupt.remove(sessionId);
+        executions.remove(sessionId);
+    }
+
     /**
      * 人的一句话：构造一条 {@code USER_MESSAGE} 事件交给协调器（{@link #onEvent}）。
      *
@@ -186,10 +223,16 @@ public class RoundtableDiscussionRuntime {
      */
     public void submitUserMessage(String sessionId, String text, String modelId,
                                   String speakerStrategy, String runId) {
+        submitUserMessage(sessionId, text, modelId, speakerStrategy, runId, false);
+    }
+
+    public void submitUserMessage(String sessionId, String text, String modelId,
+                                  String speakerStrategy, String runId, boolean redirectWork) {
         onEvent(RuntimeEvent.of(RuntimeEventType.USER_MESSAGE, sessionId, "user", runId,
                 Map.of("input", text == null ? "" : text,
                         "modelId", modelId == null ? "" : modelId,
-                        "strategy", speakerStrategy == null ? "" : speakerStrategy)));
+                        "strategy", speakerStrategy == null ? "" : speakerStrategy,
+                        "redirectWork", redirectWork)));
     }
 
     /** 用户明确取消（停止按钮）：CANCEL 语义——停止生成并取消本轮 */
@@ -255,18 +298,37 @@ public class RoundtableDiscussionRuntime {
 
     /** 处理 USER_MESSAGE：打断上一轮 → 排进议程逐步驱动 */
     private void handleUserMessage(RuntimeEvent event) {
+        handleUserMessage(event,false);
+    }
+    private void handleUserMessage(RuntimeEvent event,boolean userRecorded) {
         String sessionId = event.sessionId();
+        sessions.requireWritable(sessionId);
+        var assignment = plans.find(sessionId).orElse(null);
+        if (!userRecorded && !Boolean.parseBoolean(event.text("redirectWork", "false")) && assignment != null
+                && assignment.criteria() != null) {
+            handleConversation(event, assignment.coordinatorId());
+            return;
+        }
+        progress.resume(sessionId);
         String runId = event.correlationId();
         String text = event.text("input", "");
         String modelId = blankToNull(event.text("modelId", ""));
         String speakerStrategy = blankToNull(event.text("strategy", ""));
         /* 新的一句话 = 新的版本：正在跑的旧生成结果因此会在提交时被版本校验挡下（不覆盖新状态） */
-        revisions.bump(sessionId);
+        int revision = revisions.bump(sessionId);
+        if (collaboration.issueBySession(sessionId).isEmpty()) {
+            var peers = directory.peers(sessionId);
+            if (peers.size() >= 2 && plans.find(sessionId).isEmpty()) {
+                plans.create(sessionId, peers.getFirst().id());
+                messages.insertNotice(sessionId, null, "本任务改由「" + peers.getFirst().name() + "」主控规划；已有待办与成果保留，后续执行和检查由主控派发。", "plan_decision");
+            }
+            plans.reopen(sessionId);
+        }
         /* **先把人的这句话落进记录，再打断上一轮**：顺序即因果——「某某被打断」是这句话引起的，
            先有人的话、再有打断，记录读起来才对。圆桌（≥2 位成员）才有这条状态行；私聊那条流
            自己会落人的话，别重复插（见 RoundtableTopicService#recordUserMessage） */
-        boolean recorded = !text.isBlank() && directory.peers(sessionId).size() >= 2;
-        if (recorded) {
+        boolean recorded = userRecorded || !text.isBlank() && directory.peers(sessionId).size() >= 2;
+        if (recorded && !userRecorded) {
             topics.recordUserMessage(sessionId, text);
         }
         /* 打断上一轮（若在跑）：只是尽力停止旧生成，本轮作为新的一次推进排队 */
@@ -284,9 +346,13 @@ public class RoundtableDiscussionRuntime {
         RoundtableTopicService.StreamSink sink = sink(sessionId, runId);
         agenda.submit(sessionId, () -> {
             try {
+                if (!progress.allowed(sessionId) || revision != revisions.current(sessionId)) {
+                    liveBus.emit(sessionId, runId, "done", new AgentDtos.TurnResult(sessionId, null, null, 0));
+                    return;
+                }
                 AgentDtos.TurnResult result = runTurn(sessionId, text, modelId, speakerStrategy, sink,
                         recorded);
-                autoResume(sessionId);
+                if (revision == revisions.current(sessionId)) autoResume(sessionId);
                 liveBus.emit(sessionId, runId, "done", result);
             } catch (RuntimeException e) {
                 String msg = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -294,7 +360,7 @@ public class RoundtableDiscussionRuntime {
                 liveBus.emit(sessionId, runId, "error", Map.of("error", msg));
             } finally {
                 unsubscribe.run();
-                pending.remove(sessionId);
+                pending.remove(sessionId, queue);
                 running.remove(sessionId);
                 executions.remove(sessionId);
                 /* 本轮跑的时候有人受阻 / 报告：现在补开一轮，把那些信号交出去（绝不丢）；
@@ -304,6 +370,78 @@ public class RoundtableDiscussionRuntime {
                 } else {
                     resumeTarget.remove(sessionId);
                 }
+            }
+        });
+    }
+
+    /** Ordinary speech has no effect on assignment version, cancellation, budget or control decisions. */
+    private void handleConversation(RuntimeEvent event, String coordinator) {
+        String session = event.sessionId(), input = event.text("input", ""), runId = event.correlationId();
+        sessions.updateModel(session, blankToNull(event.text("modelId", "")));
+        long instructionId=topics.recordConversation(session, input);
+        var peers = directory.peers(session);
+        var targets = picker.addressed(input, peers);
+        if (targets.isEmpty()) targets = peers.stream().filter(p -> p.id().equals(coordinator)).toList();
+        var recipients = List.copyOf(targets);
+        if (recipients.isEmpty()) {
+            liveBus.emit(session, runId, "error", Map.of("error", "主控已不在任务成员中，请恢复成员或明确调整任务。"));
+            return;
+        }
+        int revision = revisions.current(session);
+        var stops = conversationStops.computeIfAbsent(session, key -> new java.util.concurrent.atomic.AtomicInteger());
+        int stopVersion = stops.get();
+        conversations.compute(session, (key, count) -> {
+            if (count == null) count = new java.util.concurrent.atomic.AtomicInteger();
+            count.incrementAndGet(); return count;
+        });
+        agenda.submit(session, () -> {
+            try {
+                int spoken = 0;
+                var out = sink(session, runId);
+                for (var peer : recipients) {
+                    // Explicit task redirection invalidates queued conversation replies as well.
+                    if (revision != revisions.current(session) || stopVersion != stops.get()) break;
+                    sessions.requireWritable(session);
+                    out.speaker(peer.id(), peer.name());
+                    var speech = chat.converse(session, peer.id(), input, new cc.ginpika.minis.agent.chat.ChatStream() {
+                        @Override public void delta(String reasoning, String content) { out.delta(reasoning, null); }
+                        @Override public void tool(String name, String args) { out.tool(name, args); }
+                    });
+                    if(speech.stale() || revision!=revisions.current(session) || stopVersion!=stops.get())break;
+                    sessions.requireWritable(session);
+                    chat.publish(speech, new cc.ginpika.minis.agent.chat.ChatStream() {
+                        @Override public void speech(String text) { out.speech(text); }
+                    });
+                    out.speakerEnd(peer.id(), "ACTIVE");
+                    spoken++;
+                    var control=speech.control();
+                    if(control!=null) {
+                        if(!Set.of("resume","replan","stop").contains(control.action()) || control.basis()==null
+                                || control.basis().isBlank() || !input.contains(control.basis())
+                                || directory.peers(session).stream().noneMatch(p->p.id().equals(peer.id())))
+                            throw new IllegalStateException("控制请求与当前用户指令或会话成员不匹配，未执行。");
+                        if(!messages.promoteWorkInstruction(session,instructionId))
+                            throw new IllegalStateException("用户消息已变化，控制请求未执行。");
+                        messages.insertNotice(session,null,"按本条用户指令处理工作控制："+control.action()+"；依据："+control.basis(),"work_control");
+                        if("stop".equals(control.action())) {cancel(session);break;}
+                        var current=plans.find(session).orElse(null);
+                        if("resume".equals(control.action()) && current!=null && progress.allowed(session)
+                                && Set.of("executing","checking").contains(current.phase()) && !current.assignments().isEmpty())break;
+                        var payload=new java.util.LinkedHashMap<String,Object>(event.payload());
+                        payload.put("redirectWork",true);
+                        handleUserMessage(RuntimeEvent.of(RuntimeEventType.USER_MESSAGE,session,"user",runId,payload),true);
+                        return; // The resumed planning turn owns the original stream's completion.
+                    }
+                }
+                var topic = topics.currentTopic(session).orElse(null);
+                liveBus.emit(session, runId, "done", new AgentDtos.TurnResult(session,
+                        topic == null ? null : topic.id(), topic == null ? null : topic.status(), spoken));
+            } catch (cc.ginpika.minis.agent.chat.ChatStream.ChatCancelledException cancelled) {
+                liveBus.emit(session, runId, "done", new AgentDtos.TurnResult(session, null, null, 0));
+            } catch (RuntimeException error) {
+                liveBus.emit(session, runId, "error", Map.of("error", error.getMessage() == null ? error.toString() : error.getMessage()));
+            } finally {
+                conversations.computeIfPresent(session, (key, count) -> count.decrementAndGet() == 0 ? null : count);
             }
         });
     }
@@ -340,7 +478,13 @@ public class RoundtableDiscussionRuntime {
         String who = directory.nameOf(source);
         /* 定向目标：报告带了 target（受阻成员自己做的「找谁」决策），逗号分隔、可多个，还可含保留值
            「user」（找用户拍板）。这正是「受阻后先决策：找哪（几）位 / 找用户 / 找所有人」的落点。 */
-        List<String> targets = parseTargets(event.target());
+        List<String> targets = parseTargets(event.target() == null ? event.text("with", "") : event.target());
+        var plan = plans.find(sessionId).orElse(null);
+        if (plan != null && Set.of("executing", "checking").contains(plan.phase()) && !targets.contains("user")) {
+            messages.insertNotice(sessionId, topicId, "供主控在派工回报后核对：" + content, "plan_report");
+            return;
+        }
+        if (plan != null && !targets.contains("user")) targets = List.of(plan.coordinatorId());
         List<AgentRow> peersTargets = new ArrayList<>();
         for (String id : targets) {
             if (RoundtableTodoStore.BLOCK_WITH_USER.equals(id)) {
@@ -350,6 +494,9 @@ public class RoundtableDiscussionRuntime {
                     .filter(p -> p.id().equals(id)).findFirst().ifPresent(peersTargets::add);
         }
         if (targets.contains(RoundtableTodoStore.BLOCK_WITH_USER)) {
+            progress.pause(sessionId, content.isEmpty() ? "等待用户决定" : content);
+            resumeRequested.remove(sessionId);
+            applyStop(sessionId);
             /* 找用户拍板：不叫起任何成员——把请托者转到「等待用户」，全桌暂停，等用户发言 */
             resumeTarget.remove(sessionId);
             messages.insertNotice(sessionId, topicId,
@@ -441,6 +588,8 @@ public class RoundtableDiscussionRuntime {
      * 没有进行中的话题时不动作——不凭空重开一张已经收场的桌子。
      */
     private void scheduleAutonomous(String sessionId) {
+        if (!progress.allowed(sessionId) || topics.currentTopic(sessionId)
+                .map(t -> "waiting".equals(t.status())).orElse(false)) return;
         if (running.containsKey(sessionId) || pending.containsKey(sessionId)) {
             return;
         }
@@ -470,8 +619,23 @@ public class RoundtableDiscussionRuntime {
                 directory.peer(id).ifPresent(targets::add);
             }
         }
+        var control = plans.find(sessionId).orElse(null);
+        if (control != null) {
+            targets.clear();
+            directory.peers(sessionId).stream().filter(p -> p.id().equals(control.coordinatorId())).findFirst().ifPresent(targets::add);
+            if (targets.isEmpty()) {
+                progress.pause(sessionId, "主控已不在任务成员中，请恢复成员后继续");
+                unsubscribe.run(); pending.remove(sessionId, queue);
+                messages.insertNotice(sessionId, null, "主控已不在任务成员中，自动推进已暂停。", "runtime_paused");
+                return;
+            }
+        }
         agenda.submit(sessionId, () -> {
             try {
+                if (!progress.step(sessionId)) {
+                    messages.insertNotice(sessionId, null, progress.state(sessionId).reason(), "runtime_paused");
+                    return;
+                }
                 Advance adv = targets.isEmpty()
                         ? topics.openAutonomous(sessionId, peers, strategy, sink)
                         : topics.openDirected(sessionId, peers, targets, sink);
@@ -480,7 +644,13 @@ public class RoundtableDiscussionRuntime {
                 }
                 running.put(sessionId, adv);
                 try {
-                    while (adv.step()) {
+                    while (progress.allowed(sessionId)) {
+                        if (!progress.step(sessionId)) {
+                            adv.cancel();
+                            messages.insertNotice(sessionId, adv.topicId(), progress.state(sessionId).reason(), "runtime_paused");
+                            break;
+                        }
+                        if (!adv.step()) break;
                         drain(sessionId, adv);
                         if (adv.cancelled()) {
                             break;
@@ -491,7 +661,7 @@ public class RoundtableDiscussionRuntime {
                     running.remove(sessionId, adv);
                 }
                 adv.finish();
-                autoResume(sessionId);
+                if (!adv.cancelled()) autoResume(sessionId);
                 liveBus.emit(sessionId, runId, "done", new AgentDtos.TurnResult(sessionId, adv.topicId(),
                         topics.currentTopic(sessionId).map(AgentDtos.TopicView::status).orElse(null),
                         adv.spoken()));
@@ -499,7 +669,7 @@ public class RoundtableDiscussionRuntime {
                 log.warn("自主续推失败：sessionId={} error={}", sessionId, e.toString());
             } finally {
                 unsubscribe.run();
-                pending.remove(sessionId);
+                pending.remove(sessionId, queue);
                 running.remove(sessionId);
                 executions.remove(sessionId);
                 /* 本轮跑的时候有人受阻 / 报告：现在补开一轮，把那些信号交出去（绝不丢）；
@@ -524,8 +694,24 @@ public class RoundtableDiscussionRuntime {
      * （重启后再插话也一样），交付就此断掉——那是比空转更糟的失败。
      */
     private void autoResume(String sessionId) {
+        var plan = plans.find(sessionId).orElse(null);
+        if (plan != null) {
+            if (Set.of("executing", "checking").contains(plan.phase()) && progress.allowed(sessionId)) {
+                events.publish(RuntimeEvent.of(RuntimeEventType.WORK_STARTED, sessionId, plan.coordinatorId(),
+                        Map.of("todoId", plan.todoId(), "note", "主控本次规划结束，按已授权派工执行")));
+            }
+            if ("planning".equals(plan.phase()) && progress.allowed(sessionId) && !resumeRequested.contains(sessionId)
+                    && collaboration.issues().stream().noneMatch(i -> sessionId.equals(i.parentSessionId()) && "open".equals(i.status()))) {
+                String reason = "主控本次未明确派工、发起议题或确认交付，已暂停；请检查计划后发言继续。";
+                progress.pause(sessionId, reason);
+                messages.insertNotice(sessionId, null, reason, "runtime_paused");
+            }
+            return;
+        }
+        if (!progress.allowed(sessionId) || topics.currentTopic(sessionId)
+                .map(t -> "waiting".equals(t.status())).orElse(false)) return;
         boolean hasPending = taskBoard.openOnes(sessionId).stream()
-                .anyMatch(t -> RoundtableTodoStore.STATUS_PENDING.equals(t.status()));
+                .anyMatch(t -> Set.of("pending", "reviewing").contains(t.status()));
         if (hasPending) {
             events.publish(RuntimeEvent.of(RuntimeEventType.WORK_STARTED, sessionId, "runtime",
                     Map.of("note", "讨论告一段落，任务区仍有待办", "by", "runtime")));
@@ -556,16 +742,25 @@ public class RoundtableDiscussionRuntime {
             return topics.sendMessage(sessionId, text, modelId, speakerStrategy, sink);
         }
 
-        /* 本轮的事件队列在此重置：上一轮遗留的事件（如刚刚那次打断）不再误伤本轮 */
-        pending.put(sessionId, new ConcurrentLinkedQueue<>());
+        /* 队列由 handleUserMessage 创建并由该次推进负责清理，不能在这里替换。 */
         executions.put(sessionId, ExecutionId.of(sessionId, null, null, revisions.current(sessionId)));
 
         /* 上一轮若因人插话被打断，把它排到最前：让没说完的话接着说完（读完即清） */
         String resumePeer = resumeAfterInterrupt.remove(sessionId);
-        Advance adv = topics.open(sessionId, peers, text, strategy, sink, userRecorded, resumePeer);
+        var plan = plans.find(sessionId).orElse(null);
+        AgentRow controller = plan == null ? null : peers.stream().filter(p -> p.id().equals(plan.coordinatorId())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("主控已不在任务成员中，请恢复成员后继续"));
+        Advance adv = plan == null ? topics.open(sessionId, peers, text, strategy, sink, userRecorded, resumePeer)
+                : topics.openController(sessionId, peers, controller, text, sink, userRecorded);
         running.put(sessionId, adv);
         try {
-            while (adv.step()) {
+            while (progress.allowed(sessionId)) {
+                if (!progress.step(sessionId)) {
+                    adv.cancel();
+                    messages.insertNotice(sessionId, adv.topicId(), progress.state(sessionId).reason(), "runtime_paused");
+                    break;
+                }
+                if (!adv.step()) break;
                 /* 两次状态跃迁之间：处理已到达的事件——取消 / 插话作废本轮 / 场外报告唤醒。
                    「Turn 不是调度边界」正体现在这里：循环的每一圈都是一次独立的状态跃迁。 */
                 drain(sessionId, adv);

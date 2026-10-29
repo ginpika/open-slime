@@ -162,8 +162,8 @@ public class HeartbeatService implements HeartbeatTool {
         long scanMs = Math.max(1_000L, props.getScanMs());
         scanner.scheduleWithFixedDelay(this::scan, props.getInitialDelayMs(), scanMs,
                 TimeUnit.MILLISECONDS);
-        log.info("潜意识心跳调度已就绪：scanMs={} maxAgentsPerBeat={} maxToolRounds={}",
-                scanMs, props.getMaxAgentsPerBeat(), props.getMaxToolRounds());
+        log.info("潜意识心跳调度已就绪：scanMs={} maxAgentsPerBeat={}",
+                scanMs, props.getMaxAgentsPerBeat());
     }
 
     @PreDestroy

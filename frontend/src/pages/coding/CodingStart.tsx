@@ -2,16 +2,16 @@ import { AppIcon } from '../../components/AppIcon'
 import { useEffect, useState } from 'react'
 import { listWorkspaceFiles, type WorkspaceDirView } from '../../api/client'
 import { codingError, openCodingProject, type CodingAgent, type CodingProject, type CodingRun, type CodingWorkspace } from '../../api/coding'
-import { agentProfileHref } from '../../api/agentRuntime'
+import CodingAgentProfileLink from './CodingAgentProfileLink'
 import { Button } from '../../components/ui'
 import { Select } from '../../components/Select'
 import CodingIcon from './CodingIcon'
 import { Field, INPUT } from '../../components/formKit'
 
-type Props = { projects: CodingProject[]; workspaces: CodingWorkspace[]; runs: CodingRun[]; onOpen: (project: CodingProject) => void; onReload: () => Promise<void>; initialWorkspace: string; initialDirectory: string; error: string; enabled: boolean; agent?: CodingAgent | null }
+type Props = { projects: CodingProject[]; workspaces: CodingWorkspace[]; runs: CodingRun[]; onOpen: (project: CodingProject) => void; onRemoveRecent: (project: CodingProject) => Promise<void>; onReload: () => Promise<void>; initialWorkspace: string; initialDirectory: string; error: string; enabled: boolean; agent?: CodingAgent | null }
 const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.'
 
-export default function CodingStart({ projects, workspaces, runs, onOpen, onReload, initialWorkspace, initialDirectory, error: pageError, enabled, agent }: Props) {
+export default function CodingStart({ projects, workspaces, runs, onOpen, onRemoveRecent, onReload, initialWorkspace, initialDirectory, error: pageError, enabled, agent }: Props) {
   const [choice, setChoice] = useState<'create' | 'open' | null>(initialWorkspace ? 'open' : null)
   const [workspaceId, setWorkspaceId] = useState(initialWorkspace || workspaces.find(w => w.enabled)?.id || '')
   const [directory, setDirectory] = useState(initialDirectory)
@@ -22,6 +22,15 @@ export default function CodingStart({ projects, workspaces, runs, onOpen, onRelo
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
+  const [removing, setRemoving] = useState('')
+  const [removeError, setRemoveError] = useState('')
+  const removeRecent = async (project: CodingProject) => {
+    if (removing) return
+    setRemoving(project.id); setRemoveError('')
+    try { await onRemoveRecent(project) }
+    catch (e) { setRemoveError(`移除失败：${codingError(e)}`) }
+    finally { setRemoving('') }
+  }
   const workspace = workspaces.find(w => w.id === workspaceId)
   useEffect(() => {
     if (!choice || !workspaceId) { setView(null); setLoading(false); return }
@@ -38,7 +47,7 @@ export default function CodingStart({ projects, workspaces, runs, onOpen, onRelo
     catch (e) { setError(codingError(e)) } finally { setBusy(false) }
   }
   return <div className="coding-start scrollbar-slim">
-    <div className="coding-start-top"><span className="coding-brand"><span><AppIcon name="code" size={18} /></span> 编程</span><div className="coding-start-links"><a href={agentProfileHref(agent?.id)}>{agent?.name || '编码 Agent'} ↗</a><a href="#/workspace">管理工作空间 ↗</a></div></div>
+    <div className="coding-start-top"><span className="coding-brand"><span><AppIcon name="code" size={18} /></span> 编程</span><div className="coding-start-links"><CodingAgentProfileLink agent={agent} /><a href="#/workspace">管理工作空间 ↗</a></div></div>
     <main className="coding-start-main">
       <div className="coding-start-intro"><span className="coding-eyebrow">YOUR NEXT PROJECT</span><h1>从一个项目开始</h1><p>选择工作空间里的目录，和 Agent 一起把想法变成代码。</p></div>
       {(pageError || !enabled) && <div role="alert" className="coding-notice">{pageError || '编程模块未启用'}<Button size="sm" onClick={() => void onReload()}>重新加载</Button></div>}
@@ -64,9 +73,13 @@ export default function CodingStart({ projects, workspaces, runs, onOpen, onRelo
         </>}
       </section>}
       <section className="coding-recent"><div className="coding-section-heading"><h2>最近项目</h2><span>{projects.length ? `${projects.length} 个项目` : ''}</span></div>
+        {removeError && <p role="alert" className="coding-inline-error">{removeError}</p>}
         {!projects.length ? <div className="coding-recent-empty">你的编程项目会出现在这里。工作空间连接和凭证沿用现有配置。</div> : projects.map(project => {
           const latest = runs.find(run => run.repositoryId === project.id)
-          return <button className="coding-project-row" key={project.id} onClick={() => onOpen(project)}><span className="coding-project-icon"><AppIcon name="folder-open" size={18} /></span><span className="coding-project-info"><strong>{project.name}</strong><small>{project.workspaceName} / {project.directory === '.' ? '根目录' : project.directory}</small></span><span className="coding-project-meta">{project.enabled ? latest ? new Date(latest.updatedAt).toLocaleDateString('zh-CN') : project.kind.toUpperCase() : '工作空间不可用'}</span><span>→</span></button>
+          return <div className="coding-project-row" key={project.id}>
+            <button type="button" className="coding-project-open" onClick={() => onOpen(project)}><span className="coding-project-icon"><AppIcon name="folder-open" size={18} /></span><span className="coding-project-info"><strong>{project.name}</strong><small>{project.workspaceName} / {project.directory === '.' ? '根目录' : project.directory}</small></span><span className="coding-project-meta">{project.enabled ? latest ? new Date(latest.updatedAt).toLocaleDateString('zh-CN') : project.kind.toUpperCase() : '工作空间不可用'}</span><span>→</span></button>
+            <Button size="sm" variant="quiet" className="coding-project-remove" aria-label={`从最近项目移除 ${project.name}`} title="从最近项目移除，保留目录和编程历史" disabled={!!removing} onClick={() => void removeRecent(project)}>{removing === project.id ? '移除中…' : '移除'}</Button>
+          </div>
         })}
       </section>
       <footer className="coding-start-foot">一个工作空间，多个项目。每次编程任务的修改都可以审阅后再应用。</footer>

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Repository;
 /**
  * 画像候选（memory_candidate）：用户画像的**唯一权威入口**（memory-v5 §5.4）。
  *
- * <p>普通 Agent 不得直接写 {@code memory_item} 的 USER_PROFILE 域——只能生成候选，经证据/审批闸门，
+ * <p>普通 Agent 不得直接写 {@code graph_claim} 的 USER_PROFILE 域——只能生成候选，经证据/审批闸门，
  * 由 {@code UserProfileService} 落为正式画像。本类只做候选的存取，不做闸门判定。
  *
  * <p>幂等：同一 fingerprint 的 pending 候选只累加 {@code evidence_count}（追证），不重复建行。

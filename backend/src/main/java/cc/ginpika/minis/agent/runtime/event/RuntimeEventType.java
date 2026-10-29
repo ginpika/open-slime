@@ -36,6 +36,9 @@ public enum RuntimeEventType {
     TASK_BLOCKED(20),
     /** 一项工作完成 */
     TASK_COMPLETED(20),
+    TASK_SUBMITTED(85),
+    TASK_REVISED(85),
+    ISSUE_RESOLVED(85),
     /** 一次工具调用开始（副作用生命周期的起点） */
     TOOL_STARTED(40),
     /** 一次工具调用正常结束 */
@@ -68,6 +71,6 @@ public enum RuntimeEventType {
      */
     public boolean coalescible() {
         return this == AGENT_MESSAGE || this == TOOL_STARTED || this == TOOL_COMPLETED
-                || this == TASK_CREATED || this == TASK_BLOCKED || this == TASK_COMPLETED;
+                || this == TASK_CREATED;
     }
 }

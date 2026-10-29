@@ -49,6 +49,16 @@ public class ContextBuilder {
      * 所以追加的 provider 等价于该面唯一的源，拼装顺序稳定。
      */
     public ObjectNode build(ContextRequest req, List<ContextProvider> extra) {
+        var current=cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
+        if(current==null || !java.util.Objects.equals(current.sessionId(),req.sessionId()) || current.human()) {
+            var scope=new cc.ginpika.minis.ai.core.MemoryExec(null,req.agentId(),req.projectId(),req.sessionId(),req.taskId(),
+                    cc.ginpika.minis.ai.core.MemorySurface.valueOf(req.surface().name()),false,null,req.identity());
+            return cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope,()->buildScoped(req,extra));
+        }
+        return buildScoped(req,extra);
+    }
+
+    private ObjectNode buildScoped(ContextRequest req,List<ContextProvider> extra) {
         cc.ginpika.minis.ai.memory.MemoryLiveContext.takeCaptured();
         ObjectNode body = om.createObjectNode();
         body.put("model", req.model());

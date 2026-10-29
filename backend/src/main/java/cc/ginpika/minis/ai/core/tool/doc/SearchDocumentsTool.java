@@ -24,8 +24,9 @@ public class SearchDocumentsTool implements AiTool {
 
     @Override
     public String description() {
-        return "按关键词匹配文档标题，在本地知识库中查找文档（返回标题/摘要/来源，不含正文）。"
-                + "多个关键词用空格分隔，需同时命中标题。想确认「有没有这篇文档」「哪篇文档讲过 X」时用它；"
+        return "按关键词匹配本地资料标题，包含文档、文章和已保存快照，返回带 doc_id 的目录，不含正文。"
+                + "多个关键词用空格分隔，需同时命中标题。支持来源、状态、时间筛选和 cursor 分页，按创建时间及 ID 倒序；"
+                + "用返回的 next_cursor 继续查询。无关键词浏览资料用 list_documents。标题没命中不代表正文没有相关内容；"
                 + "要找正文片段用 " + SearchVectorChunksTool.NAME + "。";
     }
 
@@ -43,9 +44,7 @@ public class SearchDocumentsTool implements AiTool {
     public ObjectNode parameters(ObjectMapper om) {
         ObjectNode params = om.createObjectNode();
         params.put("type", "object");
-        params.putObject("properties").putObject("keywords")
-                .put("type", "string")
-                .put("description", "标题关键词，多个词用空格分隔（需同时命中）");
+        ListDocumentsTool.directoryProperties(params.putObject("properties"));
         params.putArray("required").add("keywords");
         return params;
     }

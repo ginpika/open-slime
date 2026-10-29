@@ -17,7 +17,7 @@ public final class TerminalDtos {
                              List<String> denyPatterns, String dockerHost, String image,
                              String container, String sshHost, Integer sshPort, String sshUser,
                              String sshAuth, String sshPassword, String sshPrivateKey,
-                             String sshPassphrase, String hostKeyCheck, String note) {
+                             String sshPassphrase, String hostKeyCheck, String note, String hostWorkdir) {
     }
 
     /** 新建 / 整体覆盖一个目标（PUT 时 id 来自路径） */
@@ -26,7 +26,7 @@ public final class TerminalDtos {
                                 List<String> denyPatterns, String dockerHost, String image,
                                 String container, String sshHost, Integer sshPort, String sshUser,
                                 String sshAuth, String sshPassword, String sshPrivateKey,
-                                String sshPassphrase, String hostKeyCheck, String note) {
+                                String sshPassphrase, String hostKeyCheck, String note, String hostWorkdir) {
     }
 
     /** 工作空间页的整页视图：全部目标（没有全局总开关，逐目标开关即唯一闸门） */

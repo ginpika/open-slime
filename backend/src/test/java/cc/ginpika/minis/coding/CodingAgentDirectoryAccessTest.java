@@ -32,7 +32,7 @@ class CodingAgentDirectoryAccessTest {
         when(directory.declaredTools(row)).thenReturn(List.of("coding_task"));when(directory.declaredTerminals(row)).thenReturn(List.of());
         when(tasks.recent(BuiltinAgents.CODING,null,100)).thenReturn(List.of(task(1,"coding","r1"),task(2,"coding","r2"),task(3,"agent",null)));
         when(coding.ownsTask("alice",1)).thenReturn(true);
-        var controller=new AgentController(directory,null,null,null,null,new ToolManager(List.of(new CodingTaskTool()),new ObjectMapper()),new ObjectMapper(),null,null,null,tasks,null,null,null,null,null,null,null);
+        var controller=new AgentController(directory,null,null,null,null,new ToolManager(List.of(new CodingTaskTool()),new ObjectMapper()),new ObjectMapper(),null,null,null,tasks,null,null,null,null,null,null,null,null);
         controller.setCoding(coding);mvc=MockMvcBuilders.standaloneSetup(controller).build();
     }
     private TaskStore.TaskRow task(long id,String origin,String payload){return new TaskStore.TaskRow(id,null,"coding".equals(origin)?"code":"subagent","pending","task "+id,null,BuiltinAgents.CODING,null,"p1",null,payload,origin,0,0);}

@@ -86,6 +86,11 @@ public class ProjectWorkflowService {
         }
         String pid=blank(projectId);
         if (pid!=null) { project(pid); }
+        if (!Objects.equals(session(sessionId).projectId(), pid) && Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM collaboration_issue WHERE parent_session_id=? OR session_id=?)",
+                Boolean.class, sessionId, sessionId))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"任务已包含议题，请保留任务与议题的项目归属");
+        }
         sessions.setProject(sessionId,pid);
         // A new binding starts a new authorization context; old explicit links do not carry across it.
         jdbc.update("DELETE FROM session_continuation WHERE target_session_id=?",sessionId);

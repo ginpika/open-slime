@@ -9,7 +9,7 @@ import org.springframework.stereotype.Repository;
 
 /**
  * 工作状态（memory_work，memory-v6 §13）：会话 / 任务级的**临时工作材料**——进度、临时结论、
- * 工具结果、在途决策、待办快照。与长期记忆（{@code memory_item}）**物理分离**，这是「三概念分离」的落点。
+ * 工具结果、在途决策、待办快照。与长期记忆（{@code graph_claim}）**物理分离**，这是「三概念分离」的落点。
  *
  * <p>生命周期：{@code open → closed | distilled | archived}；带 {@code expires_at}（TTL 到期不再注入）。
  * 会话/任务收尾时由 {@link cc.ginpika.minis.ai.memory.WorkingSetService} 蒸馏进长期记忆后归档。

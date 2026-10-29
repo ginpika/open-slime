@@ -68,7 +68,7 @@ class MemorySnapshotBuilderTest {
     }
 
     @Test
-    void protectedEntriesSurviveZeroBudget() {
+    void retentionProtectionDoesNotBypassContextBudget() {
         MemoryItemRecall recall = mock(MemoryItemRecall.class);
         MemorySnapshotStore store = mock(MemorySnapshotStore.class);
         MemoryItemStore.ItemRow profile = row(1, "USER", "USER_PROFILE", "L1", "profile", "画像", false);
@@ -81,8 +81,7 @@ class MemorySnapshotBuilderTest {
 
         MemorySnapshot snap = builder(recall, store, props).build(exec(), "查一下", null);
 
-        assertEquals(1, snap.items().size(), "预算为 0 时受保护条目仍恒定注入（I10）");
-        assertEquals(1L, snap.items().get(0).id());
+        assertTrue(snap.items().isEmpty(), "长期保留与本轮注入分别控制，预算为零时不注入");
     }
 
     @Test

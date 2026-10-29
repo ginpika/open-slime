@@ -28,6 +28,17 @@ public interface ExecTarget {
     /** 连通性探测（设置页「测试」按钮）：能连上即正常返回，连不上抛异常并带上原因 */
     void probe(TerminalStore.TargetRow target);
 
+    /** A persistent PTY owned by an authenticated human session, separate from Agent commands. */
+    default Shell openShell(TerminalStore.TargetRow target, String command, int cols, int rows) throws java.io.IOException {
+        throw new UnsupportedOperationException("该工作空间不支持交互终端");
+    }
+
+    interface Shell extends java.io.Closeable {
+        java.io.InputStream output();
+        java.io.OutputStream input();
+        void resize(int cols, int rows) throws java.io.IOException;
+    }
+
     /** 未拿到退出码时的占位值（超时被杀 / 通道异常）：与真实退出码区分开 */
     int NO_EXIT_CODE = -1;
 

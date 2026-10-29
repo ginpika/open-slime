@@ -83,29 +83,28 @@ public class MemoryRecall {
     public List<Hit> recall(cc.ginpika.minis.ai.core.MemoryExec exec, String query, Long sinceMs,
                            Long untilMs, String kind, String actor, int limit) {
         int cap = Math.max(1, Math.min(limit, LIMIT_MAX));
-        List<MemoryEventStore.EventRow> candidates = actor == null || actor.isBlank()
-                ? events.window(exec, sinceMs, untilMs, kind, null, BACKGROUND_ACTORS, CANDIDATE_LIMIT)
-                : events.window(exec, sinceMs, untilMs, kind, actor, List.of(), CANDIDATE_LIMIT);
-        if (candidates.isEmpty()) {
-            return List.of();
-        }
         float[] qvec = queryVector(query);
+        var order=java.util.Comparator.comparingDouble((Hit h)->h.score()).thenComparingLong(h->h.event().createdAt()).thenComparingLong(h->h.event().id());
+        var best=new java.util.PriorityQueue<Hit>(order);
+        long after=0;
+        while(true) {
+        List<MemoryEventStore.EventRow> candidates=events.page(exec,sinceMs,untilMs,kind,actor,
+                actor==null||actor.isBlank()?BACKGROUND_ACTORS:List.of(),after,256);
+        if(candidates.isEmpty()) break;
         Map<Long, float[]> vecs = qvec == null ? Map.of()
                 : vectors.byEventIds(embedding.model(), candidates.stream()
                         .map(MemoryEventStore.EventRow::id).toList());
-        List<Hit> hits = new ArrayList<>(candidates.size());
         for (MemoryEventStore.EventRow e : candidates) {
             float[] v = vecs.get(e.id());
             /* 候选没向量（欠账/旧模型）＝无分，跟在全分事件之后按时间序垫底 */
             float score = qvec == null || v == null ? 0f
                     : Math.max(0f, MemoryVecMath.cosine(qvec, v));
-            hits.add(new Hit(e, score));
+            if(qvec==null && query!=null && !query.isBlank() && (java.util.Objects.toString(e.title(),"")+" "+java.util.Objects.toString(e.payload(),"")).toLowerCase(java.util.Locale.ROOT).contains(query.toLowerCase(java.util.Locale.ROOT))) score=0.7f;
+            best.add(new Hit(e,score));if(best.size()>cap) best.poll();
+            after=e.id();
         }
-        if (qvec != null) {
-            /* 稳定排序：同分（含全零分）保持 SQL 给的时间倒序——退化路径零成本成立 */
-            hits.sort((a, b) -> Float.compare(b.score(), a.score()));
         }
-        return hits.size() <= cap ? hits : new ArrayList<>(hits.subList(0, cap));
+        List<Hit> hits=new ArrayList<>(best);hits.sort(order.reversed());return hits;
     }
 
     /** 查询向量：未配置/空 query/调用失败一律 null（= 无向量轴，退化为时间序），不抛错 */

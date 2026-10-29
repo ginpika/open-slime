@@ -31,7 +31,7 @@ class WorkspaceProjectsTest {
     private WorkspaceProjects projects;private TerminalStore terminals;private ExecTarget exec;private CodingStore store;
     private final ObjectMapper json=new ObjectMapper();
     private SingleConnectionDataSource source;
-    private TerminalStore.TargetRow target(boolean enabled){return new TerminalStore.TargetRow("w1","Docker Dev","docker",enabled,"/workspace",60000L,40000,"[]","[]",null,"node:22","dev",null,null,null,null,"credential-must-not-leak",null,null,null,null,0,0);}
+    private TerminalStore.TargetRow target(boolean enabled){return new TerminalStore.TargetRow("w1","Docker Dev","docker",enabled,"/workspace",60000L,40000,"[]","[]",null,"node:22","dev",null,null,null,null,"credential-must-not-leak",null,null,null,null,null,0,0);}
     @BeforeEach void setup(){
         source=new SingleConnectionDataSource("jdbc:sqlite::memory:",true);var jdbc=new JdbcTemplate(source);
         new ResourceDatabasePopulator(new ClassPathResource("coding/schema.sql")).execute(source);
@@ -48,9 +48,73 @@ class WorkspaceProjectsTest {
         assertEquals(1,projects.projects("alice").size());assertTrue(projects.projects("bob").isEmpty());assertThrows(Exception.class,()->projects.project("bob",first.id()));
         assertEquals("workspace://w1/app",store.repository(first.id(),"alice").path());
     }
+    @Test void removingRecentPreservesProjectAndRestoresOnOpen(){
+        var request=new OpenProject("w1","app",null,false,null);
+        var first=projects.open("alice",request);
+        assertFalse(first.recentHidden());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->projects.removeRecent("bob",first.id()));
+        assertFalse(projects.project("alice",first.id()).recentHidden());
+        clearInvocations(exec);
+        projects.removeRecent("alice",first.id());
+        projects.removeRecent("alice",first.id());
+        assertTrue(projects.projects("alice").getFirst().recentHidden());
+        assertNotNull(projects.binding(first.id()));
+        assertNotNull(store.repository(first.id(),"alice"));
+        verifyNoInteractions(exec);
+        assertEquals(first.id(),projects.open("alice",request).id());
+        assertFalse(projects.project("alice",first.id()).recentHidden());
+        assertEquals(1,projects.projects("alice").size());
+    }
+    @Test void changingHostDirectoryRequiresProjectBindingReview() throws Exception {
+        var project = projects.open("alice", new OpenProject("w1", "app", null, false, null));
+        assertTrue(projects.project("alice", project.id()).enabled());
+        var changed = (com.fasterxml.jackson.databind.node.ObjectNode) json.valueToTree(target(true));
+        changed.put("hostWorkdir", "/srv/rebound");
+        when(terminals.targetById("w1")).thenReturn(Optional.of(json.treeToValue(changed, TerminalStore.TargetRow.class)));
+        assertFalse(projects.project("alice", project.id()).enabled());
+        when(terminals.targetById("w1")).thenReturn(Optional.of(target(true)));
+        assertTrue(projects.project("alice", project.id()).enabled());
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={true,false})
+    void existingRemoteContentIsConfirmedOnlyAfterLivePathRecheck(boolean stable,@TempDir Path temp) throws Exception {
+        new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(source);
+        var jdbc=new JdbcTemplate(source);var tx=new TransactionTemplate(new DataSourceTransactionManager(source));
+        var props=new CodingProps();props.setDataDir(temp.resolve("coding").toString());
+        var files=new CodingWorkspace(props,json);
+        projects=new WorkspaceProjects(terminals,mock(WorkspaceService.class),List.of(exec),jdbc,tx,store,files,props,json);
+        var project=projects.open("alice",new OpenProject("w1","app",null,false,null));
+        var run=store.create("alice",new StartRun(project.id(),"验证既有产物",null,Mode.EXECUTE,Runner.WORKSPACE,0),0);
+        files.prepareImported(run.id(),Map.of("main.ts","old".getBytes(),"obsolete.txt","old".getBytes()),Set.of());
+        var content=Map.of("main.ts","reviewed".getBytes(),"new.ts","new".getBytes());
+        files.replaceImported(run.id(),content,Set.of());var artifact=files.diff(run.id());
+        String snapshot=Base64.getEncoder().encodeToString(WorkspaceArchive.pack(content,Set.of()));
+        when(exec.run(any(),anyString(),any())).thenAnswer(inv->{
+            String command=inv.getArgument(1);
+            if(command.contains("base64 < \"$tmp\""))return new ExecTarget.ExecOutcome(0,snapshot,"",1,false,false);
+            if(!stable && command.contains("sha256sum"))return new ExecTarget.ExecOutcome(1,"","live content changed",1,false,false);
+            return new ExecTarget.ExecOutcome(0,"","",1,false,false);
+        });
+        clearInvocations(exec);
+        if(stable){projects.accept(run,artifact.artifactHash());assertTrue(files.confirmedExisting(run.id(),artifact.artifactHash()));}
+        else {assertThrows(Exception.class,()->projects.accept(run,artifact.artifactHash()));assertFalse(Files.exists(files.task(run.id()).resolve("accepted.json")));}
+        var commands=org.mockito.ArgumentCaptor.forClass(String.class);verify(exec,atLeastOnce()).run(any(),commands.capture(),any());
+        assertTrue(commands.getAllValues().stream().anyMatch(command->command.contains("sha256sum './main.ts'") && command.contains("test ! -e './obsolete.txt'")));
+        assertFalse(commands.getAllValues().stream().anyMatch(command->command.contains("cp -p") || command.contains("mv -f") || command.contains("sh '") || command.contains("tar -xzf")),"确认已有内容不能再写项目文件");
+    }
     @Test void disabledWorkspaceCannotBeOpened(){
         when(terminals.targetById("w1")).thenReturn(Optional.of(target(false)));
         assertThrows(Exception.class,()->projects.open("alice",new OpenProject("w1","app",null,false,null)));verify(exec,never()).run(any(),anyString(),any());
+    }
+    @Test void interactiveTerminalsRequireBashAndEnterTheProjectInBash() throws Exception {
+        var project=projects.open("alice",new OpenProject("w1","app",null,false,null));
+        var shell=mock(ExecTarget.Shell.class);when(exec.openShell(any(),anyString(),anyInt(),anyInt())).thenReturn(shell);
+        assertSame(shell,projects.openShell("alice",project.id(),80,24));
+        verify(exec).run(any(),argThat(command->command.contains("command -v bash")),any());
+        verify(exec).openShell(any(),argThat(command->command.endsWith("exec bash -i")),eq(80),eq(24));
+        when(exec.run(any(),argThat(command->command.contains("command -v bash")),any())).thenReturn(new ExecTarget.ExecOutcome(127,"","工作空间未安装 bash",1,false,false));
+        assertTrue(assertThrows(Exception.class,()->projects.openShell("alice",project.id(),80,24)).getMessage().contains("未安装 bash"));
+        verify(exec,times(1)).openShell(any(),anyString(),anyInt(),anyInt());
     }
     @Test void creationUsesOneQuotedChildDirectory(){
         projects.open("alice",new OpenProject("w1",".","App's demo; name",true,null));

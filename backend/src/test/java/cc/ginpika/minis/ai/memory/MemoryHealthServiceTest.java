@@ -17,7 +17,7 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 class MemoryHealthServiceTest {
 
     private static final String DDL = """
-            CREATE TABLE memory_item(
+            CREATE TABLE graph_claim(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               agent_id TEXT, scope TEXT NOT NULL, title TEXT, body TEXT NOT NULL,
               confidence REAL NOT NULL DEFAULT 0.5, source TEXT NOT NULL DEFAULT 'auto',
@@ -95,7 +95,7 @@ class MemoryHealthServiceTest {
         Fixture f = fixture();
         long id = item(f, "USER", "USER_PROFILE", "L1", "角色讨厌下雨", null, "REAL", null);
         // 模拟历史脏数据；正常写入口已经拒绝虚构画像，体检仍需能发现遗留污染。
-        f.jdbc().update("UPDATE memory_item SET identity='FICTION' WHERE id=?", id);
+        f.jdbc().update("UPDATE graph_claim SET identity='FICTION' WHERE id=?", id);
 
         MemoryHealthService.Report report = health(f).report();
 

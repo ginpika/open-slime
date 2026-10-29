@@ -1,0 +1,7 @@
+.coding-terminal-session { display: flex; flex-direction: column; height: 100%; background: var(--c-bg); color: var(--c-fg); }
+.coding-terminal-emulator { flex: 1; min-height: 0; padding: .5rem .75rem 0; }
+.coding-terminal-emulator .xterm { height: 100%; }
+.coding-terminal-emulator .xterm-viewport { background-color: var(--c-bg); }
+.coding-terminal-state { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; padding: .375rem .75rem; font-size: .75rem; line-height: 1.5; color: var(--c-muted); border-top: 1px solid var(--c-line); }
+.coding-terminal-state [role=alert] { color: var(--c-danger); overflow-wrap: anywhere; }
+.coding-terminal-state button { color: var(--c-fg); }

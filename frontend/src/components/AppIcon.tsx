@@ -1,16 +1,19 @@
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, Brain, ChartNoAxesCombined,
+  Archive, ArchiveRestore, Trash2, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, Brain, ChartNoAxesCombined,
   ChartNoAxesColumn, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert,
   CircleCheck, Cloud, CodeXml, Copy, Crosshair, Download, Ellipsis, ExternalLink, File, FileText,
   Folder, FolderOpen, GitBranch, GripVertical, House, Image, Info, Layers,
-  Lightbulb, Link, LoaderCircle, MessageCircle, Minus, Network, Palette, Pencil, Plus,
-  RefreshCw, Search, Send, Settings, SlidersHorizontal, Square,
-  Undo2, Upload, UsersRound, Workflow, X,
+  Lightbulb, Link, LoaderCircle, Maximize2, MessageCircle, Minimize2, Minus, Network, Palette, PanelBottom, PanelsTopLeft, Pencil, Plus,
+  RefreshCw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Square, Terminal, Clock3, Play, Pause,
+  Undo2, Upload, UsersRound, Workflow, X, ZoomIn, ZoomOut,
   type LucideProps,
 } from 'lucide-react'
 
 // 仅静态导入使用中的图标；业务代码通过语义名调用，不依赖整库动态查找。
 const ICONS = {
+  archive: Archive,
+  unarchive: ArchiveRestore,
+  trash: Trash2,
   'arrow-down': ArrowDown,
   'arrow-left': ArrowLeft,
   'arrow-right': ArrowRight,
@@ -18,6 +21,7 @@ const ICONS = {
   agent: Bot,
   memory: Brain,
   analyze: ChartNoAxesCombined,
+  economy: ChartNoAxesCombined,
   stats: ChartNoAxesColumn,
   check: Check,
   'chevron-down': ChevronDown,
@@ -25,6 +29,10 @@ const ICONS = {
   'chevron-right': ChevronRight,
   alert: CircleAlert,
   success: CircleCheck,
+  todo: CircleCheck,
+  clock: Clock3,
+  play: Play,
+  pause: Pause,
   cloud: Cloud,
   chat: MessageCircle,
   code: CodeXml,
@@ -47,6 +55,8 @@ const ICONS = {
   link: Link,
   loading: LoaderCircle,
   minimize: Minus,
+  fullscreen: Maximize2,
+  'exit-fullscreen': Minimize2,
   graph: Network,
   palette: Palette,
   edit: Pencil,
@@ -55,6 +65,10 @@ const ICONS = {
   search: Search,
   send: Send,
   settings: Settings,
+  permissions: ShieldCheck,
+  terminal: Terminal,
+  'terminal-layout': PanelsTopLeft,
+  'terminal-bottom': PanelBottom,
   sliders: SlidersHorizontal,
   square: Square,
   stop: Square,
@@ -63,6 +77,8 @@ const ICONS = {
   table: UsersRound,
   flow: Workflow,
   close: X,
+  'zoom-in': ZoomIn,
+  'zoom-out': ZoomOut,
 } as const
 
 export type AppIconName = keyof typeof ICONS

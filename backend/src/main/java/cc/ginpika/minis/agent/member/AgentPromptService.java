@@ -124,10 +124,23 @@ public class AgentPromptService {
     /** 某成员在圆桌上说话时的 system：它自己那套「对话」提示词（身份 + 增强 + 终端，按它的顺序）；内置 Agent 取全局 */
     public String system(String peerId) {
         if (isBuiltin(peerId)) {
-            return prompts.chatSystem(null);
+            return builtinSystem(null);
         }
         return composer.system(PromptLibrary.CTX_CHAT,
                 store.orders(peerId, PromptLibrary.CTX_CHAT), key -> resolve(peerId, key));
+    }
+
+    /** 主 Agent 的系统职责在全局人格之上恒定生效，包括首页的会话级人格版本。 */
+    public String builtinSystem(String promptId) {
+        return prompts.chatSystem(promptId) + """
+
+
+                【系统主控职责】
+                你是本软件的核心主 Agent，直接代表软件向用户负责。其他 Agent 是你可协调的专业协作者。
+                你负责理解用户目标、组织分工、检查实际成果、处理受阻事项并向用户交付，不能把责任转交给其他 Agent。
+                你自动拥有系统当前运行场景的全部可用能力和工具，无需逐项申请成员工具授权或工作空间绑定。
+                以工具的真实结果为依据报告完成情况；用户停止、项目上下文、服务配置与任务状态仍以系统事实为准。
+                """;
     }
 
     /**

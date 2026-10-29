@@ -45,18 +45,25 @@ type Props = {
   children: ReactNode
   /** 窗口宽度（px，默认 520） */
   width?: number
+  /** 特定阅读器可接管内部滚动与留白，默认窗口保持原样。 */
+  contentClassName?: string
+  /** 长篇审阅窗口可切换为占满可用视口。 */
+  expandable?: boolean
 }
 
-export default function FloatWindow({ title, onClose, children, width = 520 }: Props) {
+export default function FloatWindow({ title, onClose, children, width = 520, contentClassName = '', expandable = false }: Props) {
   const { vars } = useThemeState()
   const workbench = !!vars['--ui-win-title-bg']
   const id = useId()
   const stack = useSyncExternalStore(subscribeStack, readStack)
   const closeRef = useRef(onClose)
-  closeRef.current = onClose
+  useLayoutEffect(() => { closeRef.current = onClose }, [onClose])
   const previousFocus = useRef(document.activeElement as HTMLElement | null)
   const focusPlaced = useRef(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const expandedRef = useRef(false)
+  useLayoutEffect(() => { expandedRef.current = expanded }, [expanded])
   /** 窗口位置（视口坐标）：null = 还没量到尺寸，此帧先不落位，避免闪一下 */
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   /** 拖动会话：起点指针坐标 + 窗口基准位置 */
@@ -66,6 +73,7 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || windowStack.at(-1) !== id) return
+      if (e.target instanceof Element && e.target.closest('.xterm')) return
       const root = document.getElementById('root')
       if (root?.inert) return
       e.preventDefault()
@@ -78,10 +86,11 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
   useLayoutEffect(() => {
     activateWindow(id)
     const box = boxRef.current
+    const focusTarget = previousFocus.current
     return () => {
       updateStack(windowStack.filter(item => item !== id))
       if (box?.contains(document.activeElement) || document.activeElement === document.body) {
-        if (previousFocus.current?.isConnected) previousFocus.current.focus()
+        if (focusTarget?.isConnected) focusTarget.focus({ preventScroll: true })
       }
     }
   }, [id])
@@ -99,6 +108,7 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
       y: Math.max(8, Math.round((window.innerHeight - r.height) / 2)),
     })
     const constrain = () => {
+      if (expandedRef.current) return
       const bounds = el.getBoundingClientRect()
       setPos(current => {
         if (!current) return current
@@ -126,7 +136,7 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
   const onTitlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // 点到标题栏内的按钮（如关闭钮）时不进入拖动
     if ((e.target as HTMLElement).closest('button')) return
-    if (window.innerWidth <= 600) return
+    if (expanded || window.innerWidth <= 600) return
     const base = pos ?? { x: 0, y: 0 }
     drag.current = { px: e.clientX, py: e.clientY, baseX: base.x, baseY: base.y }
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -161,9 +171,10 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
             onPointerDownCapture={() => activateWindow(id)}
             onFocusCapture={() => activateWindow(id)}
             style={{
-              left: pos?.x ?? 0,
-              top: pos?.y ?? 0,
-              width,
+              left: expanded ? 8 : pos?.x ?? 0,
+              top: expanded ? 8 : pos?.y ?? 0,
+              width: expanded ? 'calc(100vw - 16px)' : width,
+              ...(expanded ? { height: 'calc(100dvh - 16px)', maxHeight: 'calc(100dvh - 16px)' } : {}),
               zIndex: 60 + Math.max(0, stack.indexOf(id)),
               /* 量到尺寸前先隐身，避免在 (0,0) 处闪一下 */
               visibility: pos ? 'visible' : 'hidden',
@@ -191,6 +202,12 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
               }
             >
               <div id={`${id}-title`} className="min-w-0 truncate text-sm font-medium text-fg">{title}</div>
+              <div className="flex shrink-0 items-center">
+              {expandable && <button type="button" onClick={() => { drag.current = null; setExpanded(v => !v) }}
+                aria-label={expanded ? '退出全屏阅读' : '全屏阅读'} title={expanded ? '退出全屏阅读' : '全屏阅读'}
+                className="flex h-10 w-10 items-center justify-center rounded-sm text-muted hover:bg-fg/[0.06] hover:text-fg">
+                <AppIcon name={expanded ? 'exit-fullscreen' : 'fullscreen'} className="h-4 w-4" />
+              </button>}
               <button
                 type="button"
                 onClick={onClose}
@@ -199,9 +216,10 @@ export default function FloatWindow({ title, onClose, children, width = 520 }: P
               >
                 <AppIcon name="close" className="h-3.5 w-3.5" />
               </button>
+              </div>
             </div>
             {/* Only the drag handle is unselectable; prose, errors and output remain copyable. */}
-            <div className="scrollbar-slim min-h-0 flex-1 select-text overflow-y-auto p-3.5">
+            <div className={`scrollbar-slim min-h-0 flex-1 select-text overflow-y-auto p-3.5 ${contentClassName}`}>
               {children}
             </div>
           </div>,

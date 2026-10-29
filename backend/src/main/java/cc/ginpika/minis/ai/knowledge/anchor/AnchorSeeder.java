@@ -35,6 +35,7 @@ public class AnchorSeeder {
             GraphStore.Entity exist = graph.byName(anchor.name());
             if (exist == null) {
                 graph.upsertEntity(GraphAnchors.TYPE, anchor.name(), anchor.aliases(), anchor.semantics());
+                graph.markSystemAnchor(anchor.name());
                 created++;
             } else if (!GraphAnchors.isAnchor(exist)) {
                 graph.mergeEntityTypes(anchor.name(), List.of(GraphAnchors.TYPE));

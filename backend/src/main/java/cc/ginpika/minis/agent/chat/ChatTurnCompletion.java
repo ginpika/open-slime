@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 /** 回答完成后的记忆采集、任务检查点、命名与通知；不承担模型循环。 */
 @Service
 public class ChatTurnCompletion {
+    @org.springframework.beans.factory.annotation.Autowired
+    private cc.ginpika.minis.agent.chat.store.ChatMessageStore messages;
     private final HubSessionStore sessions;
     private final ProjectStore projects;
     private final MemoryIngest memoryIngest;
@@ -62,7 +64,8 @@ public class ChatTurnCompletion {
         MemoryExec writeScope = MemoryExec.chat(scope.agentId(), latest.projectId(), row.id(), scope.taskId(),
                 scope.turnId(), MemoryIdentity.ofNarrative(projects.isNarrative(latest.projectId())));
         memoryIngest.tap(row.id(), writeScope, input, answer,
-                MemoryEvidence.ref("chat_message", userMsgId, input));
+                MemoryEvidence.ref("chat_message", userMsgId, input,
+                        messages == null ? 0L : messages.observedAt(row.id(), userMsgId)));
     }
 
     private void saveCheckpoint(long taskId, MemoryExec scope) {

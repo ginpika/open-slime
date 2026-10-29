@@ -12,6 +12,18 @@
 
 ## 边界与职责
 
+协作主控可通过 `start_work(assignments=[{id,reviewer},...],note=...)` 一批派发 1–8 项独立 TODO；相同编码 Agent 配置的各项执行使用独立副本。运行及独立复跑受 `MINIS_CODING_RUNS` 控制（默认 2），额外工作有界排队。检查前整合最新项目基准并重新验证；同路径并发修改拒绝覆盖。子代理评估、调度协议与完整边界见 `docs/collaboration-parallel-coding.md`。
+
+工作台输入区的运行设置使用模态弹窗；“权限”菜单选择自动代码审查或手动审阅。新工作台任务默认开启自动审查，`StartRun` / `ResumeRun` 的 `autoReview` 字段保存为任务审计事件，`GET /runs/{id}/permissions` 读取当前策略。旧 API 未传该字段时沿用手动审阅；继续任务未传则保留原策略。EDIT / EXECUTE 产生非空变更后，运行时按具体产物哈希调用只读 Reviewer，并记录 `review.started` / `review.finished`。审查失败会明确展示，产物仍可手动审阅；审查从不自动应用代码。
+
+项目终端由 `runner/CodingTerminals` 管理，`/projects/{project}/terminals` 提供列表与创建，`/{id}` 提供删除，`/{id}/connect` 接收输出游标并签发 30 秒有效的一次性 WebSocket 票据。该 REST 请求沿用 SSO / 桌面令牌与项目归属校验；`/ws/coding/terminals/{ticket}` 在升级前消费票据，再核对工作空间、终端归属及票据绑定的精确浏览器 Origin。长期桌面令牌不进入 WebSocket URL。Vite 与 nginx 已配置同源 WebSocket 代理。
+
+前端使用 xterm.js，输入、输出与缩放通过 WebSocket 双向传输。服务端先发送 `output` JSON 元数据（offset、reset），再发送原始二进制 PTY 字节；浏览器在 xterm 渲染完成后确认 `ack` 游标，服务端才继续发送下一块输出，避免慢客户端积压。PTY 输出唤醒等待线程，无 HTTP 输出轮询。网络断开保留 PTY，可按已渲染游标重连；正常 EOF 发送 `exit` 并清理后端会话，前端立即关闭对应 Tab，选中相邻终端；最后一个终端退出时展示新建入口。旧的 HTTP 游标读取、输入和缩放接口保留用于兼容与诊断，工作台不再调用它们。
+
+SSH 使用独立 PTY 连接，Docker 使用附带 stdin 的 TTY exec。用户终端进入项目目录的 **bash**，创建前检查 bash 是否可用，缺失时明确报错；保留 shell 状态，与 Agent 的任务副本及执行日志分开。终端背景、文字、光标、选区和 ANSI 色板跟随当前主题，切换主题不重建会话。每个用户最多 8 个终端，输出使用 1 MiB 环形缓存，离开页面 30 分钟后回收；删除终端关闭通道并清理该 shell 的子进程。连接配置失效时停止会话。
+
+验收入口：`npm --prefix frontend run test:coding`、`test:coding:browser`（通过 `MINIS_PLAYWRIGHT_DIR` 指定已安装的 Playwright 包目录）；后端 `Coding*Test`。设置 `MINIS_TEST_DOCKER=true` 可运行真实 Docker PTY 测试，默认仅使用本地包含 bash 的 `maven:3.9-eclipse-temurin-21` 镜像，支持 `MINIS_TEST_DOCKER_IMAGE` 覆盖；测试只操作临时容器并自动删除。
+
 | 组件 | 职责 |
 | --- | --- |
 | `CodingFacade` | 用户用例、并发与运行预算、状态机、取消、继续、接受修改 |
@@ -32,7 +44,7 @@
 2. 提交任务，服务持久化任务与幂等键后异步执行。快照包含允许范围的已跟踪文件与未忽略的新增文件，保留未提交修改。
 3. `PLAN` 只读；`EDIT` 可编辑副本；`EXECUTE` 才能运行命令。工作期间不写原仓库。
 4. 用户补充输入先持久化，在下一轮模型调用前应用；取消同时终止模型 HTTP 请求并清理任务进程。
-5. 超过轮数、时间或显式配置的累计 token 额度进入 `PAUSED`，保留检查点。累计额度默认关闭；模型回答本身不代表验证通过。
+5. 超过时间或显式配置的累计 token 额度进入 `PAUSED`，保留检查点。累计额度默认关闭；模型回答本身不代表验证通过。
 6. 正常收尾生成版本哈希与 Diff，状态为 `REVIEWABLE`。只有明确的接受请求才能应用到原仓库；重新核对已审阅产物、源 HEAD 和基准文件内容，冲突拒绝覆盖。
 7. PLAN 结果可在同一任务批准后进入 EDIT/EXECUTE；完成应用后通过 `sessionId` 在同一会话发起下一轮。历史轮次保留且只读，每一轮重新取项目快照，历史文件内容、哈希与验证结果不当作当前证据。
 
@@ -55,17 +67,15 @@
 | `MINIS_CODING_HOST_DIR` | 后端容器内数据目录对应的 Docker 宿主绝对路径 |
 | `MINIS_CODING_IMAGE` | `maven:3.9-eclipse-temurin-21`；管理员预先准备 |
 | `MINIS_CODING_LOCAL_EXECUTION` | `false`；显式启用才允许受信任本机执行 |
-| `MINIS_CODING_MAX_ROUNDS` | `60`，每次继续重新计算 |
 | `MINIS_CODING_MAX_MINUTES` | `30`，每次运行 |
 | `MINIS_CODING_MAX_TOKENS` | `0`，默认不限制累计 token；正数限制每次运行的累计请求与响应，用供应商 usage，缺失时估算文本，非账单上限 |
 | `MINIS_CODING_RESPONSE_TOKENS` | `0`，单次输出默认跟随模型服务；模型设置中的单次输出上限优先 |
 | `MINIS_CODING_RESPONSE_RESERVE` | `32768`，未知输出能力时的上下文预留，不是发送给模型的硬输出上限 |
-| `MINIS_CODING_OUTPUT_CONTINUATIONS` | `3`，连续截断时最多自动续接次数，仍计入轮数、时间与任务预算 |
+| `MINIS_CODING_OUTPUT_CONTINUATIONS` | `3`，连续截断时最多自动续接次数，仍受时间与任务预算控制 |
 | `MINIS_CODING_MODEL_RETRIES` | `3`，单次模型请求失败后的额外重试次数，0 关闭；初次请求加重试最多 4 次 |
 | `MINIS_CODING_SUBAGENTS` | `2`，全局同时执行的只读子 Agent 数，与主任务并发配额分开 |
-| `MINIS_CODING_SUBAGENT_ROUNDS` | `30`，子 Agent 每次执行的最大轮数，不超过主任务配置的轮数上限 |
 
-其他 `minis.coding` 属性见 `config/CodingProps.java`，包括快照、文件、输出、上下文与并发上限。默认并发 2，快照 256 MiB，最多 20000 文件，单文件读取/补丁 2 MiB，单进程保留 40000 字符输出。
+其他 `minis.coding` 属性见 `config/CodingProps.java`，包括快照、文件、输出与并发设置。默认并发 2，快照 256 MiB，最多 20000 文件，单文件读取/补丁 2 MiB，单进程保留 40000 字符输出。
 
 PLAN/EDIT 需要 Java 21、Git 和可写数据目录，不需要 Docker。EXECUTE 默认要求后端具有可用 Docker CLI、可信 daemon 连接和预载镜像。任务容器无网络、只挂副本、只读根文件系统、去除 capabilities、限制 CPU/内存/PID；模型容器不挂 Docker socket 或宿主凭证。私有 Git 管理区在 checkout 外，状态/Diff 使用内置工具。
 
@@ -73,7 +83,13 @@ PLAN/EDIT 需要 Java 21、Git 和可写数据目录，不需要 Docker。EXECUT
 
 默认镜像只提供 Maven/Java 工具。由于任务容器禁网且不复制依赖目录，真实项目必须预备对应工具链和依赖缓存；Node 项目需另配含 Node 的镜像。镜像中的缓存应在命令开始时复制到可写目录，或使用适合只读缓存的构建方式；不得假定容器可以在线安装依赖。
 
+工具循环不设轮数上限，不因历史 maxRounds 字段停止或撤掉工具。上下文压缩仅依据模型 token 窗口与输出预留，不再使用固定字符预算。聊天入口 read 在任务运行中等待完成（最多 30 秒后返回当前状态），避免高频模型轮询。
+
 ## 恢复与证据
+
+协作主会话的有效单项派工可授权执行者使用 EXECUTE，仅限项目绑定仓库。执行、独立检查复用同一副本；执行者验证通过后提交，另一位检查者用 verify 实际复跑命令并读取 diff，再提交 review_todo。后端校验派工版本、检查者、命令及树哈希，应用成功才把待办标为完成；代码变化和应用冲突使旧检查失效。普通聊天不因此获得 EXECUTE 或应用权限。
+
+项目固定验证命令优先。未配置固定命令时，有效协作执行任务可将本次构建测试命令登记到 coding_validation_command；普通任务不能创建该授权记录。计划撤销、成员移除、用户暂停或项目换绑会撤销执行权限。详细协议见 docs/design/collaboration-autonomy.md。
 
 操作执行前记录调用 ID、attempt 和 round，结果另行记录。重启将执行中任务标为 `INTERRUPTED`，只读未返回结果标为 `NOT_RETURNED`，未确认副作用标为 `UNKNOWN`。不自动重放副作用；用户核查后才能继续。继续/取消时依据可信记录清理残留 Docker 容器，清理失败显示中断，不宣称停止成功。
 
@@ -110,6 +126,13 @@ PLAN/EDIT 需要 Java 21、Git 和可写数据目录，不需要 Docker。EXECUT
 
 模型的工具消息、普通回答、后台回报后的续轮、子任务结果与截断续接均保留原始 `reasoning_content`。截断只丢弃未完成的工具调用，不删除已返回的推理字段；上下文摘要及旧检查点缺字段时补空串表示无留存内容，不生成推理文本。此前已经丢失的内容无法凭空还原。带工具的请求需要回传全部 assistant 轮次推理，而不限于 tool_calls 轮次，参见 [模型协议](https://api-docs.deepseek.com/guides/thinking_mode/#tool-calls)。
 
-主 Agent 和子 Agent 默认对临时模型故障自动重试 3 次，等待 0.5 / 1 / 2 秒；支持网络 I/O、HTTP 408、429 和 5xx，400 参数错误、401 鉴权错误及应用异常不做相同请求的盲重试。重试只包围当前模型 HTTP 请求，不重新执行之前完成的工具，不额外消耗工具轮数，仍受任务时间与取消控制。失败流中没有完成标记时拒绝将半截工具参数作为有效结果；重试前清除当前请求的正文及推理展示片段，保留其他轮次，并记录 `model.retry` 事件。
+主 Agent 和子 Agent 默认对临时模型故障自动重试 3 次，等待 0.5 / 1 / 2 秒；支持网络 I/O、HTTP 408、429 和 5xx，400 参数错误、401 鉴权错误及应用异常不做相同请求的盲重试。重试只包围当前模型 HTTP 请求，不重新执行之前完成的工具，仍受任务时间与取消控制。失败流中没有完成标记时拒绝将半截工具参数作为有效结果；重试前清除当前请求的正文及推理展示片段，保留其他轮次，并记录 `model.retry` 事件。
 
 2026-10-15 本轮协议、循环、编码与聊天适配的定向检查共 70 项：66 项通过，4 项本地 HTTP 回环用例因运行环境不支持回环连接而跳过。回环用例可在允许本地端口的环境中设置 `MINIS_TEST_LOOPBACK=true` 后执行。前端纯逻辑检查覆盖主子任务重试流隔离与去重。
+
+
+## 协作续跑回执与重复失败诊断
+
+`coding_task` 在校验与执行入口使用同一个参数解析器。续跑/补充要求使用 `input`，旧 `prompt` 别名会规范化并报告；冲突字段和无效参数在修改状态前拒绝。返回的 receipt 包含实际接收内容、可信来源、attempt 和 ACCEPTED/APPLIED 状态，read 返回最新 instruction。续跑请求通过状态/快照/应用日志/未知副作用预检后才重新绑定派工，同请求键不重复开工。
+
+`attempt.completed` 保存产物、已应用要求和失败证据指纹；相同产物、相同要求和相同失败证据重复时要求主控诊断，有进展则继续，不设机械返工次数上限。结构化检查问题和应用冲突由协作层记录，见 `docs/design/collaboration-autonomy.md`。SSH/LOCAL 命令拥有配置账号的系统权限，移除协作通用终端入口不能替代 OS 沙箱。

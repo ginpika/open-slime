@@ -1,0 +1,21 @@
+.deepseek-balance {
+  min-width: 0;
+  margin-top: .75rem;
+  border: 1px solid var(--c-line);
+  border-radius: .5rem;
+  padding: .875rem;
+  font-size: .875rem;
+  line-height: 1.5;
+  background: var(--c-bg);
+}
+.deepseek-balance-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.deepseek-balance button { font-size: .875rem; }
+.deepseek-balance-state, .deepseek-balance-error { margin-top: .5rem; overflow-wrap: anywhere; }
+.deepseek-balance-amounts { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; margin: .5rem 0; }
+.deepseek-balance-total { display: block; font-size: 1.5rem; line-height: 1.4; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.deepseek-balance-breakdown { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+.deepseek-balance-meta { margin-top: .5rem; font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .deepseek-balance { font-size: 1rem; }
+  .deepseek-balance button { font-size: 1rem; }
+}

@@ -4,7 +4,7 @@ import { apiFetch } from './desktop'
 export type CodingMode = 'PLAN' | 'EDIT' | 'EXECUTE'
 export type CodingRunner = 'DOCKER' | 'LOCAL' | 'WORKSPACE'
 export type CodingWorkspace = { id: string; name: string; kind: string; enabled: boolean; workdir: string | null }
-export type CodingProject = { id: string; name: string; workspaceId: string; workspaceName: string; kind: string; directory: string; validationCommand: string | null; enabled: boolean; createdAt: number }
+export type CodingProject = { id: string; name: string; workspaceId: string; workspaceName: string; kind: string; directory: string; validationCommand: string | null; enabled: boolean; createdAt: number; recentHidden?: boolean }
 export type CodingRepository = { id: string; name: string; path: string; projectId: string | null; validationCommand: string | null }
 export type CodingRun = {
   id: string; taskId: number; repositoryId: string; prompt: string; modelId: string | null
@@ -20,8 +20,8 @@ export type CodingDiff = {
   artifactHash: string; changes: { path: string; kind: string; size: number; binary: boolean }[]
   patch: string; truncated: boolean
 }
-export type CodingAgent = { id: string; name: string; modelId: string | null }
-export type CodingCapabilities = { enabled: boolean; localExecutionAllowed: boolean; dockerImage: string; maxRounds: number; maxRunMinutes: number; isolation: string; agent?: CodingAgent | null }
+export type CodingAgent = { id: string; name: string; modelId: string | null; avatar?: string | null }
+export type CodingCapabilities = { enabled: boolean; localExecutionAllowed: boolean; dockerImage: string; maxRunMinutes: number; isolation: string; agent?: CodingAgent | null }
 const base = '/api/coding'
 const path = (id: string) => `${base}/runs/${encodeURIComponent(id)}`
 const post = <T,>(url: string, body?: unknown) => requestJson<T>(url, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
@@ -29,6 +29,7 @@ export const codingCapabilities = () => requestJson<CodingCapabilities>(`${base}
 export const codingRepositories = () => requestJson<CodingRepository[]>(`${base}/repositories`)
 export const codingWorkspaces = () => requestJson<CodingWorkspace[]>(`${base}/workspaces`)
 export const codingProjects = () => requestJson<CodingProject[]>(`${base}/projects`)
+export const removeRecentCodingProject = (id: string) => requestJson<{ ok: boolean }>(`${base}/projects/${encodeURIComponent(id)}/recent`, { method: 'DELETE' })
 export const openCodingProject = (body: { workspaceId: string; directory: string; name?: string; create: boolean; validationCommand?: string }) => post<CodingProject>(`${base}/projects`, body)
 export const codingProjectFiles = (id: string, directory = '.', runId?: string) => requestJson<WorkspaceDirView>(`${base}/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(directory)}${runId ? `&runId=${encodeURIComponent(runId)}` : ''}`)
 export const codingProjectFile = (id: string, file: string, runId?: string) => requestJson<WorkspaceFileView>(`${base}/projects/${encodeURIComponent(id)}/file?path=${encodeURIComponent(file)}${runId ? `&runId=${encodeURIComponent(runId)}` : ''}`)
@@ -42,11 +43,12 @@ export const codingChildren = (id: string) => requestJson<CodingChild[]>(`${path
 export const stopCodingChild = (run: string, id: string) => post(`${path(run)}/executions/${encodeURIComponent(id)}/stop`)
 export const resumeCodingChild = (run: string, id: string, input: string) => post<CodingChild>(`${path(run)}/executions/${encodeURIComponent(id)}/resume`, { input })
 export const codingRun = (id: string) => requestJson<CodingRun>(path(id))
+export const codingPermissions = (id: string) => requestJson<{ autoReview: boolean }>(`${path(id)}/permissions`)
 export const registerCodingRepository = (body: { name: string; path: string; validationCommand: string }) => post<CodingRepository>(`${base}/repositories`, body)
 export const codingRequestKey = () => globalThis.crypto?.randomUUID?.() || `coding_${Date.now()}_${Math.random().toString(36).slice(2)}`
-export const startCodingRun = (body: { repositoryId: string; prompt: string; modelId: string | null; mode: CodingMode; runner: CodingRunner; maxRounds: number; sessionId?: string }, requestKey: string = codingRequestKey()) => requestJson<CodingRun>(`${base}/runs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestKey }, body: JSON.stringify(body) })
+export const startCodingRun = (body: { repositoryId: string; prompt: string; modelId: string | null; mode: CodingMode; runner: CodingRunner; sessionId?: string; autoReview?: boolean }, requestKey: string = codingRequestKey()) => requestJson<CodingRun>(`${base}/runs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestKey }, body: JSON.stringify(body) })
 export const cancelCodingRun = (id: string) => post<CodingRun>(`${path(id)}/cancel`)
-export const resumeCodingRun = (id: string, input: string, acknowledgeUnknownOperations: boolean, mode?: CodingMode) => post<CodingRun>(`${path(id)}/resume`, { input, acknowledgeUnknownOperations, mode })
+export const resumeCodingRun = (id: string, input: string, acknowledgeUnknownOperations: boolean, mode?: CodingMode, autoReview?: boolean) => post<CodingRun>(`${path(id)}/resume`, { input, acknowledgeUnknownOperations, mode, autoReview })
 export const steerCodingRun = (id: string, input: string) => post<CodingRun>(`${path(id)}/messages`, { input })
 export const codingDiff = (id: string) => requestJson<CodingDiff>(`${path(id)}/diff`)
 export const acceptCodingChanges = (id: string, artifactHash: string) => post<CodingRun>(`${path(id)}/accept`, { artifactHash })

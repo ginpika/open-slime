@@ -26,10 +26,9 @@ public class StartWorkTool implements AiTool {
 
     @Override
     public String description() {
-        return "宣布「讨论到此，开始执行」：让桌上各成员的执行线程开工，按顺序完成共享任务区里各自"
-                + "名下的待办（每一条 = 一次独立执行）。只有在讨论确实得出可执行结论、且任务区已有条目时"
-                + "才调用它。开工后讨论不会停——成员仍可继续发言、增删改任务区；执行途中若遇阻，"
-                + "由遇阻者调用 " + RequestDiscussionTool.NAME + " 请大家再议。note 里写一句开工说明。";
+        return "主控派工：指定 id（待办ID）、reviewer（独立检查成员名或ID）与 note（本次依据），"
+                + "或用 assignments=[{id,reviewer},...] 一批派出 1–8 项已就绪、互不依赖的工作。相同编码 Agent 配置也能并行执行多个独立副本，逐项检查合入，整批回报主控。"
+                + "共享文件修改或有前后依赖的工作应分批。不会自动执行剩余任务；先明确负责人和整体验收标准。";
     }
 
     @Override
@@ -47,6 +46,13 @@ public class StartWorkTool implements AiTool {
         ObjectNode params = om.createObjectNode();
         params.put("type", "object");
         ObjectNode props = params.putObject("properties");
+        props.putObject("id").put("type", "string").put("description", "本次派工的待办ID");
+        props.putObject("reviewer").put("type", "string").put("description", "另一位检查成员的名字或ID，不能是执行者");
+        ObjectNode batch=props.putObject("assignments").put("type","array").put("minItems",1).put("maxItems",8);
+        ObjectNode item=batch.putObject("items").put("type","object");
+        ObjectNode fields=item.putObject("properties");
+        fields.putObject("id").put("type","string"); fields.putObject("reviewer").put("type","string");
+        item.putArray("required").add("id").add("reviewer"); item.put("additionalProperties",false);
         props.putObject("note").put("type", "string")
                 .put("description", "开工说明（一句话：按什么共识开工、先做哪些）");
         return params;

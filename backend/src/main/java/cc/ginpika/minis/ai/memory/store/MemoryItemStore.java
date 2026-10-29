@@ -19,7 +19,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * memory_item（记忆条目）的读写：记忆体系 v5 里「记忆」的一等公民。
+ * graph_claim（记忆条目）的读写：记忆体系 v5 里「记忆」的一等公民。
  *
  * <p>与 {@link MemoryEventStore}（事件层 / 证据层）的分工：事件是「发生过什么的原始投影」，
  * 只追加、逐条；本表是「关于用户 / 项目的稳定信息」，会更新、会过期、会被取代。
@@ -42,7 +42,19 @@ public class MemoryItemStore {
                           String sourceKind, String evidenceLevel, String status, String retention,
                           Long version, String fingerprint, Long validAt, Long invalidAt,
                           Long learnedAt, Long expiredAt, String identity, Long promotedFrom,
+                          Long expiresSoft, String temporalJson) {
+
+        public ItemRow(long id, String agentId, String scope, String title, String body,
+                          double confidence, String source, boolean pinned, long validFrom,
+                          Long validUntil, Long supersededBy, String sourceRefs, long createdAt,
+                          long updatedAt, String userId, String owner, String domain, String layer,
+                          String projectId, String sessionId, Long taskId, String producerAgent,
+                          String sourceKind, String evidenceLevel, String status, String retention,
+                          Long version, String fingerprint, Long validAt, Long invalidAt,
+                          Long learnedAt, Long expiredAt, String identity, Long promotedFrom,
                           Long expiresSoft) {
+            this(id, agentId, scope, title, body, confidence, source, pinned, validFrom, validUntil, supersededBy, sourceRefs, createdAt, updatedAt, userId, owner, domain, layer, projectId, sessionId, taskId, producerAgent, sourceKind, evidenceLevel, status, retention, version, fingerprint, validAt, invalidAt, learnedAt, expiredAt, identity, promotedFrom, expiresSoft, null);
+        }
 
         /**
          * v2 兼容构造（14 参）：仅供尚未迁移到 v5 归属模型的测试/工具构造行使用。
@@ -93,9 +105,18 @@ public class MemoryItemStore {
             + "pinned, valid_from, valid_until, superseded_by, source_refs, created_at, updated_at, "
             + "user_id, owner, domain, layer, project_id, session_id, task_id, producer_agent, "
             + "source_kind, evidence_level, status, retention, version, fingerprint, "
-            + "valid_at, invalid_at, learned_at, expired_at, identity, promoted_from, expires_soft";
+            + "valid_at, invalid_at, learned_at, expired_at, identity, promoted_from, expires_soft, temporal_json";
 
     private final JdbcTemplate jdbc;
+    private cc.ginpika.minis.ai.memory.graph.MemoryGraphStore graph;
+
+    @Autowired
+    public void setGraph(cc.ginpika.minis.ai.memory.graph.MemoryGraphStore graph) { this.graph = graph; }
+
+    public MemoryItemStore(JdbcTemplate jdbc, MemoryRevisionStore revisions,
+                           cc.ginpika.minis.ai.memory.graph.MemoryGraphStore graph) {
+        this(jdbc, revisions); this.graph = graph;
+    }
     /** 写入审计（memory-v6 §2.2 法四；可空：迁移 / 只读工具 / 单测没有它，写入照常、只是不留 revision） */
     private final MemoryRevisionStore revisions;
 
@@ -166,6 +187,7 @@ public class MemoryItemStore {
         long now = System.currentTimeMillis();
         String fp = MemoryVocabulary.fingerprint(o.owner(), o.projectId(), o.agentId(),
                 o.domain(), scope, body, o.layer(), o.sessionId(), o.taskId());
+        if(g!=null && "project_document".equals(g.sourceKind())) fp="document:"+cc.ginpika.minis.ai.memory.graph.MemoryGraphStore.digest(sourceRefs);
         if (caller != null && !caller.human() && relearnBlocked(fp)) {
             throw new IllegalStateException("用户已要求遗忘该内容");
         }
@@ -183,7 +205,7 @@ public class MemoryItemStore {
         String retention = g != null && g.retention() != null
                 ? g.retention()
                 : MemoryVocabulary.RETENTION_NORMAL;
-        jdbc.update("INSERT INTO memory_item(agent_id, scope, title, body, confidence, source, "
+        jdbc.update("INSERT INTO graph_claim(agent_id, scope, title, body, confidence, source, "
                         + "valid_from, valid_until, source_refs, created_at, updated_at, "
                         + "user_id, owner, domain, layer, project_id, session_id, task_id, "
                         + "producer_agent, source_kind, evidence_level, status, retention, version, "
@@ -196,6 +218,7 @@ public class MemoryItemStore {
                 status, retention, 0L, fp, now, now,
                 g == null || g.identity() == null ? null : g.identity().name());
         long id = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        if (graph != null) graph.bind(id);
         audit(id, "create", null, AuditJson.kv("owner", o.owner(), "domain", o.domain(),
                 "layer", o.layer(), "scope", scope, "projectId", o.projectId(), "agentId", o.agentId(),
                 "source", source), null);
@@ -232,22 +255,34 @@ public class MemoryItemStore {
         return new MemoryRevocationStore(jdbc).blocked(fingerprint);
     }
 
+    public void attachTriples(long id,com.fasterxml.jackson.databind.JsonNode relations) {
+        if(graph!=null) graph.triples(id,relations);
+    }
+
+    @Transactional
+    public void attachEvidence(long id,String refs) {
+        ItemRow old=findById(id).orElseThrow();
+        String merged=cc.ginpika.minis.ai.memory.MemoryEvidence.merge(old.sourceRefs(),refs);
+        jdbc.update("UPDATE graph_claim SET source_refs=? WHERE id=?",merged,id);
+        if(graph!=null) graph.attachEvidence(id,refs);
+    }
+
     public Optional<ItemRow> findById(long id) {
-        List<ItemRow> rows = jdbc.query("SELECT " + COLS + " FROM memory_item WHERE id = ?",
+        List<ItemRow> rows = jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE id = ?",
                 (rs, n) -> map(rs), id);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Transactional
     public int confirmProject(long id, long version) {
-        int changed = jdbc.update("UPDATE memory_item SET layer = 'L1', evidence_level = 'explicit', "
+        int changed = jdbc.update("UPDATE graph_claim SET layer = 'L1', evidence_level = 'explicit', "
                 + "source = 'manual', version = version + 1, updated_at = ? "
                 + "WHERE id = ? AND version = ? AND owner = 'PROJECT' AND layer = 'L3' AND status = 'active'",
                 System.currentTimeMillis(), id, version);
         if (changed == 0) { throw new IllegalStateException("项目条目版本冲突"); }
         var it = findById(id).orElseThrow();
         String fp = MemoryVocabulary.fingerprint(it.owner(), it.projectId(), it.agentId(), it.domain(), it.scope(), it.body());
-        jdbc.update("UPDATE memory_item SET fingerprint = ? WHERE id = ?", fp, id);
+        jdbc.update("UPDATE graph_claim SET fingerprint = ? WHERE id = ?", fp, id);
         audit(id, "confirm", null, AuditJson.kv("layer", "L1", "version", version + 1, "body", it.body()), "人工确认项目事实");
         return changed;
     }
@@ -257,7 +292,7 @@ public class MemoryItemStore {
         if (fingerprint == null || fingerprint.isBlank()) {
             return Optional.empty();
         }
-        List<ItemRow> rows = jdbc.query("SELECT " + COLS + " FROM memory_item WHERE fingerprint = ? "
+        List<ItemRow> rows = jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE fingerprint = ? "
                         + "AND status IN ('active','conflicted') ORDER BY id DESC LIMIT 1",
                 (rs, n) -> map(rs), fingerprint);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
@@ -268,23 +303,23 @@ public class MemoryItemStore {
             return List.of();
         }
         String in = ids.stream().map(String::valueOf).collect(Collectors.joining(","));
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE id IN (" + in + ")",
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE id IN (" + in + ")",
                 (rs, n) -> map(rs));
     }
 
     /** 全部条目（含已取代 / 已过期；记忆管理页用），新建在前 */
     public List<ItemRow> listAll() {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item ORDER BY id DESC", (rs, n) -> map(rs));
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim ORDER BY id DESC", (rs, n) -> map(rs));
     }
 
     public List<ItemRow> listByScope(String scope) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE scope = ? ORDER BY id DESC",
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE scope = ? ORDER BY id DESC",
                 (rs, n) -> map(rs), scope);
     }
 
     /** 仍有效的条目（未取代、未过期），新建在前：巩固输入 / 无作用域读（管理页、内部流程） */
     public List<ItemRow> active(int limit) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE status = 'active' "
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE status = 'active' "
                         + "AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > ?) "
                         + "ORDER BY id DESC LIMIT ?",
                 (rs, n) -> map(rs), System.currentTimeMillis(), limit);
@@ -292,7 +327,7 @@ public class MemoryItemStore {
 
     /** 某 scope 下仍有效的条目 */
     public List<ItemRow> activeByScope(String scope, int limit) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE scope = ? AND status = 'active' "
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE scope = ? AND status = 'active' "
                         + "AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > ?) "
                         + "ORDER BY id DESC LIMIT ?",
                 (rs, n) -> map(rs), scope, System.currentTimeMillis(), limit);
@@ -300,7 +335,7 @@ public class MemoryItemStore {
 
     /** id 大于游标的仍有效条目（语义巩固增量扫描用，控 LLM 成本） */
     public List<ItemRow> activeSince(long fromIdExclusive, int limit) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE id > ? AND status = 'active' "
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE id > ? AND status = 'active' "
                         + "AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > ?) "
                         + "ORDER BY id LIMIT ?",
                 (rs, n) -> map(rs), fromIdExclusive, System.currentTimeMillis(), limit);
@@ -315,8 +350,8 @@ public class MemoryItemStore {
      * @param scope 可空 = 全部 scope
      */
     public List<ItemRow> visible(MemoryExec exec, String scope, int limit) {
-        StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM memory_item WHERE ")
-                .append(MemoryPolicy.visibleSql("memory_item"));
+        StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM graph_claim WHERE ")
+                .append(MemoryPolicy.visibleSql("graph_claim"));
         List<Object> args = new ArrayList<>(MemoryPolicy.visibleArgs(exec));
         if (scope != null && !scope.isBlank()) {
             sql.append(" AND scope = ?");
@@ -327,6 +362,63 @@ public class MemoryItemStore {
         return jdbc.query(sql.toString(), (rs, n) -> map(rs), args.toArray());
     }
 
+    /** Search the whole authorized history before limiting candidates. SQLite FTS is a rebuildable index. */
+    public List<ItemRow> keywordCandidates(MemoryExec exec,String scope,String query,int limit) {
+        return keywordCandidates(exec,scope,query,limit,null,null,null);
+    }
+
+    public List<ItemRow> keywordCandidates(MemoryExec exec,String scope,String query,int limit,Long from,Long to,String kind) {
+        if(query==null || query.isBlank()) return List.of();
+        List<String> terms=java.util.regex.Pattern.compile("[\\p{L}\\p{N}_]+").matcher(query).results()
+                .map(java.util.regex.MatchResult::group).filter(t->t.length()>=3).limit(12).toList();
+        List<Object> args=new ArrayList<>();
+        String sql;
+        if(graph!=null && !terms.isEmpty()) {
+            String match=terms.stream().map(t->"\""+t+"\"").collect(Collectors.joining(" OR "));
+            sql="SELECT graph_claim.* FROM graph_claim JOIN (SELECT rowid AS match_id,bm25(graph_claim_fts) AS rank FROM graph_claim_fts WHERE graph_claim_fts MATCH ?) hits ON hits.match_id=graph_claim.id WHERE ";
+            args.add(match);
+        } else {
+            sql="SELECT graph_claim.* FROM graph_claim WHERE (instr(lower(COALESCE(title,'')||' '||body),lower(?))>0) AND ";
+            args.add(query.strip());
+        }
+        sql+=MemoryPolicy.visibleSql("graph_claim",from!=null || to!=null); args.addAll(MemoryPolicy.visibleArgs(exec));
+        sql+=cc.ginpika.minis.ai.memory.MemoryTime.filter(from,to,kind,args);
+        if(scope!=null && !scope.isBlank()) {sql+=" AND scope=?";args.add(scope);}
+        sql+=graph!=null && !terms.isEmpty()?" ORDER BY hits.rank,graph_claim.id DESC LIMIT ?":" ORDER BY id DESC LIMIT ?";
+        args.add(limit);return jdbc.query(sql,(r,n)->map(r),args.toArray());
+    }
+
+    /** Filter the full authorized history by event time, never by ingestion time. */
+    public List<ItemRow> temporalCandidates(MemoryExec exec, String scope, Long from, Long to, String kind, int limit) {
+        var args = new ArrayList<Object>(MemoryPolicy.visibleArgs(exec));
+        String sql = "SELECT " + COLS + " FROM graph_claim WHERE " + MemoryPolicy.visibleSql("graph_claim",from!=null || to!=null)
+                + cc.ginpika.minis.ai.memory.MemoryTime.filter(from, to, kind, args);
+        if (scope != null && !scope.isBlank()) { sql += " AND scope=?"; args.add(scope); }
+        sql += " ORDER BY json_extract(temporal_json,'$.start') DESC,id DESC LIMIT ?";
+        args.add(limit);
+        return jdbc.query(sql, (r,n)->map(r), args.toArray());
+    }
+
+    public void setTemporal(long id, cc.ginpika.minis.ai.memory.MemoryTime.Frame time) {
+        jdbc.update("UPDATE graph_claim SET temporal_json=?,valid_at=?,invalid_at=? WHERE id=?",
+                cc.ginpika.minis.ai.memory.MemoryTime.encode(time), time.start(),
+                "state".equals(time.kind()) ? time.end() : null, id);
+    }
+
+    public Optional<ItemRow> historicalById(MemoryExec exec,long id) {
+        var args=new ArrayList<Object>(MemoryPolicy.visibleArgs(exec)); args.add(id);
+        return jdbc.query("SELECT "+COLS+" FROM graph_claim WHERE "+MemoryPolicy.visibleSql("graph_claim",true)+" AND id=?",
+                (r,n)->map(r),args.toArray()).stream().findFirst();
+    }
+
+    public List<ItemRow> related(MemoryExec exec,List<Long> seeds,int limit) {
+        return graph==null?List.of():byIds(graph.related(exec,seeds,limit));
+    }
+    public Object evidence(MemoryExec exec,long id,int offset,int limit) {
+        if(graph==null) throw new IllegalStateException("记忆证据图谱不可用");
+        return graph.evidence(exec,id,offset,limit);
+    }
+
     // ---------------------------------------------------------------- 双时态点查（memory-v6 §12.4）
 
     /**
@@ -334,8 +426,8 @@ public class MemoryItemStore {
      * 覆盖该时刻即算有效——旧值被取代时只**关闭有效期**，所以历史时刻照样查得到。
      */
     public List<ItemRow> protectedVisible(MemoryExec exec) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE "
-                + MemoryPolicy.visibleSql("memory_item")
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE "
+                + MemoryPolicy.visibleSql("graph_claim")
                 + " AND (pinned = 1 OR retention = 'pinned' OR owner = 'USER' "
                 + "OR scope IN ('directive','open_issue')) ORDER BY id",
                 (rs, n) -> map(rs), MemoryPolicy.visibleArgs(exec).toArray());
@@ -343,18 +435,18 @@ public class MemoryItemStore {
 
     public Optional<ItemRow> visibleById(MemoryExec exec, long id) {
         List<Object> args = new ArrayList<>(MemoryPolicy.visibleArgs(exec)); args.add(id);
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE "
-                + MemoryPolicy.visibleSql("memory_item") + " AND id = ?",
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE "
+                + MemoryPolicy.visibleSql("graph_claim") + " AND id = ?",
                 (rs, n) -> map(rs), args.toArray()).stream().findFirst();
     }
 
     public List<ItemRow> episodesForRetention() {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item WHERE scope = 'episode' "
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE scope = 'episode' "
                 + "AND status = 'active' ORDER BY id DESC", (rs, n) -> map(rs));
     }
 
     public int archiveTask(MemoryExec exec, long before) {
-        return jdbc.update("UPDATE memory_item SET status='archived', version=COALESCE(version,0)+1, updated_at=? "
+        return jdbc.update("UPDATE graph_claim SET status='archived', version=COALESCE(version,0)+1, updated_at=? "
                 + "WHERE layer='L3' AND status='active' AND created_at <= ? AND project_id IS ? "
                 + "AND (session_id = ? OR task_id = ?)", System.currentTimeMillis(), before,
                 exec.projectId(), exec.sessionId(), exec.taskId());
@@ -380,7 +472,7 @@ public class MemoryItemStore {
 
     public boolean authorityConflict(String owner, String project, String scope, String title, String body) {
         if (title == null || title.isBlank()) { return false; }
-        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM memory_item WHERE owner=? AND project_id IS ? "
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM graph_claim WHERE owner=? AND project_id IS ? "
                 + "AND scope=? AND title=? AND body<>? AND layer='L1' AND status='active' "
                 + "AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until>?)",
                 Integer.class, owner, project, scope, title, body, System.currentTimeMillis());
@@ -392,7 +484,7 @@ public class MemoryItemStore {
     }
 
     public List<ItemRow> asOf(long at, int limit) {
-        return jdbc.query("SELECT " + COLS + " FROM memory_item "
+        return jdbc.query("SELECT " + COLS + " FROM graph_claim "
                         + "WHERE COALESCE(valid_at, created_at) <= ? AND (invalid_at IS NULL OR invalid_at > ?) "
                         + "ORDER BY id DESC LIMIT ?",
                 (rs, n) -> map(rs), at, at, Math.max(1, limit));
@@ -426,7 +518,7 @@ public class MemoryItemStore {
 
     /** 取代了 {@code id} 的那条（旧的一侧）；没有则空 */
     private ItemRow predecessorOf(long id) {
-        List<ItemRow> rows = jdbc.query("SELECT " + COLS + " FROM memory_item WHERE superseded_by = ? "
+        List<ItemRow> rows = jdbc.query("SELECT " + COLS + " FROM graph_claim WHERE superseded_by = ? "
                 + "ORDER BY id DESC LIMIT 1", (rs, n) -> map(rs), id);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -437,7 +529,7 @@ public class MemoryItemStore {
      */
     public List<ItemRow> findForPurge(Collection<Long> ids, String owner, String agentId,
                                       String projectId, String scope, Long before, int limit) {
-        StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM memory_item WHERE 1 = 1");
+        StringBuilder sql = new StringBuilder("SELECT " + COLS + " FROM graph_claim WHERE 1 = 1");
         List<Object> args = new ArrayList<>();
         if (ids != null && !ids.isEmpty()) {
             sql.append(" AND id IN (").append(ids.stream().map(x -> "?")
@@ -494,16 +586,21 @@ public class MemoryItemStore {
     @Transactional
     public int updateContentCas(long id, String title, String body, long expectedVersion, String source) {
         ItemRow old = findById(id).orElseThrow();
+        if("project_document".equals(old.sourceKind())) throw new IllegalArgumentException("项目文档为不可变版本，请通过项目知识入口保存新版本");
         String fp = MemoryVocabulary.fingerprint(old.owner(), old.projectId(), old.agentId(), old.domain(),
                 old.scope(), body, old.layer(), old.sessionId(), old.taskId());
-        int n = jdbc.update("UPDATE memory_item SET title = ?, body = ?, source = ?, "
-                        + "fingerprint = ?, version = COALESCE(version,0) + 1, updated_at = ? WHERE id = ? AND COALESCE(version,0) = ?",
+        int n = jdbc.update("UPDATE graph_claim SET title = ?, body = ?, source = ?, "
+                        + "fingerprint = ?, temporal_json=NULL, valid_at=NULL, invalid_at=NULL, version = COALESCE(version,0) + 1, updated_at = ? WHERE id = ? AND COALESCE(version,0) = ?",
                 title, body, source, fp, System.currentTimeMillis(), id, expectedVersion);
         if (n == 0) {
             /* 乐观锁挡住了一次覆盖（I9）：调用方应回 409，不得退化为 last-write-wins */
             MemoryMetrics.writeConflict();
         } else {
             jdbc.update("DELETE FROM memory_item_embedding WHERE item_id = ?", id);
+            if (graph != null) {
+                jdbc.update("DELETE FROM graph_relation WHERE claim_id=?",id);
+                graph.bind(id);
+            }
             audit(id, "update", AuditJson.kv("version", expectedVersion, "title", old.title(), "body", old.body()),
                     AuditJson.kv("version", expectedVersion + 1, "title", title, "body", body, "source", source),
                     SOURCE_AUTO.equals(source) ? "Agent 主动改写" : null);
@@ -513,10 +610,15 @@ public class MemoryItemStore {
 
     /** 取代：old 被 new 取代（old 不再参与召回），同时置 status=superseded、关闭有效期（双时态） */
     public int supersede(long oldId, long newId) {
-        int n = jdbc.update("UPDATE memory_item SET superseded_by = ?, status = 'superseded', "
-                        + "valid_at = COALESCE(valid_at, valid_from), invalid_at = ?, updated_at = ? "
+        ItemRow next=findById(newId).orElseThrow();
+        var nextTime=cc.ginpika.minis.ai.memory.MemoryTime.decode(next.temporalJson());
+        long ended=nextTime!=null && "state".equals(nextTime.kind()) && nextTime.start()!=null
+                ? nextTime.start() : System.currentTimeMillis();
+        int n = jdbc.update("UPDATE graph_claim SET superseded_by = ?, status = 'superseded', "
+                        + "invalid_at = ?, expired_at=?, temporal_json=CASE WHEN json_extract(temporal_json,'$.kind')='state' THEN json_set(temporal_json,'$.end',?) ELSE temporal_json END, "
+                        + "version=COALESCE(version,0)+1, updated_at = ? "
                         + "WHERE id = ?",
-                newId, System.currentTimeMillis(), System.currentTimeMillis(), oldId);
+                newId, ended, System.currentTimeMillis(), ended, System.currentTimeMillis(), oldId);
         if (n > 0) {
             audit(oldId, "supersede", AuditJson.kv("status", "active"),
                     AuditJson.kv("supersededBy", newId, "status", "superseded"), null);
@@ -526,7 +628,7 @@ public class MemoryItemStore {
 
     /** 置冲突（并发写冲突时保留双方，交由人工/巩固裁决） */
     public int markConflicted(long id) {
-        int n = jdbc.update("UPDATE memory_item SET status = 'conflicted', updated_at = ? WHERE id = ?",
+        int n = jdbc.update("UPDATE graph_claim SET status = 'conflicted', updated_at = ? WHERE id = ?",
                 System.currentTimeMillis(), id);
         if (n > 0) {
             audit(id, "status", null, AuditJson.kv("status", "conflicted"),
@@ -537,7 +639,7 @@ public class MemoryItemStore {
 
     /** 置状态（archived / revoked / expired 等），version 自增 */
     public int setStatus(long id, String status) {
-        int n = jdbc.update("UPDATE memory_item SET status = ?, version = COALESCE(version,0) + 1, "
+        int n = jdbc.update("UPDATE graph_claim SET status = ?, version = COALESCE(version,0) + 1, "
                 + "updated_at = ? WHERE id = ?", status, System.currentTimeMillis(), id);
         if (n > 0) {
             audit(id, "status", null, AuditJson.kv("status", status), null);
@@ -554,7 +656,7 @@ public class MemoryItemStore {
         if (bad != null) { throw new IllegalArgumentException(bad); }
         String fp = MemoryVocabulary.fingerprint(old.owner(), old.projectId(), old.agentId(), old.domain(),
                 old.scope(), old.body(), layer, old.sessionId(), old.taskId());
-        int n = jdbc.update("UPDATE memory_item SET layer = ?, promoted_from = ?, fingerprint = ?, "
+        int n = jdbc.update("UPDATE graph_claim SET layer = ?, promoted_from = ?, fingerprint = ?, "
                         + "version = COALESCE(version,0) + 1, updated_at = ? WHERE id = ? AND COALESCE(version,0) = ?",
                 layer, promotionId, fp, System.currentTimeMillis(), id, old.version() == null ? 0 : old.version());
         if (n > 0) {
@@ -566,8 +668,13 @@ public class MemoryItemStore {
     /** 删除条目（连带其向量投影，避免外键悬挂） */
     @Transactional
     public int delete(long id) {
+        if (graph != null) {
+            jdbc.update("DELETE FROM graph_relation WHERE claim_id=?",id);
+            jdbc.update("DELETE FROM graph_support WHERE claim_id=?",id);
+            jdbc.update("DELETE FROM graph_claim_fts WHERE rowid=?",id);
+        }
         jdbc.update("DELETE FROM memory_item_embedding WHERE item_id = ?", id);
-        int n = jdbc.update("DELETE FROM memory_item WHERE id = ?", id);
+        int n = jdbc.update("DELETE FROM graph_claim WHERE id = ?", id);
         if (n > 0) {
             audit(id, "purge", null, null, "物理删除（管理页）");
         }
@@ -576,7 +683,7 @@ public class MemoryItemStore {
 
     /** 固定 / 取消固定（人工）：固定的条目强制注入，不受相关性门控过滤 */
     public int setPinned(long id, boolean pinned) {
-        int changed = jdbc.update("UPDATE memory_item SET pinned = ?, retention = ?, version=COALESCE(version,0)+1, updated_at = ? WHERE id = ?",
+        int changed = jdbc.update("UPDATE graph_claim SET pinned = ?, retention = ?, version=COALESCE(version,0)+1, updated_at = ? WHERE id = ?",
                 pinned ? 1 : 0, pinned ? MemoryVocabulary.RETENTION_PINNED : MemoryVocabulary.RETENTION_NORMAL,
                 System.currentTimeMillis(), id);
         if (changed > 0) { recordControl(id, "pin", Boolean.toString(pinned)); }
@@ -586,8 +693,23 @@ public class MemoryItemStore {
     /** 清空全部条目（先删向量投影，再删正本）——设置页「重置记忆」用 */
     @Transactional
     public int clearAll() {
+        return clearAll(true);
+    }
+
+    @Transactional
+    public int clearAll(boolean preserveProjectDocuments) {
+        if (graph != null) {
+            jdbc.update("DELETE FROM graph_relation"); jdbc.update("DELETE FROM graph_support");
+            jdbc.update("DELETE FROM graph_claim_fts");
+        }
         jdbc.update("DELETE FROM memory_item_embedding");
-        return jdbc.update("DELETE FROM memory_item");
+        int deleted=jdbc.update("DELETE FROM graph_claim"+(preserveProjectDocuments?" WHERE COALESCE(source_kind,'')<>'project_document'":""));
+        if(graph!=null) {
+            for(long id:jdbc.query("SELECT id FROM graph_claim",(r,n)->r.getLong(1))) graph.bind(id);
+            jdbc.update("DELETE FROM graph_ingest_job");
+            jdbc.update("DELETE FROM graph_episode WHERE id NOT IN (SELECT episode_id FROM graph_support)");
+        }
+        return deleted;
     }
 
     static ItemRow map(ResultSet rs) throws SQLException {
@@ -603,7 +725,7 @@ public class MemoryItemStore {
                 nullableLong(rs, "version"), rs.getString("fingerprint"), nullableLong(rs, "valid_at"),
                 nullableLong(rs, "invalid_at"), nullableLong(rs, "learned_at"),
                 nullableLong(rs, "expired_at"), rs.getString("identity"),
-                nullableLong(rs, "promoted_from"), nullableLong(rs, "expires_soft"));
+                nullableLong(rs, "promoted_from"), nullableLong(rs, "expires_soft"), rs.getString("temporal_json"));
     }
 
     /** 可空整数列：NULL 返回 null，否则返回 long（SQLite 的 INTEGER 取原值） */

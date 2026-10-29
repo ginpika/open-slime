@@ -243,7 +243,8 @@ class MemoryArchitectureRegressionTest {
             var revocations = new MemoryRevocationStore(f.jdbc);
             var vectors = mock(MemoryItemEmbeddingWriter.class);
             var profiles = new UserProfileService(candidates, revocations, f.items, vectors);
-            var extractor = new MemoryExtractor(new MemoryProps(),settings,client,new ObjectMapper(),f.items,vectors,profiles,revocations);
+            var extractor = new MemoryExtractor(new MemoryProps(),settings,client,new ObjectMapper(),f.items,vectors,profiles,revocations,
+                    new MemoryRetractionStore(f.jdbc, f.items, candidates));
             var scope = exec("a",null,"s1");
             revocations.add(null,MemoryVocabulary.fingerprint("AGENT",null,"a","AGENT","method","应忘掉的方法"),"忘掉",false);
             assertTrue(extractor.extractConversationAsync(scope,"我使用Java",true,MemoryEvidence.ref("chat_message",1,"我使用Java")).join());

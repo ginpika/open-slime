@@ -6,7 +6,6 @@ import cc.ginpika.minis.agent.context.ContextRequest;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.member.AgentPromptService;
 import cc.ginpika.minis.ai.core.MemoryIdentity;
-import cc.ginpika.minis.ai.core.prompt.PromptManager;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import cc.ginpika.minis.agent.chat.turn.History;
@@ -45,7 +44,6 @@ public class ChatContextService {
     private final ChatMessageStore messages;
     private final ObjectMapper om;
     private final SettingsService settings;
-    private final PromptManager prompts;
     private final AgentPromptService peerPrompts;
     private final ToolManager tools;
     private final ProjectStore projects;
@@ -58,7 +56,6 @@ public class ChatContextService {
             ChatMessageStore messages,
             ObjectMapper om,
             SettingsService settings,
-            PromptManager prompts,
             AgentPromptService peerPrompts,
             ToolManager tools,
             ProjectStore projects,
@@ -69,7 +66,6 @@ public class ChatContextService {
         this.messages = messages;
         this.om = om;
         this.settings = settings;
-        this.prompts = prompts;
         this.peerPrompts = peerPrompts;
         this.tools = tools;
         this.projects = projects;
@@ -143,7 +139,7 @@ public class ChatContextService {
     private String systemFor(HubRow row, String promptId) {
         String agentId = ChatSessionService.ownerOf(row.agentId());
         return AgentDirectory.isBuiltin(agentId)
-                ? prompts.chatSystem(promptId)
+                ? peerPrompts.builtinSystem(promptId)
                 : peerPrompts.system(agentId);
     }
 

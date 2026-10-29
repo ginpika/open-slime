@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import type { SearchHit } from '../api/client'
+import { useState, type ReactNode } from 'react'
+import type { SearchHit, SearchResponse } from '../api/client'
 import { Card } from './Card'
 import { usePageKit } from '../kit'
 
@@ -47,71 +47,64 @@ function fileName(ref: string): string {
   return base.includes('.') ? ref : `${ref}.md`
 }
 
-/** 单条搜索命中：文档行 / 图谱锚点实体行（Google 结果式：面包屑 + 链接标题 + 摘要）；
- *  外层容器交给主题化 Card（interactive：悬停描边加强 + 抬升），内部排版保留语义类 */
-export default function ResultCard({ hit }: { hit: SearchHit }) {
+type Props = { hit: SearchHit; web?: never } | { hit?: never; web: SearchResponse['web']['results'][number] }
+
+/** Internal and DeepSeek hits share the same presentation; their links and source metadata stay distinct. */
+export default function ResultCard({ hit, web }: Props) {
   const kit = usePageKit()
-  const isEntity = hit.kind === 'entity'
-  const isChunk = hit.kind === 'chunk'
-  const statusTone = hit.status ? STATUS_TONES[hit.status] : undefined
+  const [expandedText, setExpandedText] = useState<string | null>(null)
+  const isEntity = hit?.kind === 'entity'
+  const isChunk = hit?.kind === 'chunk'
+  const statusTone = hit?.status ? STATUS_TONES[hit.status] : undefined
   /* 外链（http）/ 文档命中跳文章页 / 实体命中跳图谱页（该实体 1 跳展开） */
-  const external = /^https?:\/\//i.test(hit.sourceRef)
-  const snapshotHref = hit.kind === 'snapshot' && hit.sourceRef.startsWith('snapshot:')
+  const external = /^https?:\/\//i.test(web?.url ?? hit?.sourceRef ?? '')
+  const snapshotHref = hit?.kind === 'snapshot' && hit.sourceRef.startsWith('snapshot:')
     ? `#/snapshots/${hit.sourceRef.slice('snapshot:'.length)}` : null
-  const docHref = hit.kind === 'doc' && hit.url ? `#/article/${hit.url}` : null
-  const graphHref = isEntity && hit.entityId ? `#/graph?entity=${hit.entityId}` : null
-  const href = snapshotHref ?? (external ? hit.sourceRef : (docHref ?? graphHref))
+  const docHref = hit?.kind === 'doc' && hit.url ? `#/article/${hit.url}` : null
+  const graphHref = isEntity && hit?.entityId ? `#/graph?entity=${hit.entityId}` : null
+  const href = web ? (external ? web.url : null) : snapshotHref ?? (external ? hit?.sourceRef : (docHref ?? graphHref))
+  const title = web ? web.title || web.url : hit?.title ?? ''
+  const source = web ? web.siteName || '网页' : isEntity ? '图谱实体' : isChunk ? '知识片段'
+    : hit?.kind === 'snapshot' ? '网页快照' : hit?.kind === 'doc' ? '内部文档' : '本地知识库'
+  const location = web ? web.url : isEntity ? `知识图谱 / ${title}` : fileName(hit?.sourceRef ?? '') || '本地知识库'
+  const description = (web ? web.snippet || web.summary : hit?.snippet ?? '').replace(/\s+/g, ' ').trim()
+  const chars = Array.from(description)
+  const expanded = expandedText === description
+  const excerpt = chars.length > 200 && !expanded ? chars.slice(0, 200).join('') + '…' : description
+  const matched = hit?.matched ?? []
   return (
-    <Card as="article" interactive>
-      {/* 面包屑行：等宽元数据（类型牌 / 来源 / chunk 号 / 状态徽章 / 相似度读数） */}
-      <div className="mono flex items-center gap-3 text-xs text-faint">
-        <span
-          className={
-            isEntity
-              ? 'font-bold uppercase tracking-[0.18em] text-fg'
-              : 'font-bold uppercase tracking-[0.18em]'
-          }
-        >
-          {isEntity ? 'Entity' : isChunk ? 'Chunk' : hit.kind === 'snapshot' ? '网页快照' : hit.kind === 'doc' ? 'Document' : hit.source || 'note'}
-        </span>
-        {hit.sourceRef && (
-          <>
-            <span>/</span>
-            <span className="truncate">{fileName(hit.sourceRef)}</span>
-          </>
-        )}
-        {isChunk && hit.chunkId != null && (
-          <>
-            <span>/</span>
-            <span className="shrink-0">#{hit.chunkId}</span>
-          </>
-        )}
+    <Card as="article" interactive className="search-result w-full min-w-0">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <span>{source}</span>
+        {web?.date && <time>{web.date}</time>}
+        {isChunk && hit?.chunkId != null && <span>#{hit.chunkId}</span>}
         {isChunk && statusTone && (
           <kit.Badge tone={statusTone.tone}>{statusTone.label}</kit.Badge>
         )}
-        <span className="ml-auto shrink-0">{hit.score.toFixed(3)}</span>
       </div>
-      <h3 className="mt-2.5 text-xl font-bold leading-snug tracking-tight">
+      <h3 className="mt-2 break-words text-xl font-bold leading-snug">
         {href ? (
           <a
             href={href}
             target={external ? '_blank' : undefined}
             rel={external ? 'noreferrer' : undefined}
-            className="text-fg transition hover:text-accent hover:underline"
+            className="text-fg hover:text-accent hover:underline"
           >
-            <Mark text={hit.title} terms={hit.matched} />
+            <Mark text={title} terms={matched} />
           </a>
         ) : (
           <span className="text-fg">
-            <Mark text={hit.title} terms={hit.matched} />
+            <Mark text={title} terms={matched} />
           </span>
         )}
       </h3>
-      {!isEntity && (
-        <p className="mt-2 max-w-2xl text-base leading-relaxed text-muted [overflow-wrap:anywhere]">
-          <Mark text={hit.snippet} terms={hit.matched} />
-        </p>
-      )}
+      <p className="mt-1 break-all text-xs text-muted">{location}</p>
+      {description && <p className="mt-2 text-base leading-relaxed text-muted [overflow-wrap:anywhere]">
+        <Mark text={excerpt} terms={matched} />
+      </p>}
+      {chars.length > 200 && <button type="button" aria-expanded={expanded}
+        className="mt-1 text-base text-muted underline hover:text-accent sm:text-sm"
+        onClick={() => setExpandedText(expanded ? null : description)}>{expanded ? '收起摘要' : '展开摘要'}</button>}
     </Card>
   )
 }

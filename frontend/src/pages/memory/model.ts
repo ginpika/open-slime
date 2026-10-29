@@ -6,8 +6,8 @@ export const layers = [
   { id: 'L4', name: '显式发布', desc: '按发布目标授权；并非自动对全体 Agent 公开。', route: '发布 → 接收 / 提升 / 撤回' },
 ]
 export const identityNames: Record<string, string> = { REAL: '现实事实', FICTION: '虚构内容', PROJECT_PREF: '项目偏好', INFERRED: '模型推断' }
-export const ownerNames: Record<string, string> = { USER: '用户', PROJECT: '项目', AGENT: 'Agent', TASK: '任务' }
-export const domainNames: Record<string, string> = { USER_PROFILE: '用户画像 / 规则', PROJECT: '项目知识', AGENT: 'Agent 经验', TASK_EPISODIC: '任务情景' }
+export const ownerNames: Record<string, string> = { USER: '用户', PROJECT: '项目', AGENT: 'Agent', TASK: '任务', KNOWLEDGE: '知识库' }
+export const domainNames: Record<string, string> = { USER_PROFILE: '用户画像 / 规则', PROJECT: '项目知识', AGENT: 'Agent 经验', TASK_EPISODIC: '任务情景', KNOWLEDGE: '公共知识' }
 export const time = (value?: number | null) => value == null ? '未设置' : new Date(value).toLocaleString('zh-CN', { hour12: false })
 export function errorText(e: unknown) {
   if (e instanceof ApiError) return `接口 ${e.status}：${e.body.slice(0, 220) || '请求失败'}`
@@ -17,9 +17,13 @@ export function status(item: MemoryItem, now = Date.now()) {
   if (item.supersededBy != null) return '已取代'
   if (item.status && item.status !== 'active') return ({ revoked: '已撤销', archived: '已归档', conflicted: '冲突', expired: '已过期', superseded: '已取代' } as Record<string, string>)[item.status] ?? item.status
   if ((item.validUntil != null && item.validUntil <= now) || (item.expiresSoft != null && item.expiresSoft <= now)) return '已过期'
+  const t = temporal(item)
+  if(t?.kind === 'state' && t.start != null && t.start > now) return '尚未生效'
+  if(t?.kind === 'state' && item.invalidAt != null && item.invalidAt <= now) return '状态已结束'
   return item.active ? '有效' : '不可注入'
 }
 export function scopeKind(item: MemoryItem, shares: MemoryShare[]) {
+  if (item.owner === 'KNOWLEDGE') return 'knowledge'
   if (item.owner === 'USER' && item.domain === 'USER_PROFILE') return 'global'
   if (shares.some(s => s.itemId === item.id && s.status === 'published')) return 'published'
   if (item.layer === 'L4') return 'unpublished'
@@ -27,7 +31,20 @@ export function scopeKind(item: MemoryItem, shares: MemoryShare[]) {
   if (item.owner === 'PROJECT' && item.layer === 'L1') return 'project'
   return 'private'
 }
-export const scopeNames: Record<string, string> = { global: '全局用户规则', project: '项目共享', private: 'Agent 独享（默认）', bound: '会话 / 任务绑定', published: '显式授权共享', unpublished: 'L4 暂无发布授权' }
+export const scopeNames: Record<string, string> = { global: '全局用户规则', knowledge: '公共知识', project: '项目共享', private: 'Agent 独享（默认）', bound: '会话 / 任务绑定', published: '显式授权共享', unpublished: 'L4 暂无发布授权' }
+type Temporal = { kind: string; start: number | null; end: number | null; precision: string; partOfDay: string; zone: string | null; anchorAt: number | null; attribution: string }
+export function temporal(item: MemoryItem): Temporal | null {
+  try { return item.temporalJson ? JSON.parse(item.temporalJson) as Temporal : null } catch { return null }
+}
+export function occurrence(item: MemoryItem) {
+  const t=temporal(item)
+  if (!t || t.kind === 'timeless') return null
+  if(t.start == null) return '发生 / 生效时间未确定'
+  try {
+    const options: Intl.DateTimeFormatOptions={ timeZone: t.zone || undefined, year: 'numeric', month: 'long', day: 'numeric', ...(t.precision === 'explicit' ? { hour: '2-digit', minute: '2-digit' } : {}) }
+    return `${t.kind === 'state' ? '生效于' : '发生于'} ${new Date(t.start).toLocaleString('zh-CN', options)}${t.partOfDay ? ` ${t.partOfDay}` : ''}${t.zone ? ` · ${t.zone}` : ''}`
+  } catch { return '时间记录待核实' }
+}
 export function evidence(value?: string | null): { ref: string; text: string | null }[] {
   if (!value) return []
   try {

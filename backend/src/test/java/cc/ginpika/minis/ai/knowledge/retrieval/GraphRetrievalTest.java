@@ -35,6 +35,9 @@ class GraphRetrievalTest {
         jdbc.execute("CREATE TABLE entity_embedding(id TEXT PRIMARY KEY, model TEXT NOT NULL, "
                 + "dim INTEGER NOT NULL, vec BLOB NOT NULL, updated_at INTEGER NOT NULL)");
         GraphStore store = new GraphStore(jdbc, new ObjectMapper());
+        try { org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(ds.getConnection(),new org.springframework.core.io.ClassPathResource("schema.sql")); }
+        catch(Exception e) { throw new IllegalStateException(e); }
+        for(long id:List.of(7L,8L,9L)) jdbc.update("INSERT INTO chunks(id,uuid,source,content,created_at) VALUES(?,?,'test','文档来源',0)",id,"chunk-"+id);
         store.upsertEntity("PERSON", "张伟", List.of(), null);
         store.upsertEntity("PERSON", "李娜", List.of(), null);
         store.upsertEntity("ORG", "星尘科技", List.of(), null);
@@ -42,13 +45,13 @@ class GraphRetrievalTest {
         store.upsertEntity("CONCEPT", "星尘计划", List.of(), null);
         store.upsertEntity("ORG", "银河网络", List.of(), null);
         store.upsertEntity("PLACE", "某大学", List.of(), null);
-        String zhang = GraphStore.entityIdFor("张伟");
-        String li = GraphStore.entityIdFor("李娜");
-        String xing = GraphStore.entityIdFor("星尘科技");
+        String zhang = store.byName("张伟").id();
+        String li = store.byName("李娜").id();
+        String xing = store.byName("星尘科技").id();
         store.upsertRelation(zhang, "任职于", xing, 7L);
         store.upsertRelation(li, "任职于", xing, 8L);
-        store.upsertRelation(zhang, "毕业于", GraphStore.entityIdFor("某大学"), null);
-        store.upsertRelation(li, "前雇主", GraphStore.entityIdFor("银河网络"), 9L);
+        store.upsertRelation(zhang, "毕业于", store.byName("某大学").id(), null);
+        store.upsertRelation(li, "前雇主", store.byName("银河网络").id(), 9L);
         return store;
     }
 
@@ -56,7 +59,7 @@ class GraphRetrievalTest {
     void pprSurfacesCommonNeighborOnTop() {
         GraphStore store = seed();
         GraphExplorer.Exploration ex = new GraphExplorer(store).explore(
-                Set.of(GraphStore.entityIdFor("张伟"), GraphStore.entityIdFor("李娜")),
+                Set.of(store.byName("张伟").id(), store.byName("李娜").id()),
                 240, 12, 30);
         /* 共同邻居「星尘科技」应浮到首位（两端各只有一条噪声边） */
         assertEquals("星尘科技", ex.top().get(0).entity().name());
@@ -77,11 +80,11 @@ class GraphRetrievalTest {
     @Test
     void entityVectorRecallByCosine() {
         GraphStore store = seed();
-        store.saveEntityEmbedding(GraphStore.entityIdFor("星尘科技"), "m1", new float[]{1f, 0f});
-        store.saveEntityEmbedding(GraphStore.entityIdFor("银河网络"), "m1", new float[]{0f, 1f});
+        store.saveEntityEmbedding(store.byName("星尘科技").id(), "m1", new float[]{1f, 0f});
+        store.saveEntityEmbedding(store.byName("银河网络").id(), "m1", new float[]{0f, 1f});
         List<GraphStore.EntitySimilarity> hits =
                 store.entitiesByCosine("m1", new float[]{0.9f, 0.1f}, 5);
-        assertEquals(GraphStore.entityIdFor("星尘科技"), hits.get(0).entityId());
+        assertEquals(store.byName("星尘科技").id(), hits.get(0).entityId());
         /* model 不匹配（无该模型向量）→ 空 */
         assertTrue(store.entitiesByCosine("other", new float[]{1f, 0f}, 5).isEmpty());
     }

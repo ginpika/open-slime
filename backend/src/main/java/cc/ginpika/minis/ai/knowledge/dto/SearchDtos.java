@@ -36,8 +36,12 @@ public final class SearchDtos {
                        List<GraphStore.Prop> props) {
     }
 
-    /** FAST 联网补充段：M0 恒 disabled（实现待 Yuni /internal/web/search 接入） */
-    public record Web(boolean enabled, List<String> results) {
-        public static final Web DISABLED = new Web(false, List.of());
+    /** Local and remote scores have different scales and are intentionally not merged. */
+    public record WebResult(String title, String url, String snippet, String summary, String content,
+                            String siteName, String date, double score, int authority) {}
+
+    public record Web(boolean enabled, List<WebResult> results, String error, List<String> warnings) {
+        public static final Web DISABLED = new Web(false, List.of(), null, List.of());
+        public Web(boolean enabled, List<WebResult> results) { this(enabled, results, null, List.of()); }
     }
 }

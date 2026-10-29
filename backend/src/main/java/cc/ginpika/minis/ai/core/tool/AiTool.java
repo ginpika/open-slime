@@ -23,6 +23,9 @@ public interface AiTool {
     /** 工具描述：模型据此决定何时调用（可引用其它工具的 {@link #name()}，用方法而非静态字段以避开初始化环） */
     String description();
 
+    /** Runtime configuration gate; execution must enforce the same gate independently. */
+    default boolean available() { return true; }
+
     /** 该工具出现在哪些工具面 */
     Set<ToolSurface> surfaces();
 

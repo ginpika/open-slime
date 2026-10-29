@@ -34,14 +34,12 @@ public class DelegateSubagentTool implements AiTool {
 
     @Override
     public String description() {
-        return "派一个「子代理」独立去完成一件活：它只拿到你写的这段交代，看不到当前对话与历史；"
-                + "它有自己的工具（默认只读检索），能自行查知识库、读文档、查图谱，最后只交回一段结论。"
-                + "派活不占住你：在对话里当场只回一张受理回执（含执行 id），它跑完会把结论作为一条"
-                + "新消息投回本会话并打未读点——所以别干等它，先答你能答的、或直接收尾；"
-                + "心跳里则由它当场把结论交给你，你拿它继续裁量这一拍。"
-                + "适合需要多步检索、或结果很长会挤占当前上下文的调研类任务；"
-                + "闲聊与一句话能答完的问题不要用它。同一条消息里可以一次派好几个。"
-                + "需要反复做、要有固定做法的活，立一个任务计划（" + CreatePlanTool.NAME + "）更合适。";
+        return "委派一个独立上下文的临时协作者，适合多步检索、候选比较、长文档提炼和独立证据核查。"
+                + "它看不到当前对话：交代目标、范围、已知事实和预期证据，只取回结论与执行 id。"
+                + "对话默认 background=true，后台执行后回报本会话；当前决策依赖调查结果时用 background=false，直接返回结论继续判断。"
+                + "心跳中始终同步取回结论。同一条消息可派多个独立问题；简单工作直接完成，不机械委派。"
+                + "协作项目中只读调查，代码实施交 coding_task 独立副本，不能借子代理绕过派工、独立检查或扩大计划。"
+                + "需要长期反复运行的职责才使用任务计划（" + CreatePlanTool.NAME + "）。";
     }
 
     @Override
@@ -67,6 +65,7 @@ public class DelegateSubagentTool implements AiTool {
         ObjectNode params = om.createObjectNode();
         params.put("type", "object");
         ObjectNode props = params.putObject("properties");
+        props.putObject("background").put("type","boolean").put("description","默认 true 后台回报；false 在本次工具返回结论，供主控继续判断");
         props.putObject("instruction").put("type", "string")
                 .put("description", "交给子代理的交代：要它查什么、产出什么。它看不到当前对话，"
                         + "所以该给的前提、该要的产出都要写全");

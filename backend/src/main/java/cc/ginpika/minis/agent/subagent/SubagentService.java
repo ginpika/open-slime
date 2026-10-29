@@ -285,9 +285,22 @@ public class SubagentService implements SubagentTool {
         ArrayNode toolSchemas = toolNames.isEmpty()
                 ? tools.readOnlyToolsOf(ToolSurface.CHAT)
                 : tools.toolsOf(toolNames, ToolSurface.CHAT);
+        boolean managed=hubId!=null && hubSessions!=null && hubSessions.findById(hubId)
+                .map(s->"multi-agent".equals(s.mode()) && s.projectId()!=null).orElse(false);
+        if(managed) {
+            Set<String> readonly=new java.util.HashSet<>();
+            tools.readOnlyToolsOf(ToolSurface.CHAT).forEach(t->readonly.add(t.path("function").path("name").asText()));
+            if(toolNames.stream().anyMatch(t->!readonly.contains(t)))throw new IllegalArgumentException("协作子代理仅能只读调研；编码修改与命令执行请由主控派工到 coding_task 独立副本");
+        }
+        Set<String> allowed=new java.util.HashSet<>();
+        toolSchemas.forEach(t->allowed.add(t.path("function").path("name").asText()));
         return new AgentRunner.Request(runId, ExecStore.KIND_AGENT, null, title, null,
                 messages(prompts.resolve(SubagentBlock.KEY), instruction, hubId, agentId), toolSchemas,
-                (call, execId) -> toolbox.run(call, "agent"), parentTaskId, sessionId, agentId, payload);
+                (call, execId) -> {
+                    String tool=call.path("function").path("name").asText();
+                    if(!allowed.contains(tool))return new cc.ginpika.minis.ai.core.tool.ToolResult(tool,call.path("function").path("arguments").asText(),"工具不在本次子代理授权范围，未执行",false);
+                    return toolbox.run(call, "agent");
+                }, parentTaskId, sessionId, agentId, payload);
     }
 
     // ---------- 派一个子代理：对话侧（非阻塞） ----------
@@ -315,6 +328,17 @@ public class SubagentService implements SubagentTool {
         } else if (store.execsByRun(batchId).size() >= MAX_PER_BATCH) {
             return "这一批派出的子代理已达上限（" + MAX_PER_BATCH + " 个）："
                     + "请等它们出结论，或把活合并成更少的几件。";
+        }
+        if(!args.path("background").asBoolean(true)) {
+            MemoryExec inherited=memScope(agentId,hubId);
+            String batch=batchId;
+            try {
+                var req=MemoryScopeCtx.run(inherited,()->request(batch,agentId,title(args.path("name").asText(""),instruction),instruction,names(args.path("tools")),hubId,inherited.taskId(),hubId,args.toString()));
+                long id=runner.openExec(req);
+                var outcome=MemoryScopeCtx.run(inherited,()->AgentScope.run(agentId,()->runner.run(req,id)));
+                scratchpad.append(hubId,req.title(),id,outcome.output());
+                return "子代理执行 id="+id+"；状态="+outcome.status()+"\n"+("done".equals(outcome.status())?outcome.output():outcome.error());
+            } finally { settle(batch); }
         }
         long execId = spawn(args, agentId, batchId, hubId, null);
         return receipt(execId, title(args.path("name").asText(""), instruction));

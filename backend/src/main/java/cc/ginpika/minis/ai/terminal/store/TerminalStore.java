@@ -27,7 +27,7 @@ public class TerminalStore {
                             String denyPatterns, String dockerHost, String image, String container,
                             String sshHost, Integer sshPort, String sshUser, String sshAuth,
                             String sshPassword, String sshPrivateKey, String sshPassphrase,
-                            String hostKeyCheck, String note, long createdAt, long updatedAt) {
+                            String hostKeyCheck, String note, String hostWorkdir, long createdAt, long updatedAt) {
     }
 
     /** 一次命令执行的审计行（id 为 null 表示待插入） */
@@ -42,7 +42,7 @@ public class TerminalStore {
             "id, name, kind, enabled, workdir, timeout_ms, max_output, allow_patterns, "
                     + "deny_patterns, docker_host, image, container, ssh_host, ssh_port, ssh_user, "
                     + "ssh_auth, ssh_password, ssh_private_key, ssh_passphrase, host_key_check, "
-                    + "note, created_at, updated_at";
+                    + "note, host_workdir, created_at, updated_at";
 
     private final JdbcTemplate jdbc;
 
@@ -86,13 +86,13 @@ public class TerminalStore {
                     "INSERT INTO term_target(id, name, kind, enabled, workdir, timeout_ms, "
                             + "max_output, allow_patterns, deny_patterns, docker_host, image, "
                             + "container, ssh_host, ssh_port, ssh_user, ssh_auth, ssh_password, "
-                            + "ssh_private_key, ssh_passphrase, host_key_check, note, created_at, "
-                            + "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            + "ssh_private_key, ssh_passphrase, host_key_check, note, host_workdir, created_at, "
+                            + "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     id, row.name(), row.kind(), row.enabled() ? 1 : 0, row.workdir(), row.timeoutMs(),
                     row.maxOutput(), row.allowPatterns(), row.denyPatterns(), row.dockerHost(),
                     row.image(), row.container(), row.sshHost(), row.sshPort(), row.sshUser(),
                     row.sshAuth(), row.sshPassword(), row.sshPrivateKey(), row.sshPassphrase(),
-                    row.hostKeyCheck(), row.note(), now, now);
+                    row.hostKeyCheck(), row.note(), row.hostWorkdir(), now, now);
             return targetById(id).orElseThrow();
         }
         jdbc.update(
@@ -100,13 +100,13 @@ public class TerminalStore {
                         + "timeout_ms = ?, max_output = ?, allow_patterns = ?, deny_patterns = ?, "
                         + "docker_host = ?, image = ?, container = ?, ssh_host = ?, ssh_port = ?, "
                         + "ssh_user = ?, ssh_auth = ?, ssh_password = ?, ssh_private_key = ?, "
-                        + "ssh_passphrase = ?, host_key_check = ?, note = ?, updated_at = ? "
+                        + "ssh_passphrase = ?, host_key_check = ?, note = ?, host_workdir = ?, updated_at = ? "
                         + "WHERE id = ?",
                 row.name(), row.kind(), row.enabled() ? 1 : 0, row.workdir(), row.timeoutMs(),
                 row.maxOutput(), row.allowPatterns(), row.denyPatterns(), row.dockerHost(),
                 row.image(), row.container(), row.sshHost(), row.sshPort(), row.sshUser(),
                 row.sshAuth(), row.sshPassword(), row.sshPrivateKey(), row.sshPassphrase(),
-                row.hostKeyCheck(), row.note(), now, row.id());
+                row.hostKeyCheck(), row.note(), row.hostWorkdir(), now, row.id());
         return targetById(row.id()).orElseThrow();
     }
 
@@ -159,7 +159,7 @@ public class TerminalStore {
                 rs.getString("ssh_host"), (Integer) rs.getObject("ssh_port"),
                 rs.getString("ssh_user"), rs.getString("ssh_auth"), rs.getString("ssh_password"),
                 rs.getString("ssh_private_key"), rs.getString("ssh_passphrase"),
-                rs.getString("host_key_check"), rs.getString("note"),
+                rs.getString("host_key_check"), rs.getString("note"), rs.getString("host_workdir"),
                 rs.getLong("created_at"), rs.getLong("updated_at"));
     }
 

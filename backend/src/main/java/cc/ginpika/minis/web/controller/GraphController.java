@@ -29,7 +29,7 @@ public class GraphController {
     private final FastProps props;
 
     public GraphController(GraphStore store, FastProps props) {
-        this.store = store;
+        this.store = store.administrativeView();
         this.props = props;
     }
 
@@ -115,6 +115,7 @@ public class GraphController {
     /** 新增实体：name 必填，type 缺省 CONCEPT；同名实体不重复创建（按 name upsert，类型并入
      *  types 全量清单，主类型首写定不覆盖） */
     @PostMapping("/entities")
+    @org.springframework.transaction.annotation.Transactional
     public SearchDtos.Node createEntity(@RequestBody CreateEntityRequest req) {
         String name = req.name() == null ? "" : req.name().trim();
         if (name.isEmpty()) {
@@ -133,6 +134,7 @@ public class GraphController {
 
     /** 新增关系：subjectId 为起点实体，name 为目标实体（不存在则按 CONCEPT 自动创建）；返回落库后的关系 */
     @PostMapping("/relations")
+    @org.springframework.transaction.annotation.Transactional
     public SearchDtos.Edge createRelation(@RequestBody CreateRelationRequest req) {
         String subjectId = req.subjectId() == null ? "" : req.subjectId().trim();
         String targetName = req.name() == null ? "" : req.name().trim();
@@ -160,6 +162,7 @@ public class GraphController {
 
     /** 覆盖式更新实体 KV 属性（entities.meta），返回规范化后的列表 */
     @PutMapping("/entities/{id}/props")
+    @org.springframework.transaction.annotation.Transactional
     public List<GraphStore.Prop> putEntityProps(
             @PathVariable String id,
             @RequestBody List<GraphStore.Prop> props) {
@@ -172,6 +175,7 @@ public class GraphController {
 
     /** 覆盖式更新关系 KV 属性（relations.props），返回规范化后的列表 */
     @PutMapping("/relations/{id}/props")
+    @org.springframework.transaction.annotation.Transactional
     public List<GraphStore.Prop> putRelationProps(
             @PathVariable String id,
             @RequestBody List<GraphStore.Prop> props) {

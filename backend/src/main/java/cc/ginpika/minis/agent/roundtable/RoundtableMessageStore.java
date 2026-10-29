@@ -51,6 +51,19 @@ public class RoundtableMessageStore {
         this.jdbc = jdbc;
     }
 
+    public record ActivityRow(long id, String role, String peerId, String peerName,
+                              String content, String kind, long createdAt) {}
+
+    /** 画布只需要最近动态的摘要，不读取完整历史、思考或请求上下文。 */
+    public List<ActivityRow> recentActivity(String sessionId, int limit) {
+        return jdbc.query("SELECT id, role, peer_id, peer_name, substr(content,1,280) AS content, "
+                        + "event_kind, created_at FROM chat_message WHERE session_id = ? "
+                        + "ORDER BY id DESC LIMIT ?",
+                (rs, n) -> new ActivityRow(rs.getLong("id"), rs.getString("role"),
+                        rs.getString("peer_id"), rs.getString("peer_name"), rs.getString("content"),
+                        rs.getString("event_kind"), rs.getLong("created_at")), sessionId, limit);
+    }
+
     /**
      * 落一条消息，返回自增 id（成员发言的 id 会被事件表按 message_id 引用）。
      *
@@ -60,12 +73,18 @@ public class RoundtableMessageStore {
     public long insert(String sessionId, String topicId, String role, String peerId,
                        String peerName, String content, String reasoning, String trace,
                        String toolRounds, String context) {
+        return insert(sessionId, topicId, role, peerId, peerName, content, reasoning, trace, toolRounds, context, null);
+    }
+
+    public long insert(String sessionId, String topicId, String role, String peerId,
+                       String peerName, String content, String reasoning, String trace,
+                       String toolRounds, String context, String eventKind) {
         GeneratedKeyHolder key = new GeneratedKeyHolder();
         jdbc.update(con -> {
             PreparedStatement ps = con.prepareStatement(
                     "INSERT INTO chat_message(session_id, topic_id, role, peer_id, peer_name, "
-                            + "content, reasoning, trace, tool_rounds, context, created_at) "
-                            + "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            + "content, reasoning, trace, tool_rounds, context, created_at, event_kind) "
+                            + "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, sessionId);
             ps.setString(2, topicId);
@@ -78,10 +97,17 @@ public class RoundtableMessageStore {
             ps.setString(9, toolRounds);
             ps.setString(10, context);
             ps.setLong(11, System.currentTimeMillis());
+            ps.setString(12, eventKind);
             return ps;
         }, key);
         Number id = key.getKey();
         return id == null ? -1L : id.longValue();
+    }
+
+    public boolean promoteWorkInstruction(String session,long messageId) {
+        return jdbc.update("UPDATE chat_message SET event_kind=NULL WHERE session_id=? AND id=? AND role='user' AND event_kind='conversation' "
+                        +"AND id=(SELECT max(id) FROM chat_message WHERE session_id=? AND role='user')",
+                session,messageId,session)==1;
     }
 
     /**
@@ -155,6 +181,19 @@ public class RoundtableMessageStore {
     public List<MessageRow> bySession(String sessionId) {
         return jdbc.query("SELECT " + COLS + " FROM chat_message WHERE session_id = ? ORDER BY id",
                 RoundtableMessageStore::map, sessionId);
+    }
+
+    // Project records are independent of conversational history and keep their stable message IDs.
+    private static final String REWIND_FILTER = "session_id=? AND id>=? AND COALESCE(event_kind,'') "
+            + "NOT IN ('task_context','issue_context','issue_open','issue_resolved')";
+
+    public List<MessageRow> rewindRows(String sessionId, long fromId) {
+        return jdbc.query("SELECT " + COLS + " FROM chat_message WHERE " + REWIND_FILTER + " ORDER BY id",
+                RoundtableMessageStore::map, sessionId, fromId);
+    }
+
+    public int rewind(String sessionId, long fromId) {
+        return jdbc.update("DELETE FROM chat_message WHERE " + REWIND_FILTER, sessionId, fromId);
     }
 
     /** 某话题内的全部消息 */

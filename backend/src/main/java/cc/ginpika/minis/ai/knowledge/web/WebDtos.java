@@ -13,6 +13,8 @@ public final class WebDtos {
         }
     }
     public record Element(String ref, String tag, String label, String href) {}
+    /** Lightweight session metadata; listing never refreshes element references or takes screenshots. */
+    public record BrowserTab(String browserId, String url, String title, boolean current) {}
     public record BrowserView(String browserId, String chatSessionId, String url, String title,
                               String text, int totalChars, int offset, List<Element> elements,
                               boolean blocked, String screenshot) {}
