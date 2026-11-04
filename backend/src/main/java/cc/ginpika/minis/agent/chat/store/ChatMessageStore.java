@@ -4,7 +4,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
@@ -62,6 +64,25 @@ public class ChatMessageStore {
                 "SELECT id, session_id, role, content, reasoning, trace, tool_rounds, kind, meta, "
                         + "created_at FROM chat_message WHERE session_id = ? ORDER BY id",
                 ChatMessageStore::map, sessionId);
+    }
+
+    /** 首页侧栏预览：只读取首页可见会话的最后一条正文，不加载转录，也不改未读状态。 */
+    public Map<String, String> latestPreviews() {
+        // 与 HubSessionStore.listAll 的可见范围一致；现有 (session_id, id) 索引可倒序定位末条消息。
+        return jdbc.query(
+                "SELECT s.id AS session_id, SUBSTR(m.content, 1, 220) AS preview "
+                        + "FROM hub_session s JOIN chat_message m ON m.id = ("
+                        + "SELECT candidate.id FROM chat_message candidate WHERE candidate.session_id = s.id "
+                        + "AND candidate.role IN ('user', 'assistant') "
+                        + "AND candidate.content IS NOT NULL AND TRIM(candidate.content) <> '' "
+                        + "ORDER BY candidate.id DESC LIMIT 1) WHERE s.mode = 'ai'",
+                rs -> {
+                    Map<String, String> previews = new LinkedHashMap<>();
+                    while (rs.next()) {
+                        previews.put(rs.getString("session_id"), rs.getString("preview"));
+                    }
+                    return previews;
+                });
     }
 
     public long observedAt(String sessionId, long id) {

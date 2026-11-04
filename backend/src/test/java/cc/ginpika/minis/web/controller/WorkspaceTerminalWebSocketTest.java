@@ -1,9 +1,9 @@
 package cc.ginpika.minis.web.controller;
 
-import cc.ginpika.minis.ai.terminal.ExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.ExecTarget;
 import cc.ginpika.minis.web.terminal.*;
-import cc.ginpika.minis.ai.terminal.WorkspaceTerminals;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.computer.terminal.WorkspaceTerminals;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import cc.ginpika.minis.config.*;
 import cc.ginpika.minis.web.desktop.DesktopTokenFilter;
 import cc.ginpika.minis.web.sso.*;

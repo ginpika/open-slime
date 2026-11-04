@@ -368,8 +368,9 @@ button,
       var(--ui-card-fill, var(--c-bg)) var(--ui-panel-alpha, 100%),
       transparent
     );
-    backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
-    -webkit-backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
+    /* 平面材质显式用 none，避免无模糊时仍创建 WebView backdrop 合成层。 */
+    backdrop-filter: var(--ui-backdrop-filter, none);
+    -webkit-backdrop-filter: var(--ui-backdrop-filter, none);
   }
   /* 强描边款（重要面板：用点缀色作环，内层染柔色底作选中强调） */
   .ui-card--accent {
@@ -425,8 +426,8 @@ button,
   /* 玻璃面：给 FloatWindow / 菜单 / Toast 复用（Endfield 深档即玻璃） */
   .ui-surface {
     background: color-mix(in srgb, var(--c-bg) var(--ui-panel-alpha, 100%), transparent);
-    backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
-    -webkit-backdrop-filter: blur(var(--ui-blur, 0px)) saturate(1.08);
+    backdrop-filter: var(--ui-backdrop-filter, none);
+    -webkit-backdrop-filter: var(--ui-backdrop-filter, none);
   }
 
   /* ---------------------------------------------------------------------
@@ -454,8 +455,8 @@ button,
     border-radius: inherit;
     clip-path: var(--ui-clip-sm, none);
     background: color-mix(in srgb, var(--c-bg) var(--ui-panel-alpha, 100%), transparent);
-    backdrop-filter: blur(var(--ui-blur, 0px));
-    -webkit-backdrop-filter: blur(var(--ui-blur, 0px));
+    backdrop-filter: var(--ui-control-backdrop-filter, none);
+    -webkit-backdrop-filter: var(--ui-control-backdrop-filter, none);
   }
   .ui-control:hover {
     background: var(--c-line-strong);

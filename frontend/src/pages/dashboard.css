@@ -1,0 +1,158 @@
+/* 与对话页共用浅 / 深色令牌；只用纯色、边框和留白建立层次。 */
+.dash-app {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: column;
+  background: var(--sl-bg);
+  color: var(--sl-fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.df__view .dash-app { height: 100%; }
+
+.dash-head {
+  display: flex;
+  min-height: 68px;
+  flex: none;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--sl-line);
+}
+
+.dash-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--sl-fg-2);
+  font-size: 13px;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.dash-back:hover { background: var(--sl-hover); color: var(--sl-fg); }
+
+.dash-head__brand {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  color: var(--sl-muted);
+  font-size: 12px;
+}
+
+.dash-head__brand > span { color: var(--sl-line-strong); }
+.dash-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.dash-body { max-width: 1040px; margin: 0 auto; padding: 64px 48px 32px; }
+.dash-intro { margin-bottom: 44px; }
+.dash-eyebrow { color: var(--sl-accent); font-size: 12px; font-weight: 600; }
+
+.dash-intro h1 {
+  margin: 12px 0 14px;
+  font-size: clamp(25px, 3vw, 34px);
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}
+
+.dash-intro p { margin: 0; color: var(--sl-muted); font-size: 14px; line-height: 1.7; }
+.dash-everyday { margin-bottom: 42px; }
+.dash-section__head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 15px; }
+.dash-section__head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.dash-section__head > span { color: var(--sl-muted); font-size: 12px; }
+.dash-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+
+.dash-card {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 16px;
+  border: 1px solid var(--sl-line);
+  border-radius: 10px;
+  background: var(--sl-panel);
+  color: inherit;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.dash-card:hover { border-color: var(--sl-line-strong); background: var(--sl-hover); }
+.dash-card:hover .dash-card__arrow { color: var(--sl-accent); }
+.dash-card__icon { display: flex; flex: none; margin-top: 1px; color: var(--sl-fg-2); }
+.dash-card__icon svg { width: 19px; height: 19px; }
+.dash-card__text { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 7px; }
+.dash-card__label { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.dash-card__desc { color: var(--sl-muted); font-size: 12px; line-height: 1.7; }
+.dash-card__arrow { flex: none; margin-top: 2px; color: var(--sl-muted); transition: color 0.15s; }
+
+.dash-grid--everyday .dash-card { min-height: 164px; flex-wrap: wrap; position: relative; padding: 22px; }
+.dash-grid--everyday .dash-card__icon { width: 100%; margin-bottom: 5px; color: var(--sl-accent); }
+.dash-grid--everyday .dash-card__icon svg { width: 22px; height: 22px; }
+.dash-grid--everyday .dash-card__arrow { position: absolute; top: 23px; right: 20px; }
+.dash-grid--everyday .dash-card__desc { max-width: 18em; }
+.dash-sections { border-top: 1px solid var(--sl-line); }
+.dash-section { border-bottom: 1px solid var(--sl-line); }
+
+.dash-section__summary {
+  display: flex;
+  min-height: 65px;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 4px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.dash-section__summary::-webkit-details-marker { display: none; }
+.dash-section__summary::marker { content: ''; }
+.dash-section__summary:hover .dash-section__name { color: var(--sl-accent); }
+.dash-section__icon { display: flex; color: var(--sl-muted); }
+.dash-section__icon svg { width: 17px; height: 17px; }
+.dash-section__name { flex: 1; font-size: 13px; font-weight: 500; transition: color 0.15s; }
+.dash-section__hint { color: var(--sl-muted); font-size: 12px; }
+.dash-section__chevron { flex: none; margin-left: 12px; color: var(--sl-muted); transition: transform 0.15s; }
+.dash-section[open] .dash-section__chevron { transform: rotate(90deg); }
+.dash-grid--more { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 0 18px; }
+.dash-grid--more .dash-card { border-radius: 7px; padding: 16px; }
+.dash-footer { display: flex; justify-content: center; gap: 5px; margin: 32px 0 0; color: var(--sl-muted); font-size: 12px; }
+.dash-footer a { display: inline-flex; align-items: center; gap: 3px; color: var(--sl-fg-2); text-decoration: none; }
+.dash-footer a:hover { color: var(--sl-accent); }
+.dash-app :is(a, summary):focus-visible { outline: 2px solid var(--sl-accent); outline-offset: 4px; }
+
+@media (max-width: 760px) {
+  .dash-head { min-height: 60px; gap: 16px; padding: 10px 16px; }
+  .dash-body { padding: 40px 24px 26px; }
+  .dash-intro { margin-bottom: 32px; }
+  .dash-grid--everyday { gap: 10px; }
+  .dash-grid--everyday .dash-card { min-height: 175px; padding: 16px; }
+  .dash-grid--everyday .dash-card__arrow { top: 17px; right: 14px; }
+  .dash-section__hint { display: none; }
+}
+
+@media (max-width: 560px) {
+  .dash-head { gap: 8px; padding-inline: 12px; }
+  .dash-head__brand { justify-content: center; font-size: 11px; gap: 8px; }
+  .dash-body { padding: 34px 20px 24px; }
+  .dash-intro h1 { font-size: 27px; }
+  .dash-intro p { max-width: 23em; font-size: 13px; }
+  .dash-section__head { gap: 10px; }
+  .dash-section__head > span { font-size: 11px; }
+  .dash-grid--everyday, .dash-grid--more { grid-template-columns: 1fr; }
+  .dash-grid--everyday .dash-card { min-height: 0; flex-wrap: nowrap; align-items: center; gap: 15px; padding: 19px 16px; }
+  .dash-grid--everyday .dash-card__icon { width: auto; margin: 0; }
+  .dash-grid--everyday .dash-card__desc { max-width: none; }
+  .dash-grid--everyday .dash-card__arrow { position: static; }
+  .dash-card__text { gap: 3px; }
+  .dash-everyday { margin-bottom: 32px; }
+  .dash-section__summary { min-height: 62px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-app * { transition: none !important; }
+}

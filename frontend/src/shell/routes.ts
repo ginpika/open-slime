@@ -1,6 +1,6 @@
 import { ECONOMY_NAV, KNOWLEDGE_NAV, NAV } from './nav'
 
-const hiddenRoutes = new Set(['/search', '/subconscious', '/roundtable', '/workflow'])
+const hiddenRoutes = new Set(['/search', '/subconscious', '/roundtable', '/workflow', '/dashboard'])
 
 export function routeFromHash(hash: string): string {
   const path = hash.replace(/^#/, '').split('?')[0]

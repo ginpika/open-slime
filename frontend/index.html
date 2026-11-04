@@ -6,7 +6,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/icon-64x64.png" />
     <link rel="icon" type="image/png" sizes="128x128" href="/icon-128x128.png" />
     <link rel="icon" type="image/png" sizes="256x256" href="/icon-256x256.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>__BRAND_TITLE__</title>
     <script>
       // 防闪烁（FOUC）：React 挂载前把持久化的主题令牌写入 :root，
@@ -42,13 +42,31 @@
        *
        * 背景：换文档到 React 挂载之间，窗口里还没有外壳——首帧只有 canvas 底色
        * （body 的 --c-bg），于是浅色主题下会出现几帧「整窗纯白」，紧接着外壳挂载又是一次
-       * 形状跳变（整块纯色 → 12px 圈 + 深色菜单栏 + 圆角主视图）。这里把外壳预先画出来，
+       * 形状跳变（整块纯色 → 12px 圈 + 菜单栏 + 圆角主视图）。这里把外壳预先画出来，
        * 让首帧就已经是外壳形状；DesktopFrame 挂载时（useLayoutEffect）立即撤掉。
        *
-       * 数值与配色和 shell/desktopFrame.css、desktop/ui/index.html 严格同源：改一处要三处同步。
+       * 尺寸和明暗配色与 shell/desktopFrame.css 同步，使用纯色窗缘与细边框。
        * ========================================================================== */
       #minis-df-skeleton {
+        --mds-bg: #ffffff;
+        --mds-chrome: #f6f8fa;
+        --mds-line: #d1d9e0;
+        --mds-frame: #eaeef2;
         display: none;
+      }
+      :root[data-scheme='dark'] #minis-df-skeleton {
+        --mds-bg: #0d0f10;
+        --mds-chrome: #141719;
+        --mds-line: #2c3236;
+        --mds-frame: #0d0f10;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-scheme]) #minis-df-skeleton {
+          --mds-bg: #0d0f10;
+          --mds-chrome: #141719;
+          --mds-line: #2c3236;
+          --mds-frame: #0d0f10;
+        }
       }
       /* 把底让给桌面：否则首帧仍是一块不透明的 --c-bg（跳变的一半来自这里） */
       html.minis-df-skeleton,
@@ -67,24 +85,12 @@
         /* 骨架是占位：可看不可点，免得挡住真实窗口按钮 */
         pointer-events: none;
       }
-      /* 最底层：一圈亚克力磨砂（同 .df__acrylic） */
+      /* 最底层：纯色窗缘（同 .df__acrylic） */
       .mds-acrylic {
         position: absolute;
         inset: 0;
         border-radius: 20px;
-        background: rgba(200, 200, 200, 0.3);
-      }
-      .mds-acrylic::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        background: linear-gradient(
-          150deg,
-          rgba(255, 255, 255, 0.14) 0%,
-          rgba(255, 255, 255, 0.03) 32%,
-          transparent 60%
-        );
+        background: var(--mds-frame);
       }
       /* 左：菜单栏 88px（同 .df__rail；导航图标等挂载后出现，占位不画） */
       .mds-rail {
@@ -97,11 +103,8 @@
         width: 88px;
         padding: 16px 0 18px;
         border-radius: 20px;
-        background: #1c1b1d;
-        box-shadow:
-          inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-          0 2px 6px rgba(0, 0, 0, 0.08),
-          0 10px 24px rgba(0, 0, 0, 0.14);
+        background: var(--mds-chrome);
+        box-shadow: 0 0 0 1px var(--mds-line);
       }
       .mds-logo {
         display: flex;
@@ -126,10 +129,8 @@
         flex-direction: column;
         border-radius: 20px;
         overflow: hidden;
-        background: var(--c-bg, #ffffff);
-        box-shadow:
-          0 2px 6px rgba(0, 0, 0, 0.08),
-          0 10px 24px rgba(0, 0, 0, 0.14);
+        background: var(--c-bg, var(--mds-bg));
+        box-shadow: 0 0 0 1px var(--mds-line);
       }
       .mds-titlebar {
         display: flex;
@@ -138,6 +139,9 @@
         gap: 8px;
         height: 48px;
         padding: 0 12px 0 8px;
+        box-sizing: border-box;
+        border-bottom: 1px solid var(--mds-line);
+        background: var(--mds-chrome);
       }
       .mds-drag {
         flex: 1;
@@ -147,21 +151,47 @@
       .mds-chip,
       .mds-wbtn {
         flex: none;
-        background: #1c1b1d;
-        box-shadow:
-          inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-          0 1px 2px rgba(0, 0, 0, 0.1),
-          0 4px 12px rgba(0, 0, 0, 0.1);
+        background: var(--mds-chrome);
       }
       .mds-chip {
         width: 132px;
         height: 32px;
         border-radius: 16px;
+        box-shadow: inset 0 0 0 1px var(--mds-line);
       }
       .mds-wbtn {
         width: 30px;
         height: 30px;
         border-radius: 50%;
+      }
+      /* The conversation starts at the window origin, including its 280px rail. */
+      html.minis-df-conversation #minis-df-skeleton {
+        padding: 0;
+        gap: 0;
+      }
+      html.minis-df-conversation .mds-rail {
+        width: 280px;
+        padding: 0;
+        border-radius: 0;
+        box-shadow: inset -1px 0 var(--mds-line);
+      }
+      html.minis-df-conversation .mds-logo,
+      html.minis-df-conversation .mds-titlebar {
+        display: none;
+      }
+      html.minis-df-conversation .mds-stage {
+        border-radius: 0;
+        box-shadow: none;
+      }
+      :root[data-scheme='dark'].minis-df-conversation #minis-df-skeleton {
+        --mds-bg: #101213;
+        --mds-chrome: #151819;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-scheme]).minis-df-conversation #minis-df-skeleton {
+          --mds-bg: #101213;
+          --mds-chrome: #151819;
+        }
       }
     </style>
     <script>
@@ -169,11 +199,15 @@
         // 只在本机桌面壳里铺骨架（浏览器里 #minis-df-skeleton 保持 display:none）
         if (!('__TAURI_INTERNALS__' in window)) return
         document.documentElement.classList.add('minis-df-skeleton')
+        var hash = window.location.hash
+        if (!hash || hash === '#' || hash === '#/' || hash.indexOf('#/?') === 0) {
+          document.documentElement.classList.add('minis-df-conversation')
+        }
         // 兜底：bundle 跑不起来时也别让骨架一直挂着
         setTimeout(function () {
           var el = document.getElementById('minis-df-skeleton')
           if (el) el.remove()
-          document.documentElement.classList.remove('minis-df-skeleton')
+          document.documentElement.classList.remove('minis-df-skeleton', 'minis-df-conversation')
         }, 6000)
       })()
     </script>

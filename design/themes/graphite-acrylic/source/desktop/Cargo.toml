@@ -1,0 +1,32 @@
+[package]
+name = "minis-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "minis 桌面壳（本机 / 远程双模式）"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json = "1"
+
+[dependencies]
+# unstable：单窗口多 webview（Window::add_child）——邮件页作为顶层子 webview 盖在主视图区，
+# 既保留引导页外壳，又不走 iframe（跨站 cookie / 第三方限制都不受影响）
+tauri = { version = "2", features = ["unstable"] }
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+xcap = { version = "0.9.8", features = ["wgc"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+xcap = "0.9.8"
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader"] }

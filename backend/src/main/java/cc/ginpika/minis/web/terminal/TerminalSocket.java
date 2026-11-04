@@ -1,6 +1,6 @@
 package cc.ginpika.minis.web.terminal;
 
-import cc.ginpika.minis.ai.terminal.InteractiveTerminals;
+import cc.ginpika.minis.ai.computer.terminal.InteractiveTerminals;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;

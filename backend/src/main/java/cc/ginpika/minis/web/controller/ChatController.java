@@ -70,7 +70,7 @@ public class ChatController {
         }
         try (var actor = cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(http))) {
             return turns.chat(blank(req.sessionId()) ? null : req.sessionId(), input,
-                    req.modelId(), req.promptId());
+                    req.modelId(), req.promptId(), req.reasoningEffort());
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, e.getMessage(), e);
         }
@@ -99,7 +99,7 @@ public class ChatController {
             try (var actor = cc.ginpika.minis.ai.core.UserScope.bind(owner)) {
                 ChatDtos.ChatReply reply = turns.chatStream(
                         blank(req.sessionId()) ? null : req.sessionId(), input,
-                        req.modelId(), req.promptId(), new ChatStream() {
+                        req.modelId(), req.promptId(), req.reasoningEffort(), new ChatStream() {
                             @Override
                             public void meta(String sessionId, long messageId) {
                                 liveSid[0] = sessionId;
@@ -206,6 +206,12 @@ public class ChatController {
     @GetMapping("/api/sessions")
     public List<ChatDtos.SessionItem> sessions() {
         return sessions.list();
+    }
+
+    /** 最近正文的轻量预览：不打开会话，不清未读。 */
+    @GetMapping("/api/sessions/previews")
+    public Map<String, String> sessionPreviews() {
+        return sessions.previews();
     }
 
     /**

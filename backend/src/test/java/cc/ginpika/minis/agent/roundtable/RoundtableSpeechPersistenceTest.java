@@ -39,7 +39,7 @@ class RoundtableSpeechPersistenceTest {
     @Mock CollaborationPlan plans;
     @Mock RoundtableTaskTools taskTools;
     @Mock CollaborationWorkspaceBinding workspaceBinding;
-    @Mock cc.ginpika.minis.ai.terminal.TerminalService terminal;
+    @Mock cc.ginpika.minis.ai.computer.terminal.TerminalService terminal;
     @Mock cc.ginpika.minis.ai.core.tool.ToolManager tools;
     @Mock cc.ginpika.minis.config.ContextProps contextProps;
     @InjectMocks RoundtableChatService chat;

@@ -105,15 +105,26 @@ public class SettingsService {
 
     // ---------- 视图 ----------
 
-    /** 设置页全量视图：内置 env 模型项 + 用户模型 + 默认选择 + Embedding + Rerank */
+    /** 设置页全量视图：内置 env 模型项（.env 已配置大模型时）+ 用户模型 + 默认选择 + Embedding + Rerank */
     public SettingsDtos.SettingsView view() {
         List<SettingsDtos.ModelView> models = new ArrayList<>();
-        models.add(envModel());
+        if (envChatConfigured()) {
+            models.add(envModel());
+        }
         store.models().forEach(m -> models.add(toModelView(m)));
 
         SettingRow setting = store.setting().orElse(null);
         String defaultModelId = pickDefault(setting == null ? null : setting.defaultModelId(),
                 models.stream().map(SettingsDtos.ModelView::id).toList());
+        /* 默认项落到未配置的内置 env（没写 .env）时，按运行时同一个兜底口径改报首个可用模型，
+           否则首页会拿着一个用不了的默认项去发请求 */
+        if (ENV_ID.equals(defaultModelId) && !envTarget().configured()) {
+            defaultModelId = models.stream()
+                    .filter(m -> !ENV_ID.equals(m.id()))
+                    .filter(SettingsService::usable)
+                    .map(SettingsDtos.ModelView::id)
+                    .findFirst().orElse(defaultModelId);
+        }
 
         return new SettingsDtos.SettingsView(models, embeddingView(), rerankView(), defaultModelId);
     }
@@ -122,10 +133,16 @@ public class SettingsService {
 
     public SettingsDtos.SettingsView createModel(SettingsDtos.ModelRequest req) {
         requireModelFields(req);
-        store.insertModel(new ModelRow(UUID.randomUUID().toString(), req.name().strip(),
+        /* 插入前判断：此时还没有可用模型 = 应用内首次配置（.env 也没填），新增项要顺手设为默认 */
+        boolean needsDefault = !chatConfigured();
+        String id = UUID.randomUUID().toString();
+        store.insertModel(new ModelRow(id, req.name().strip(),
                 req.baseUrl().strip(), req.apiKey().strip(), req.model().strip(),
                 resolveContextWindow(req.baseUrl().strip(), req.apiKey().strip(),
                         req.model().strip(), req.contextWindow()),req.maxOutputTokens()));
+        if (needsDefault) {
+            store.saveSetting(id);
+        }
         return view();
     }
 
@@ -414,9 +431,20 @@ public class SettingsService {
         return resolveChatModel(null);
     }
 
-    /** 解析聊天模型：modelId 缺省 → 已保存默认 → 内置 env 项 */
+    /**
+     * 解析聊天模型：modelId 缺省 → 已保存默认 → 内置 env 项；
+     * 解析结果不可用（没写 .env、默认项仍是内置 env）时回退设置页里的首个可用模型，
+     * 避免「只在应用内配置了模型」的首页会话直接报 LLM 未配置。
+     */
     public ModelTarget resolveChatModel(String modelId) {
-        return resolveModelById(chatModelId(modelId));
+        ModelTarget target = resolveModelById(chatModelId(modelId));
+        if (target.configured()) {
+            return target;
+        }
+        return store.models().stream()
+                .map(m -> new ModelTarget(m.baseUrl(), m.apiKey(), m.model()))
+                .filter(ModelTarget::configured)
+                .findFirst().orElse(target);
     }
 
     /** Resolve the selected identifier so long-running tasks can persist their model choice. */
@@ -515,7 +543,22 @@ public class SettingsService {
                 return new ModelTarget(row.baseUrl(), row.apiKey(), row.model());
             }
         }
+        return envTarget();
+    }
+
+    /** .env 传入的内置端点（未配置时各项为空，configured() 为 false） */
+    private ModelTarget envTarget() {
         return new ModelTarget(props.getBaseUrl(), props.getApiKey(), props.getChatModel());
+    }
+
+    /** 设置页模型项是否填写完整（与 {@link ModelTarget#configured()} 同一口径） */
+    private static boolean usable(SettingsDtos.ModelView m) {
+        return !isBlank(m.baseUrl()) && !isBlank(m.apiKey()) && !isBlank(m.model());
+    }
+
+    /** .env 是否配置了可用的大模型（base-url / api-key / model 齐全）；未配置则设置页不展示内置端点 */
+    private boolean envChatConfigured() {
+        return envTarget().configured();
     }
 
     private SettingsDtos.ModelView envModel() {

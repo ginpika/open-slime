@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Slime Computer Bridge",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "incognito": "not_allowed",
+  "description": "Connect the local Slime desktop app to separate background Chrome tabs. Login state stays in Chrome.",
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:*"
+  }
+}

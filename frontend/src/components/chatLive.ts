@@ -8,6 +8,7 @@ import {
   type LiveRun,
   type SubagentBrief,
   type TraceSegment,
+  type ReasoningEffort,
 } from '../api/client'
 
 /**
@@ -146,6 +147,7 @@ export type StartArgs = {
   text: string
   modelId?: string
   promptId?: string
+  reasoningEffort?: ReasoningEffort
   /** 生成落定（成功 / 用户停止 / 失败）后回调：页面据此刷新会话列表（标题、排序） */
   onSettled?: (sessionId: string) => void
 }
@@ -247,6 +249,7 @@ export function startChat(o: StartArgs): void {
           },
         },
         ac.signal,
+        o.reasoningEffort,
       )
       /* 用落库正本覆盖流式累积（与历史回放一致），并结束流式态 */
       flushNow()

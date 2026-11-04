@@ -1,7 +1,7 @@
 package cc.ginpika.minis.web.controller;
 
-import cc.ginpika.minis.ai.terminal.TerminalService;
-import cc.ginpika.minis.ai.terminal.dto.TerminalDtos;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.dto.TerminalDtos;
 import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;

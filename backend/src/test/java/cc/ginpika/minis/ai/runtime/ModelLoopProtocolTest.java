@@ -12,6 +12,7 @@ import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
 class ModelLoopProtocolTest {
+    private static final String PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=";
     private final ObjectMapper json=new ObjectMapper();
     private final OpenAiChatClient client=mock(OpenAiChatClient.class);
     private ObjectNode body(){var body=json.createObjectNode();body.putArray("messages").addObject().put("role","user").put("content","goal");body.putArray("tools");return body;}
@@ -77,6 +78,45 @@ class ModelLoopProtocolTest {
             return List.of("result");
         },null,control)));
         assertEquals(256,executed.get());
+    }
+
+    @Test void screenshotObservationsFollowTheWholeToolBatchAndReachTheNextModelRequest() {
+        var tool = json.createObjectNode().put("role", "assistant");
+        for (String id : List.of("capture", "read")) tool.withArray("tool_calls").addObject().put("id", id)
+                .putObject("function").put("name", id).put("arguments", "{}");
+        when(client.chatRaw(any(), any(), any(), anyString()))
+                .thenReturn(new OpenAiChatClient.RawResult(tool, "tools"))
+                .thenAnswer(invocation -> {
+                    var sent = (ObjectNode) invocation.getArgument(1);
+                    assertEquals("tool", sent.path("messages").get(2).path("role").asText());
+                    assertEquals("tool", sent.path("messages").get(3).path("role").asText());
+                    var observation = sent.path("messages").get(4);
+                    assertEquals("user", observation.path("role").asText());
+                    assertEquals(PNG, observation.path("content").get(1).path("image_url").path("url").asText());
+                    assertEquals("{\"window_id\":4}", sent.path("messages").get(2).path("content").asText());
+                    return answer();
+                });
+        var recorded = new ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        var result = new ModelLoop(client).run(new ModelLoop.Spec(null, "chat", body(), false,
+                calls -> List.of(cc.ginpika.minis.ai.core.tool.ToolOutput.image("{\"window_id\":4}", PNG), "page text"),
+                new ModelLoop.Hooks() { public void message(com.fasterxml.jackson.databind.JsonNode message) { recorded.add(message); } }, null));
+        assertEquals(ModelLoop.End.ANSWERED, result.end());
+        assertEquals(4, recorded.size());
+        assertEquals("user", recorded.getLast().path("role").asText(), "The same observation is retained for replay");
+    }
+
+    @Test void longComputerTasksKeepRecentImagesWithoutDroppingProtocolPairs() {
+        var messages = json.createArrayNode();
+        for (int i = 0; i < 5; i++) {
+            messages.addObject().put("role", "tool").put("tool_call_id", "c" + i).put("content", "capture metadata");
+            messages.add(cc.ginpika.minis.ai.core.tool.ToolOutput.observation(json, "c" + i, List.of(PNG)));
+        }
+        cc.ginpika.minis.ai.core.tool.ToolOutput.retainRecentImages(messages, 2);
+        assertEquals(10, messages.size());
+        assertEquals("text", messages.get(1).path("content").get(1).path("type").asText());
+        assertEquals("image_url", messages.get(9).path("content").get(1).path("type").asText());
+        assertTrue(cc.ginpika.minis.ai.core.tool.ToolOutput.estimateTokens(messages) >= 8192);
+        assertThrows(IllegalArgumentException.class, () -> cc.ginpika.minis.ai.core.tool.ToolOutput.image("capture", "https://private.test/image.png"));
     }
 
 }

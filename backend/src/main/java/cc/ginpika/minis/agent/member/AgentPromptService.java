@@ -79,10 +79,11 @@ public class AgentPromptService {
             versions.computeIfAbsent(v.promptKey(), k -> new ArrayList<>())
                     .add(new PromptDtos.VersionView(v.id(), v.name(), v.content(), v.updatedAt()));
         }
-        /* 只列这两类：成员各自那份「对话」，与全桌共用的「圆桌」——开发者选项那条流水线不属于智能体 */
+        /* 成员展示对话与圆桌；默认 Agent 额外管理按状态激活的 Skills。 */
         List<PromptDtos.CategoryView> categories = PromptLibrary.categories().stream()
                 .filter(c -> PromptLibrary.CAT_CHAT.equals(c.key())
-                        || PromptLibrary.CAT_ROUNDTABLE.equals(c.key()))
+                        || PromptLibrary.CAT_ROUNDTABLE.equals(c.key())
+                        || (isBuiltin(peerId) && PromptLibrary.CAT_SKILLS.equals(c.key())))
                 .map(c -> new PromptDtos.CategoryView(c.key(), c.name(), c.description(),
                         c.contextKeys().stream()
                                 .map(key -> contextViewOf(peerId, key, bindings, versions))
@@ -128,6 +129,13 @@ public class AgentPromptService {
         }
         return composer.system(PromptLibrary.CTX_CHAT,
                 store.orders(peerId, PromptLibrary.CTX_CHAT), key -> resolve(peerId, key));
+    }
+
+    /** Called only inside the IDE execution runtime; ordinary chat never composes this context. */
+    public String ideSystem() {
+        String skill = composer.system(PromptLibrary.CTX_IDE, composer::resolve);
+        return system(cc.ginpika.minis.ai.core.BuiltinAgents.CORE) + "\n\n"
+                + (skill.isBlank() ? "<coding_skill>\n</coding_skill>" : skill);
     }
 
     /** 主 Agent 的系统职责在全局人格之上恒定生效，包括首页的会话级人格版本。 */

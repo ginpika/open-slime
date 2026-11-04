@@ -1,8 +1,6 @@
-# minis 后端 M0 配置（占位）。
-# 参数经 .env 注入（backend/.env，模板见 .env.example；真实环境变量优先于 .env）。
-# 可覆盖项：MINIS_PORT / MINIS_DB_PATH / MINIS_PUBLIC_BASE / MINIS_LOG_FILE / SSO_SERVER_URL /
-#   SSO_COOKIE_NAME / LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL / LLM_SYSTEM_PROMPT /
-#   LLM_CONTEXT_WINDOW / EMBEDDING_MODEL / RERANK_MODEL / FAST_WEB_ENABLED
+# 后端默认配置：本地开发无需 .env 即可启动，模型等业务配置在页面维护并保存到 SQLite。
+# 部署参数可用环境变量或 backend/.env 按需覆盖（模板见 .env.example；真实环境变量优先）。
+# LLM / Embedding / Rerank 环境变量保留为旧部署的内置项或兜底配置。
 server:
   port: ${MINIS_PORT:18081}
 
@@ -23,6 +21,11 @@ logging:
     cc.ginpika.minis: INFO
 
 minis:
+  computer:
+    # 仅桌面壳本机模式注入；Web / 远程部署不会启用窗口捕获。
+    window-helper: ${MINIS_COMPUTER_WINDOW_HELPER:}
+    # 独立 Chrome 永远以 headless 方式启动，不使用个人配置目录。
+    chrome-executable: ${MINIS_COMPUTER_CHROME_EXECUTABLE:}
   coding:
     enabled: ${MINIS_CODING_ENABLED:true}
     data-dir: ${MINIS_CODING_DIR:}

@@ -15,7 +15,7 @@ const { currentAttemptText } = await import(moduleUrl('../src/pages/coding/state
 const { codingTimeline, toolPresentation } = await import(moduleUrl('../src/pages/coding/timeline.ts'))
 const { nextSelectValue } = await import(moduleUrl('../src/components/selectModel.ts'))
 const { readCodingProject, rememberCodingProject, resolveCodingProject } = await import(moduleUrl('../src/pages/coding/projectSession.ts'))
-const { sortAgentPeers } = await import(moduleUrl('../src/api/agentRuntime.ts'))
+const { sortAgentPeers, agentProfileHref } = await import(moduleUrl('../src/api/agentRuntime.ts'))
 const colorUrl = moduleUrl('../src/theme/color.ts')
 const { contrast } = await import(colorUrl)
 const { terminalTheme } = await import(moduleUrl('../src/components/terminal/terminalTheme.ts', source => source.replace("'../../theme/color'", `'${colorUrl}'`)))
@@ -29,7 +29,7 @@ test('terminal colors follow light, dark and custom theme tokens with readable A
   }
 })
 
-test('agent roster pins default then coding agent regardless of sort values or display names', () => {
+test('agent roster merges legacy coding identity and pins the default agent', () => {
   const peers = [
     { id: 'custom-b', name: '成员乙', builtin: false, sort: -100 },
     { id: 'builtin-coding', name: '重命名的编程 Agent', builtin: true, sort: -1000 },
@@ -38,8 +38,10 @@ test('agent roster pins default then coding agent regardless of sort values or d
     { id: 'custom-c', name: '成员丙', builtin: false, sort: -100 },
   ]
   const original = peers.map(peer => peer.id)
-  assert.deepEqual(sortAgentPeers(peers).map(peer => peer.id), ['builtin', 'builtin-coding', 'custom-a', 'custom-b', 'custom-c'])
+  assert.deepEqual(sortAgentPeers(peers).map(peer => peer.id), ['builtin', 'custom-a', 'custom-b', 'custom-c'])
   assert.deepEqual(peers.map(peer => peer.id), original)
+  assert.equal(agentProfileHref(), '#/multi-agent/builtin')
+  assert.equal(agentProfileHref('builtin-coding'), '#/multi-agent/builtin')
 })
 
 test('project restoration yields to explicit project, task, directory and start links', () => {

@@ -1,7 +1,7 @@
 package cc.ginpika.minis.web.controller;
 
-import cc.ginpika.minis.ai.terminal.InteractiveTerminals;
-import cc.ginpika.minis.ai.terminal.WorkspaceTerminals;
+import cc.ginpika.minis.ai.computer.terminal.InteractiveTerminals;
+import cc.ginpika.minis.ai.computer.terminal.WorkspaceTerminals;
 import cc.ginpika.minis.web.sso.SsoInterceptor;
 import cc.ginpika.minis.web.sso.SsoUser;
 import cc.ginpika.minis.web.terminal.TerminalTickets;

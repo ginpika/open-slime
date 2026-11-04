@@ -68,7 +68,7 @@ class CodingAgentGatewayTest {
         when(settings.resolveChatModel("agent-model")).thenReturn(new ModelTarget("fixture","key","model"));
         when(settings.chatContextWindow("agent-model")).thenReturn(32000);
         when(store.create(eq("alice"),any(),anyInt(),eq("request-1"),isNull(),eq("shared identity"))).thenReturn(run);
-        when(store.profile("r1")).thenReturn(new CodingStore.Profile(BuiltinAgents.CODING,null,"shared identity"));
+        when(store.profile("r1")).thenReturn(new CodingStore.Profile(BuiltinAgents.CORE,null,"shared identity"));
         when(store.run("r1","alice")).thenReturn(run);
         when(projects.bound(run)).thenReturn(true);
         when(context.messages(eq(run),any(),isNull(),eq("shared identity"))).thenReturn(json.createArrayNode());
@@ -85,7 +85,7 @@ class CodingAgentGatewayTest {
                 new OpenAiChatClient.RawResult(json.createObjectNode().put("role","assistant").put("content","answer"),"raw","stop"));
         when(tools.execute(eq(run),any(),anyList(),any())).thenReturn(List.of("file read result"));
         when(loop.run(any())).thenAnswer(inv->{
-            assertEquals(BuiltinAgents.CODING,AgentScope.get());assertEquals("alice",UserScope.get());
+            assertEquals(BuiltinAgents.CORE,AgentScope.get());assertEquals("alice",UserScope.get());
             ModelLoop.Spec spec=inv.getArgument(0);
             assertFalse(spec.body().has("max_tokens"),"Unknown provider output capability must not be forced to 8192");
             return new ModelLoop(client).run(spec);
@@ -117,7 +117,7 @@ class CodingAgentGatewayTest {
 
     @Test void agentStartLinksTheSameRunToItsOriginatingConversation() throws Exception {
         doReturn(run).when(facade).submit(eq("alice"),any(StartRun.class),eq("gateway-request"));
-        when(agent.profile()).thenReturn(new Agent(BuiltinAgents.CODING,"编码 Agent","agent-model"));
+        when(agent.profile()).thenReturn(new Agent(BuiltinAgents.CORE,"编码 Agent","agent-model"));
         String result=AgentScope.run("planner",()->facade.assistantTool("alice",json.createObjectNode()
                 .put("action","start").put("repositoryId","p1").put("prompt","goal"),"gateway-request","chat-session"));
         assertEquals("r1",json.readTree(result).path("run").path("id").asText());
@@ -148,7 +148,7 @@ class CodingAgentGatewayTest {
         when(agent.modelId(null)).thenReturn("agent-model");when(agent.instructions()).thenReturn("identity");
         when(settings.resolveChatModel("agent-model")).thenReturn(new ModelTarget("fixture","key","model"));
         when(settings.chatContextWindow("agent-model")).thenReturn(32000);
-        when(store.profile("r1")).thenReturn(new CodingStore.Profile(BuiltinAgents.CODING,null,"identity"));
+        when(store.profile("r1")).thenReturn(new CodingStore.Profile(BuiltinAgents.CORE,null,"identity"));
         when(store.create(eq("alice"),any(),eq(0),eq("wait-test"),isNull(),eq("identity"))).thenReturn(run);
         when(store.run("r1","alice")).thenReturn(run);
         when(context.messages(eq(run),any(),isNull(),any())).thenReturn(json.createArrayNode());

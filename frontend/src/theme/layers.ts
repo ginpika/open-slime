@@ -73,7 +73,11 @@ const oldDepth: Vars = {
   '--ui-e4': '0 16px 36px rgb(0 0 0 / .14)',
   '--ui-e5': '0 26px 56px rgb(0 0 0 / .18)',
 }
-const oldSurface: Vars = { '--ui-panel-alpha': '100%', '--ui-blur': '0px', '--ui-lift': '0px' }
+/* blur(0px) 仍会建立 backdrop 合成层；平面材质必须提供 none，不能只把模糊半径归零。 */
+const oldSurface: Vars = {
+  '--ui-panel-alpha': '100%', '--ui-blur': '0px', '--ui-lift': '0px',
+  '--ui-backdrop-filter': 'none', '--ui-control-backdrop-filter': 'none',
+}
 const oldTypo: Vars = {
   '--ui-font-heading': FONT_STACKS.sans,
   '--ui-heading-weight': '600',
@@ -143,6 +147,8 @@ const endfieldSurface: Vars = {
   /* 暗玻璃：62% + blur；卡片底比背景略亮（demo --surface #0f1215） */
   '--ui-panel-alpha': '62%',
   '--ui-blur': '16px',
+  '--ui-backdrop-filter': 'blur(var(--ui-blur)) saturate(1.08)',
+  '--ui-control-backdrop-filter': 'blur(var(--ui-blur))',
   '--ui-lift': '0px',
   '--ui-card-fill': '#0f1215',
   /* 第二主行动青蓝：描边钮共用（定义点唯一） */
@@ -253,6 +259,8 @@ const baDepth: Vars = {
 const baSurface: Vars = {
   '--ui-panel-alpha': '100%',
   '--ui-blur': '0px',
+  '--ui-backdrop-filter': 'none',
+  '--ui-control-backdrop-filter': 'none',
   '--ui-lift': '3px',
   /* 糖果点缀族（背景光斑 / 渐变伙伴 / 装饰用；信息色仍走语义令牌） */
   '--c-cyan-light': '#4fb0ff',
@@ -373,6 +381,8 @@ export const LAYERS: Record<ThemeId, LayerBundle> = {
       light: {
         '--ui-panel-alpha': '100%',
         '--ui-blur': '0px',
+        '--ui-backdrop-filter': 'none',
+        '--ui-control-backdrop-filter': 'none',
         '--ui-card-fill': '#ffffff',
         '--ui-e1': '4px 4px 0 rgb(11 11 11 / .09)',
         '--ui-e2': '5px 5px 0 rgb(11 11 11 / .12)',

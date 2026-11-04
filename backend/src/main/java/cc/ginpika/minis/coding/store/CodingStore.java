@@ -44,14 +44,14 @@ public class CodingStore implements cc.ginpika.minis.ai.runtime.AgentActivitySou
         return tx.execute(status -> {
             String id = UUID.randomUUID().toString(); long now = System.currentTimeMillis();
             jdbc.update("INSERT INTO task(kind,status,title,agent_id,model_id,workspace_id,payload,origin,created_at,updated_at) VALUES('code','pending',?,?,?,?,?, 'coding',?,?)",
-                    req.prompt().substring(0, Math.min(80, req.prompt().length())), BuiltinAgents.CODING, req.modelId(), req.repositoryId(), id, now, now);
+                    req.prompt().substring(0, Math.min(80, req.prompt().length())), BuiltinAgents.CORE, req.modelId(), req.repositoryId(), id, now, now);
             long taskId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
             jdbc.update("INSERT INTO coding_run(id,task_id,owner_id,repository_id,prompt,model_id,mode,runner,max_rounds,status,request_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',?,?,?)",
                     id, taskId, owner, req.repositoryId(), req.prompt(), req.modelId(), req.mode().name(), req.runner().name(), rounds, requestKey, now, now);
             jdbc.update("INSERT INTO coding_run_agent(run_id,agent_id,requested_model_id,instructions) VALUES(?,?,?,?)",
-                    id,BuiltinAgents.CODING,requestedModel,instructions);
+                    id,BuiltinAgents.CORE,requestedModel,instructions);
             attachSession(run(id,owner),req.sessionId());
-            event(id, "run.created", java.util.Map.of("taskId", taskId, "mode", req.mode().name(), "agentId",BuiltinAgents.CODING));
+            event(id, "run.created", java.util.Map.of("taskId", taskId, "mode", req.mode().name(), "agentId",BuiltinAgents.CORE));
             reviewPolicy(id,Boolean.TRUE.equals(req.autoReview()));
             return run(id, owner);
         });
@@ -73,7 +73,7 @@ public class CodingStore implements cc.ginpika.minis.ai.runtime.AgentActivitySou
         if(sessionId==null || sessionId.isBlank()){return;}
         tx.executeWithoutResult(status->{
             int count=jdbc.update("UPDATE task SET session_id=? WHERE id=(SELECT task_id FROM coding_run WHERE id=? AND owner_id=?) AND session_id IS NULL",sessionId,id,owner);
-            if(count>0){event(id,"agent.delegated",java.util.Map.of("sessionId",sessionId,"requesterAgentId",requesterAgent==null?"builtin":requesterAgent,"agentId",BuiltinAgents.CODING));}
+            if(count>0){event(id,"agent.delegated",java.util.Map.of("sessionId",sessionId,"requesterAgentId",requesterAgent==null?"builtin":requesterAgent,"agentId",BuiltinAgents.CORE));}
         });
     }
     public List<Run> runs(String owner) {
@@ -263,7 +263,7 @@ public class CodingStore implements cc.ginpika.minis.ai.runtime.AgentActivitySou
     }
     public void recover() {
         tx.executeWithoutResult(status -> {
-            jdbc.update("UPDATE task SET agent_id=? WHERE origin='coding' AND kind='code' AND agent_id IS NULL",BuiltinAgents.CODING);
+            jdbc.update("UPDATE task SET agent_id=? WHERE origin='coding' AND kind='code' AND agent_id IS NULL",BuiltinAgents.CORE);
             jdbc.update("UPDATE coding_operation SET status='NOT_RETURNED' WHERE status='RUNNING' AND tool IN ('read_file','list_files','search_text','git_status','git_diff','delegate_agent','read_agent','resume_agent','stop_agent')");
             jdbc.update("UPDATE coding_operation SET status='UNKNOWN' WHERE status='RUNNING'");
             var ids = jdbc.queryForList("SELECT id FROM coding_run WHERE status IN ('QUEUED','PREPARING','RUNNING','WAITING_AGENTS','VERIFYING','CANCELLING','ACCEPTING')", String.class);

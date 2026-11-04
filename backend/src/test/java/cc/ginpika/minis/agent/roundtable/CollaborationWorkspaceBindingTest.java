@@ -5,9 +5,9 @@ import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
 import cc.ginpika.minis.ai.core.UserScope;
-import cc.ginpika.minis.ai.terminal.ExecTarget;
-import cc.ginpika.minis.ai.terminal.TerminalService;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.computer.terminal.ExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import cc.ginpika.minis.coding.api.CodingDtos;
 import cc.ginpika.minis.coding.workspace.WorkspaceProjects;
 import cc.ginpika.minis.config.TerminalProps;

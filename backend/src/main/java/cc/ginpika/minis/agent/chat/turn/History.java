@@ -9,7 +9,6 @@ import cc.ginpika.minis.agent.context.ChatProtocol;
 import cc.ginpika.minis.agent.context.ContextProvider;
 import cc.ginpika.minis.agent.context.ContextRequest;
 import cc.ginpika.minis.config.ContextProps;
-import cc.ginpika.minis.stats.TokenUsageService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -260,7 +259,7 @@ public class History implements ContextProvider {
     private static long estimateGroup(List<JsonNode> group) {
         long sum = 0;
         for (JsonNode m : group) {
-            sum += TokenUsageService.estimateTokens(m.toString());
+            sum += cc.ginpika.minis.ai.core.tool.ToolOutput.estimateTokens(m);
         }
         return sum;
     }
@@ -386,6 +385,11 @@ public class History implements ContextProvider {
     private static JsonNode clipRound(JsonNode round) {
         if (!(round instanceof ObjectNode obj)) {
             return round;
+        }
+        obj = obj.deepCopy();
+        if (obj.path("content").isArray()) {
+            var wrapper = new ObjectMapper().createArrayNode().add(obj);
+            cc.ginpika.minis.ai.core.tool.ToolOutput.retainRecentImages(wrapper, 0);
         }
         JsonNode reasoning = obj.path("reasoning_content");
         if (reasoning.asText().length() > CONTEXT_REASONING_LIMIT) {

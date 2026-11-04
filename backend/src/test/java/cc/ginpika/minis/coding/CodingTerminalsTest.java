@@ -1,6 +1,6 @@
 package cc.ginpika.minis.coding;
 
-import cc.ginpika.minis.ai.terminal.ExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.ExecTarget;
 import cc.ginpika.minis.coding.api.CodingDtos.CodingProject;
 import cc.ginpika.minis.coding.runner.CodingTerminals;
 import cc.ginpika.minis.coding.workspace.WorkspaceProjects;

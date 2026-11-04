@@ -52,6 +52,8 @@ export function astrolabeConfigVars(config: AstrolabeConfig, scheme: Scheme): Va
     ...(config.material === 'glass' ? {
       '--ui-panel-alpha': scheme === 'dark' ? '58%' : '62%',
       '--ui-blur': '26px',
+      '--ui-backdrop-filter': 'blur(var(--ui-blur)) saturate(1.08)',
+      '--ui-control-backdrop-filter': 'blur(var(--ui-blur))',
       '--ui-card-ring': 'color-mix(in srgb, var(--c-fg) 22%, transparent)',
       '--ui-card-ring-hover': 'color-mix(in srgb, var(--c-accent) 80%, transparent)',
     } : {}),
@@ -76,6 +78,7 @@ export const astrolabeLayers: LayerBundle = {
   },
   surface: {
     '--ui-panel-alpha': '100%', '--ui-blur': '0px', '--ui-lift': '-2px',
+    '--ui-backdrop-filter': 'none', '--ui-control-backdrop-filter': 'none',
     '--ui-card-fill': 'color-mix(in srgb, var(--c-bg) 55%, white)',
     '--ui-card-ring-hover': 'var(--c-accent)',
     '--astro-ink': '#183a30', '--astro-rail-fg': '#f0eddf', '--astro-brass': '#d6b779',

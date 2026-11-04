@@ -4,7 +4,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# 桌面端（Tauri 壳）：运行时由 desktop/assemble-runtime.ps1 组装，不入库
+# 桌面端（Tauri 壳）：运行时由 desktop/assemble-runtime.ps1 或 .sh 组装，不入库
 desktop/target/
 desktop/node_modules/
 desktop/runtime/

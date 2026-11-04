@@ -7,7 +7,7 @@ import static org.mockito.Mockito.*;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
 import cc.ginpika.minis.ai.core.tool.memory.ManageProjectTool;
 import cc.ginpika.minis.ai.knowledge.ingest.KnowledgeToolbox;
-import cc.ginpika.minis.ai.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -39,5 +39,15 @@ class ChatToolDispatcherTest {
         assertEquals("accepted", dispatcher.runTool(call, "batch", "session"));
         verify(projects).runTool("session", om.readTree("{\"action\":\"continue\"}"));
         verifyNoInteractions(knowledge, terminal, todo, heartbeat, subagents);
+    }
+    @Test void computerToolsUseTheirOwnCapabilityAndPreserveTheConversationBoundary() throws Exception {
+        var computer = mock(cc.ginpika.minis.ai.computer.integration.ComputerTools.class);
+        dispatcher.setComputer(computer);
+        var call = om.createObjectNode();
+        call.putObject("function").put("name", "chrome").put("arguments", "{\"action\":\"list\"}");
+        when(computer.run(eq("chrome"), any(), eq("session"))).thenReturn("tabs");
+        assertEquals("tabs", dispatcher.runTool(call, "batch", "session"));
+        verify(computer).run("chrome", om.readTree("{\"action\":\"list\"}"), "session");
+        verifyNoInteractions(knowledge, terminal);
     }
 }

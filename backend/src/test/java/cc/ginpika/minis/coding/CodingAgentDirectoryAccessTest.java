@@ -27,30 +27,30 @@ class CodingAgentDirectoryAccessTest {
     private MockMvc mvc;
 
     @BeforeEach void setup(){
-        var row=new AgentStore.AgentRow(BuiltinAgents.CODING,"编码 Agent",true,"[\"coding_task\"]",null,"model",1,null,null,null,0,0,"编码",null);
-        when(directory.peer(BuiltinAgents.CODING)).thenReturn(Optional.of(row));when(directory.peers()).thenReturn(List.of(row));
+        var row=new AgentStore.AgentRow(BuiltinAgents.CORE,"默认助手",true,null,null,"model",0,null,null,null,0,0,null,null);
+        when(directory.peer(BuiltinAgents.CORE)).thenReturn(Optional.of(row));when(directory.peers()).thenReturn(List.of(row));
         when(directory.declaredTools(row)).thenReturn(List.of("coding_task"));when(directory.declaredTerminals(row)).thenReturn(List.of());
-        when(tasks.recent(BuiltinAgents.CODING,null,100)).thenReturn(List.of(task(1,"coding","r1"),task(2,"coding","r2"),task(3,"agent",null)));
+        when(tasks.recent(BuiltinAgents.CORE,null,100)).thenReturn(List.of(task(1,"coding","r1"),task(2,"coding","r2"),task(3,"agent",null)));
         when(coding.ownsTask("alice",1)).thenReturn(true);
         var controller=new AgentController(directory,null,null,null,null,new ToolManager(List.of(new CodingTaskTool()),new ObjectMapper()),new ObjectMapper(),null,null,null,tasks,null,null,null,null,null,null,null,null);
         controller.setCoding(coding);mvc=MockMvcBuilders.standaloneSetup(controller).build();
     }
-    private TaskStore.TaskRow task(long id,String origin,String payload){return new TaskStore.TaskRow(id,null,"coding".equals(origin)?"code":"subagent","pending","task "+id,null,BuiltinAgents.CODING,null,"p1",null,payload,origin,0,0);}
+    private TaskStore.TaskRow task(long id,String origin,String payload){return new TaskStore.TaskRow(id,null,"coding".equals(origin)?"code":"subagent","pending","task "+id,null,BuiltinAgents.CORE,null,"p1",null,payload,origin,0,0);}
 
-    @Test void codingAgentIsListedWithItsSpecializedRuntime() throws Exception {
+    @Test void defaultAgentRemainsAChatIdentityWhileOwningCodingTasks() throws Exception {
         mvc.perform(get("/api/agents/peers")).andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(BuiltinAgents.CODING))
-                .andExpect(jsonPath("$[0].builtin").value(true)).andExpect(jsonPath("$[0].executionKind").value("CODING"));
+                .andExpect(jsonPath("$[0].id").value(BuiltinAgents.CORE))
+                .andExpect(jsonPath("$[0].builtin").value(true)).andExpect(jsonPath("$[0].executionKind").value("CHAT"));
     }
     @Test void actionLogLinksOwnedCodingTasksAndHidesAnotherUsersTasks() throws Exception {
-        mvc.perform(get("/api/agents/"+BuiltinAgents.CODING+"/tasks")
+        mvc.perform(get("/api/agents/"+BuiltinAgents.CORE+"/tasks")
                         .requestAttr(SsoInterceptor.ATTR,new SsoUser("alice","alice","alice","","user","")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].codingRunId").value("r1")).andExpect(jsonPath("$[0].execId").doesNotExist())
                 .andExpect(jsonPath("$[1].id").value(3));
     }
     @Test void missingActorDoesNotRevealCodingTasksThroughTheGenericLog() throws Exception {
-        mvc.perform(get("/api/agents/"+BuiltinAgents.CODING+"/tasks"))
+        mvc.perform(get("/api/agents/"+BuiltinAgents.CORE+"/tasks"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].id").value(3));
     }
     @Test void codingGatewayAppearsAsAnOptionalCapabilityRatherThanDefaultReadAccess() throws Exception {

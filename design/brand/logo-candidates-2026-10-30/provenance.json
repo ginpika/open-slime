@@ -1,0 +1,45 @@
+{
+  "bases": [
+    {
+      "color": "graphite",
+      "source": "/Users/yuzhou.jin/.codex/visualizations/2026/10/30/01a18bf9-fa07-7df0-9155-0319f6bfaf03/slime-logo-concepts/slime-A-graphite.png"
+    },
+    {
+      "color": "yellow",
+      "source": "/Users/yuzhou.jin/.codex/visualizations/2026/10/30/01a18bf9-fa07-7df0-9155-0319f6bfaf03/slime-logo-concepts/slime-C-yellow.png"
+    }
+  ],
+  "variants": [
+    {
+      "color": "graphite",
+      "type": "circle",
+      "source": "/Users/yuzhou.jin/.codex/generated_images/01a18bf9-fa07-7df0-9155-0319f6bfaf03/exec-b626e957-5c55-4b24-ba42-5ac880efa099.png"
+    },
+    {
+      "color": "graphite",
+      "type": "rounded-square",
+      "source": "/Users/yuzhou.jin/.codex/generated_images/01a18bf9-fa07-7df0-9155-0319f6bfaf03/exec-6cd39d5f-408e-4d56-ac65-030108b6e290.png"
+    },
+    {
+      "color": "graphite",
+      "type": "macos-white",
+      "source": "/Users/yuzhou.jin/.codex/generated_images/01a18bf9-fa07-7df0-9155-0319f6bfaf03/exec-5bfc6158-fea9-400d-a2b9-f49c3ffeb71e.png"
+    },
+    {
+      "color": "yellow",
+      "type": "circle",
+      "source": "/Users/yuzhou.jin/.codex/generated_images/01a18bf9-fa07-7df0-9155-0319f6bfaf03/exec-0ccfec2f-7c33-49a2-b6de-f62f90d344e5.png"
+    },
+    {
+      "color": "yellow",
+      "type": "rounded-square",
+      "source": "/Users/yuzhou.jin/.codex/generated_images/01a18bf9-fa07-7df0-9155-0319f6bfaf03/exec-982912fd-1105-4af3-b011-5dec05a9cb90.png"
+    },
+    {
+      "color": "yellow",
+      "type": "macos-white",
+      "source": "/Users/yuzhou.jin/.codex/generated_images/01a18bf9-fa07-7df0-9155-0319f6bfaf03/exec-d8c387f2-8abc-41bc-8478-93ecd11207a3.png"
+    }
+  ]
+}
+

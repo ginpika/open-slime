@@ -33,7 +33,8 @@
     "test:deepseek:balance:browser": "node tests/deepseek-balance-browser-check.mjs",
     "test:workflow:browser": "node tests/workflow-browser-check.mjs",
     "test:collaboration": "node --test tests/collaboration.test.mjs",
-    "test:collaboration:browser": "node tests/collaboration-browser-check.mjs"
+    "test:collaboration:browser": "node tests/collaboration-browser-check.mjs",
+    "test:home:browser": "node tests/home-navigation-browser-check.mjs"
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "^1.95.1",

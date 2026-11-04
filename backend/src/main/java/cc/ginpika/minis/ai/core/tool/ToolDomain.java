@@ -24,6 +24,7 @@ public enum ToolDomain {
 
     /** 终端：在工作空间上执行命令、查看可用环境 */
     TERMINAL("terminal", "终端"),
+    COMPUTER("computer", "电脑与浏览器"),
     CODING("coding", "编程"),
     IMAGE("image", "绘图"),
 

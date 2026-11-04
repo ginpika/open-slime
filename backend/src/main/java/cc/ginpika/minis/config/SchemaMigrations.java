@@ -44,7 +44,7 @@ public class SchemaMigrations {
     private static final Logger log = LoggerFactory.getLogger(SchemaMigrations.class);
 
     /** 目标版本：v2 归属 / v3 运行时 / v4 隔离与版本一致性 */
-    private static final int TARGET = 5;
+    private static final int TARGET = 6;
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
@@ -108,6 +108,7 @@ public class SchemaMigrations {
             }
             graph.migrateLegacy();
         });
+        m.put(6, () -> new CodingAgentMerge(jdbc).apply());
         return m;
     }
 

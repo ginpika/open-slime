@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 /** Shared model/tool protocol loop. Business state, memory and completion policy belong to callers. */
 @Component
 public class ModelLoop {
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
     private final OpenAiChatClient client;
     public ModelLoop(OpenAiChatClient client) { this.client = client; }
 
@@ -52,6 +53,7 @@ public class ModelLoop {
         String lastRaw = null;
         for (int round = 0; ; round++) {
             checkCancelled(spec);
+            cc.ginpika.minis.ai.core.tool.ToolOutput.retainRecentImages(messages, 2);
             hooks.beforeRound(round, spec.body());
             ObjectNode body = spec.body();
             boolean tools = body.path("tools").isArray() && !body.path("tools").isEmpty();
@@ -90,12 +92,17 @@ public class ModelLoop {
             for (JsonNode call : calls) { hooks.requested(round, call); }
             List<String> results = spec.dispatch().execute(calls);
             if (results.size() != calls.size()) { throw new IllegalStateException("工具结果数量不匹配"); }
+            List<ObjectNode> observations = new ArrayList<>();
             for (int i = 0; i < calls.size(); i++) {
+                var output = cc.ginpika.minis.ai.core.tool.ToolOutput.decode(results.get(i));
                 ObjectNode result = messages.addObject().put("role", "tool")
                         .put("tool_call_id", calls.get(i).path("id").asText(""))
-                        .put("content", results.get(i));
+                        .put("content", output.text());
                 hooks.message(result);
+                if (!output.images().isEmpty()) observations.add(cc.ginpika.minis.ai.core.tool.ToolOutput.observation(
+                        JSON, calls.get(i).path("id").asText(), output.images()));
             }
+            for (var observation : observations) { messages.add(observation); hooks.message(observation); }
             hooks.progress();
             String answer = hooks.answerAfterTools(round, calls, results);
             if (answer != null) { return new Result(answer, lastRaw, End.ANSWERED, round); }

@@ -1,0 +1,92 @@
+/* Slime's everyday surfaces: GitHub neutrals in daylight, lime on charcoal at night. */
+.slime-surface {
+  --sl-bg: #ffffff;
+  --sl-side: #f6f8fa;
+  --sl-panel: #ffffff;
+  --sl-bubble: #f0f2f4;
+  --sl-hover: #eaeef2;
+  --sl-active: #e8edf2;
+  --sl-line: #d1d9e0;
+  --sl-line-strong: #a6b0bb;
+  --sl-fg: #1f2328;
+  --sl-fg-2: #424a53;
+  --sl-muted: #656d76;
+  --sl-accent: #1f883d;
+  --sl-accent-hover: #1a7f37;
+  --sl-accent-soft: #dafbe1;
+  --sl-on-accent: #ffffff;
+  --sl-link: #0969da;
+  --sl-danger: #b42318;
+  --sl-danger-soft: #fff1f0;
+  color-scheme: light;
+  color: var(--sl-fg);
+  background: var(--sl-bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+
+  /* Reused markdown and question cards follow the same surface palette. */
+  --c-bg: var(--sl-bg);
+  --c-fg: var(--sl-fg);
+  --c-fg-2: var(--sl-fg-2);
+  --c-muted: var(--sl-muted);
+  --c-faint: var(--sl-muted);
+  --c-dim: var(--sl-muted);
+  --c-line: var(--sl-line);
+  --c-line-strong: var(--sl-line-strong);
+  --c-accent: var(--sl-link);
+  --c-accent-soft: var(--sl-accent-soft);
+  --c-primary-fg: var(--sl-bg);
+  --c-danger: var(--sl-danger);
+  --c-danger-soft: var(--sl-danger-soft);
+}
+
+:root[data-scheme='dark'] .slime-surface {
+  --sl-bg: #101213;
+  --sl-side: #151819;
+  --sl-panel: #191c1e;
+  --sl-bubble: #242628;
+  --sl-hover: #24292b;
+  --sl-active: #2b3230;
+  --sl-line: #303638;
+  --sl-line-strong: #58625d;
+  --sl-fg: #e6edf3;
+  --sl-fg-2: #c0c9cd;
+  --sl-muted: #919c9f;
+  --sl-accent: #c8ff5f;
+  --sl-accent-hover: #d5ff88;
+  --sl-accent-soft: #26341d;
+  --sl-on-accent: #172009;
+  --sl-link: #c8ff5f;
+  --sl-danger: #ffb4ab;
+  --sl-danger-soft: #361e1d;
+  color-scheme: dark;
+}
+
+.slime-surface button, .slime-surface input, .slime-surface textarea { font-family: inherit; }
+.slime-surface :is(button, a, input, textarea, summary):focus-visible {
+  outline: 2px solid var(--sl-accent);
+  outline-offset: 3px;
+}
+.sl-appearance {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sl-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sl-appearance:hover { background: var(--sl-hover); color: var(--sl-fg); }
+@media (prefers-reduced-motion: reduce) {
+  .slime-surface *, .slime-surface *::before, .slime-surface *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

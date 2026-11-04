@@ -32,8 +32,18 @@ class LayeringTest {
     private static final String CORE = "cc.ginpika.minis.ai.core..";
     private static final String KNOWLEDGE = "cc.ginpika.minis.ai.knowledge..";
     private static final String MEMORY = "cc.ginpika.minis.ai.memory..";
-    private static final String TERMINAL = "cc.ginpika.minis.ai.terminal..";
+    private static final String TERMINAL = "cc.ginpika.minis.ai.computer.terminal..";
     private static final String AGENT = "cc.ginpika.minis.agent..";
+    @Test
+    void computerCapabilitiesDoNotDependOnOrchestrationOrTransport() {
+        assertTrue(CLASSES.containPackage("cc.ginpika.minis.ai.computer"));
+        noClasses().that().resideInAPackage("cc.ginpika.minis.ai.computer..")
+                .should().dependOnClassesThat().resideInAnyPackage(AGENT, "cc.ginpika.minis.web..", KNOWLEDGE, MEMORY)
+                .check(CLASSES);
+        noClasses().that().resideInAPackage(CORE)
+                .should().dependOnClassesThat().resideInAPackage("cc.ginpika.minis.ai.computer..")
+                .check(CLASSES);
+    }
     @Test
     void comfyUiCapabilityIsIndependentOfChatAndTransport() {
         assertTrue(CLASSES.containPackage("cc.ginpika.minis.ai.comfyui"));
@@ -129,7 +139,7 @@ class LayeringTest {
     @Test
     void terminalDoesNotDependOnAgent() {
         /* 防空转：命令行终端自己就是一个独立域包 */
-        assertTrue(CLASSES.containPackage("cc.ginpika.minis.ai.terminal"));
+        assertTrue(CLASSES.containPackage("cc.ginpika.minis.ai.computer.terminal"));
         ArchRule rule = noClasses()
                 .that().resideInAPackage(TERMINAL)
                 .should().dependOnClassesThat().resideInAPackage(AGENT)

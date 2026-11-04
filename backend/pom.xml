@@ -113,6 +113,15 @@
 			<resource>
 				<directory>src/main/resources</directory>
 			</resource>
+			<resource>
+				<directory>${project.basedir}/../desktop/chrome-extension</directory>
+				<targetPath>computer/chrome-extension</targetPath>
+				<includes>
+					<include>manifest.json</include>
+					<include>*.js</include>
+					<include>popup.html</include>
+				</includes>
+			</resource>
 		</resources>
 		<plugins>
 			<plugin>

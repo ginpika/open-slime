@@ -8,7 +8,7 @@ import cc.ginpika.minis.ai.core.prompt.PromptManager;
 import cc.ginpika.minis.ai.core.tool.AiTool;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;

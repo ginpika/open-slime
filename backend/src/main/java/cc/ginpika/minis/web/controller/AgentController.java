@@ -696,7 +696,7 @@ public class AgentController {
         return new AgentDtos.AgentView(row.id(), row.name(), row.builtin(),
                 peers.declaredTools(row), peers.declaredTerminals(row), row.modelId(), row.sort(),
                 row.note(), row.avatar(), row.role(), row.roleColor(),
-                cc.ginpika.minis.ai.core.BuiltinAgents.CODING.equals(row.id())?"CODING":"CHAT");
+                "CHAT");
     }
 
     private AgentDtos.ToolOption toTool(AiTool tool, boolean core) {

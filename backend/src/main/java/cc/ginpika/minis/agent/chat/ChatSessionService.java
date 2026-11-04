@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -84,6 +85,11 @@ public class ChatSessionService {
         return sessions.listAll().stream()
                 .map(row -> toItem(row, live.isRunning(row.id())))
                 .toList();
+    }
+
+    /** 侧栏的最近消息摘要；可见范围与会话列表相同，读取不会清除未读标记。 */
+    public Map<String, String> previews() {
+        return messages.latestPreviews();
     }
 
     /** 新建一个空会话（无项目：记忆归属退化为 Agent 私有） */

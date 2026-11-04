@@ -26,7 +26,7 @@ public class CodingMemory {
     }
     private MemoryExec scope(Run run,Repository repo,int round) {
         String project=repo.projectId()==null?"coding-repository:"+repo.id():repo.projectId();
-        return new MemoryExec(null,BuiltinAgents.CODING,project,run.sessionId()==null?"coding-run:"+run.id():run.sessionId(),run.taskId(),
+        return new MemoryExec(null,BuiltinAgents.CORE,project,run.sessionId()==null?"coding-run:"+run.id():run.sessionId(),run.taskId(),
                 MemorySurface.PLAN,false,"coding:"+run.id()+":"+run.attempt()+":"+round,MemoryIdentity.REAL);
     }
     public void refresh(Run run,Repository repo,ArrayNode messages,int round) {

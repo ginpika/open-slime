@@ -1,8 +1,8 @@
 # minis 生产编排：前后端分离两个容器
 #   frontend = nginx（托管 Vite 产物 + 反代 /api → backend）
-#   backend  = Spring Boot jar（SQLite + LLM，参数来自 backend/.env）
+#   backend  = Spring Boot jar（SQLite；模型等业务配置在页面维护并存入数据库）
 # 用法：
-#   cp backend/.env.example backend/.env   # 首次：按需填写 LLM 等参数
+#   cp backend/.env.example backend/.env   # 首次：可保留全注释，部署参数按需覆盖
 #   docker compose up -d --build
 #   访问 http://localhost:18081
 services:
@@ -17,7 +17,7 @@ services:
     shm_size: '256mb'
     security_opt:
       - seccomp=./backend/browser-seccomp.json
-    # 后端参数全部来自 backend/.env（LLM_API_KEY / SSO 等；真实环境变量优先于该文件）
+    # 可选部署参数（如 SSO / 代理）；文件可为空，模型等业务配置由页面维护
     env_file:
       - ./backend/.env
     environment:

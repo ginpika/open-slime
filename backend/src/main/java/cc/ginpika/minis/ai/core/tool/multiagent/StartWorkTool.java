@@ -27,7 +27,7 @@ public class StartWorkTool implements AiTool {
     @Override
     public String description() {
         return "主控派工：指定 id（待办ID）、reviewer（独立检查成员名或ID）与 note（本次依据），"
-                + "或用 assignments=[{id,reviewer},...] 一批派出 1–8 项已就绪、互不依赖的工作。相同编码 Agent 配置也能并行执行多个独立副本，逐项检查合入，整批回报主控。"
+                + "或用 assignments=[{id,reviewer},...] 一批派出 1–8 项已就绪、互不依赖的工作。相同默认 Agent 配置也能并行执行多个独立副本，逐项检查合入，整批回报主控。"
                 + "共享文件修改或有前后依赖的工作应分批。不会自动执行剩余任务；先明确负责人和整体验收标准。";
     }
 

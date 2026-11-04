@@ -13,6 +13,7 @@ import { AppIcon } from '../components/AppIcon'
 import { useCallback, useEffect, useState } from 'react'
 import WorkspaceDialog from './WorkspaceDialog'
 import WorkspaceShell from './WorkspaceShell'
+import ComputerConnection from './ComputerConnection'
 import {
   ApiError,
   createTerminalTarget,
@@ -492,6 +493,7 @@ export default function Workspace() {
           }
           right={
             <>
+              <ComputerConnection />
               <button type="button" className={btnQuiet('rounded-sm')} onClick={() => setShell({ target: selected?.id || targets.find(t => t.enabled)?.id || '' })}>
                 <AppIcon name="terminal" />Shell
               </button>

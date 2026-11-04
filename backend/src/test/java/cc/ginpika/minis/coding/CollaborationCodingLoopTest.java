@@ -84,7 +84,7 @@ class CollaborationCodingLoopTest {
         var settings=mock(SettingsService.class);when(settings.resolveChatModel(any())).thenReturn(new ModelTarget("fixture","key","model"));
         when(settings.chatContextWindow(any())).thenReturn(262144);
         var agent=mock(CodingAgent.class);when(agent.modelId(any())).thenReturn("model");when(agent.instructions()).thenReturn("fixture");
-        when(agent.profile()).thenReturn(new Agent(BuiltinAgents.CODING,"编码 Agent","model"));
+        when(agent.profile()).thenReturn(new Agent(BuiltinAgents.CORE,"编码 Agent","model"));
         var client=mock(OpenAiChatClient.class);
         var patches=json.createArrayNode();
         Map<String,String> content=new LinkedHashMap<>();

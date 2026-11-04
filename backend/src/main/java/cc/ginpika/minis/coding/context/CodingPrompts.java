@@ -7,7 +7,7 @@ import org.springframework.core.io.ClassPathResource;
 
 /** Authored defaults kept separate from runtime metadata and user-owned overrides. */
 public final class CodingPrompts {
-    public static final String MAIN=load("main");
+    public static final String MAIN=cc.ginpika.minis.ai.core.prompt.skill.CodingSkill.DEFAULT;
     public static final String EXPLORE=load("explore");
     public static final String PLANNER=load("planner");
     public static final String REVIEWER=load("reviewer");

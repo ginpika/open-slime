@@ -42,7 +42,8 @@ flowchart TD
 | `agent/context` | 按稳定顺序组合历史、知识、记忆、待办和子代理状态 |
 | `ai/core` | 提示词、工具协议、参数校验、作用域与公共值类型 |
 | `ai/llm` | 模型 HTTP 协议与流式解析 |
-| `ai/knowledge`、`ai/memory`、`ai/terminal` | 各自的能力与存储，不回调 Agent 编排层 |
+| `ai/knowledge`、`ai/memory` | 各自的能力与存储，不回调 Agent 编排层 |
+| `ai/computer` | 计算机能力域：`terminal` 保留 Docker / SSH 终端，`window` 提供桌面本机窗口截图，`browser` 提供隔离 Chrome 与本机扩展连接；工具适配位于 `integration`，不回调 Agent 编排层 |
 | `ai/comfyui` | 独立的远程工作流绘图能力：端点与档案配置、提交与等待、图片持久化；工具适配位于 `integration`，其他功能直接调用 `ComfyUiService` |
 | `project` | 项目与跨会话进度数据；用户与 Agent 的项目操作共用 ProjectWorkflowService |
 | `todo` | 个人事项、真实投入、每日回顾和历史统计；按登录用户隔离，仅关联已有项目标签，不复用 Agent 执行任务或会话进度 |
@@ -74,5 +75,7 @@ flowchart TD
 改动必须保留以下协作行为：停止后保存已经产生的部分答复；失败任务可观测、会话可继续发送；原始上下文预览与实际发送共用组装路径；工具授权与记忆隔离仍在原能力边界执行；主控统一处理执行受阻，按需请求相关成员讨论或等待用户拍板。
 
 `LayeringTest` 检查能力域不反向依赖编排，以及编排不依赖 Web 控制器、上下文组装不执行模型或工具。执行内核、历史窗口、任务状态、记忆与项目续接由各自回归测试验证。测试使用模型替身，不代表真实供应商接口或浏览器端到端验证。
+
+Computer-use 的部署权限、扩展连接和 function calling 示例见 [`docs/computer-use.md`](../docs/computer-use.md)。终端迁入 `ai.computer.terminal`，既有 `/api/terminal`、`term_target`、`term_command` 与 `minis.terminal` 配置保持兼容。截图通过通用 `ToolOutput` 图像观察送入共享模型循环；计算机能力不另建 Agent 循环。
 
 2026-10-13 本次整理聚焦单聊执行与圆桌发言两个主要入口。知识入库、心跳和其他大型模块保留原有行为，后续整理应继续依据实际调用链，而非单凭文件行数拆分。

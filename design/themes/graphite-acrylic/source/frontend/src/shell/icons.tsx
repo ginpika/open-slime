@@ -1,0 +1,48 @@
+import { AppIcon } from '../components/AppIcon'
+import type { IconName } from './nav'
+
+/** 外壳沿用导航语义契约；尺寸与主题颜色由容器提供。 */
+export function ShellIcon({ name, className = '' }: { name: IconName; className?: string }) {
+  return <AppIcon name={name} className={className} />
+}
+
+/**
+ * 实心版外壳图标（BA 导航等需要"块面感"的场景专用）。
+ * 与线性版同语义同 24×24 网格；evenodd 让齿轮等内环自然镂空。
+ * 仅保留既有实心导航；新增通用图标走 AppIcon。
+ */
+const SOLID_PATHS: Partial<Record<IconName, string>> = {
+  code: 'M8.5 4.5 1 12l7.5 7.5 1.4-1.4L3.8 12l6.1-6.1zM15.5 4.5l-1.4 1.4 6.1 6.1-6.1 6.1 1.4 1.4L23 12zM13.3 2.8l-4.5 18 1.9.4 4.5-18z',
+  home: 'M12 3.2 3.5 10.2v8.3c0 1 .8 1.8 1.8 1.8h4.1v-5.6h5.2v5.6h4.1c1 0 1.8-.8 1.8-1.8v-8.3z',
+  doc: 'M7 2.5h6.5l5 5V20c0 1.1-.9 2-2 2H7c-1.1 0-2-.9-2-2V4.5c0-1.1.9-2 2-2z',
+  graph: 'M9.5 6.1a2.5 2.5 0 0 1 5 0 2.5 2.5 0 0 1-5 0zM2.7 17.2a2.5 2.5 0 0 1 5 0 2.5 2.5 0 0 1-5 0zM16.3 17.2a2.5 2.5 0 0 1 5 0 2.5 2.5 0 0 1-5 0zM11.2 8.6 7.4 14.6l-1.9-1.2 3.8-6zM12.8 8.6l3.8 6 1.9-1.2-3.8-6zM8 16.2h8v2H8z',
+  import: 'M11 2.8h2V10h-2zM7.6 10h8.8L12 15.2zM4 16.2h2.2v2c0 .4.3.8.8.8h10c.4 0 .8-.3.8-.8v-2H20v2c0 1.5-1.2 2.8-2.8 2.8H6.8A2.8 2.8 0 0 1 4 18.2z',
+  analyze:
+    'M2.9 2.8h1.9v16.7H2.9zM6.2 14.2l3.2-5 2.8 2.8 4.4-6.8h2.6v14.3H6.2zM3 19.5h18v1.7H3z',
+  agent:
+    'M5.8 6.8a3.4 3.4 0 0 1 6.8 0 3.4 3.4 0 0 1-6.8 0zM2.9 21c0-3.5 2.8-5.7 6.3-5.7s6.3 2.2 6.3 5.7zM16.9 5.4a2.3 2.3 0 0 1 4.6 0 2.3 2.3 0 0 1-4.6 0zM16.2 21c0-2.7 1.8-4.4 4.2-4.7 1.2-.1 2.4.2 3.4.9V21z',
+  memory: 'M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9v6h6V9zM8 2h2v3H8zM14 2h2v3h-2zM8 19h2v3H8zM14 19h2v3h-2zM2 8h3v2H2zM2 14h3v2H2zM19 8h3v2h-3zM19 14h3v2h-3z',
+  subcons:
+    'M12 2.6a6.4 6.4 0 0 0-3.7 11.6v2h7.4v-2A6.4 6.4 0 0 0 12 2.6zM9.9 17.6h4.2v2H9.9zM10.4 19.9h3.2v1.8h-3.2z',
+  workspace: 'M12 3.2 5 6.4l7 3.2 7-3.2zM12 10.2 5 13.4l7 3.2 7-3.2zM12 17.2 5 20.4l7 3.2 7-3.2z',
+  settings:
+    'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM19.4 13.6a7.7 7.7 0 0 0 0-3.2l2-1.5-2-3.4-2.4 1a7.7 7.7 0 0 0-2.8-1.6L13.8 2h-3.6l-.4 2.9a7.7 7.7 0 0 0-2.8 1.6l-2.4-1-2 3.4 2 1.5a7.7 7.7 0 0 0 0 3.2l-2 1.5 2 3.4 2.4-1a7.7 7.7 0 0 0 2.8 1.6l.4 2.9h3.6l.4-2.9a7.7 7.7 0 0 0 2.8-1.6l2.4 1 2-3.4z',
+  stats: 'M4 10h2.6v10H4zM10.7 4h2.6v16h-2.6zM17.4 13h2.6v7h-2.6z',
+  flow: 'M6 4.6a1.9 1.9 0 1 1 0 3.8 1.9 1.9 0 0 1 0-3.8zM18 4.6a1.9 1.9 0 1 1 0 3.8 1.9 1.9 0 0 1 0-3.8zM12 15.6a1.9 1.9 0 1 1 0 3.8 1.9 1.9 0 0 1 0-3.8zM7.3 8.3l3.2 6.8-1.7.8-3.2-6.8zM16.7 8.3l-3.2 6.8 1.7.8 3.2-6.8z',
+  table: 'M12 3.2a8.8 8.8 0 1 1 0 17.6 8.8 8.8 0 0 1 0-17.6zM12 9.3a2.7 2.7 0 1 0 0 5.4 2.7 2.7 0 0 0 0-5.4z',
+}
+
+export function ShellIconSolid({ name, className = '' }: { name: IconName; className?: string }) {
+  if (!SOLID_PATHS[name]) return <ShellIcon name={name} className={className} />
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      fillRule="evenodd"
+      aria-hidden="true"
+    >
+      <path d={SOLID_PATHS[name]} />
+    </svg>
+  )
+}

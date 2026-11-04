@@ -36,23 +36,18 @@ export function AstrolabeShell({ route, activePath, fullBleed, hideChrome = fals
   const scrollRef = mainRef ?? localMainRef
   const [homeConversation, setHomeConversation] = useState(false)
 
-  // 首页和会话共用路由：按实际可见的那一屏更新面包屑，返回首页不卸载会话。
+  // 首页和会话共用路由：按显式屏幕显隐更新面包屑，返回首页不卸载会话。
   useEffect(() => {
     const main = scrollRef.current
     if (!main || route !== '/') return
     const update = () => {
       const chat = main.querySelector<HTMLElement>('[data-home-view="conversation"]')
-      setHomeConversation(Boolean(chat &&
-        chat.getBoundingClientRect().top <= main.getBoundingClientRect().top + main.clientHeight / 2))
+      setHomeConversation(Boolean(chat && !chat.hidden))
     }
     update()
-    main.addEventListener('scroll', update, { passive: true })
-    const observer = new ResizeObserver(update)
-    observer.observe(main)
-    return () => {
-      main.removeEventListener('scroll', update)
-      observer.disconnect()
-    }
+    const observer = new MutationObserver(update)
+    observer.observe(main, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] })
+    return () => observer.disconnect()
   }, [route, scrollRef])
 
   const breadcrumbs = breadcrumbsOf(route)
@@ -94,7 +89,7 @@ export function AstrolabeShell({ route, activePath, fullBleed, hideChrome = fals
                     : <a href={`#${item.path}`} onClick={event => {
                       if (item.path === '/' && route === '/') {
                         event.preventDefault()
-                        scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+                        window.dispatchEvent(new Event('minis:home-search'))
                       }
                     }}>{item.label}</a>}
                 </li>

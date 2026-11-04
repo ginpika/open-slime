@@ -19,6 +19,7 @@ import cc.ginpika.minis.ai.core.tool.subagent.ReadSubagentRunTool;
 import cc.ginpika.minis.agent.chat.turn.TurnStore;
 import cc.ginpika.minis.agent.chat.turn.TurnTrigger;
 import cc.ginpika.minis.config.ModelTarget;
+import cc.ginpika.minis.config.ModelReasoning;
 import cc.ginpika.minis.config.SettingsService;
 import cc.ginpika.minis.project.ProjectStore;
 import cc.ginpika.minis.stats.TokenUsageService;
@@ -113,17 +114,27 @@ public class ChatTurnRunner implements ChatExecution {
     }
 
     public ChatDtos.ChatReply chat(String hubId, String input, String modelId, String promptId) {
-        return runChat(this, hubId, input, modelId, promptId, null);
+        return chat(hubId, input, modelId, promptId, null);
+    }
+
+    public ChatDtos.ChatReply chat(String hubId, String input, String modelId, String promptId,
+                                    String reasoningEffort) {
+        return runChat(this, hubId, input, modelId, promptId, reasoningEffort, null);
     }
 
     public ChatDtos.ChatReply chatStream(String hubId, String input, String modelId, String promptId,
                                          ChatStream sink) {
-        return runChat(this, hubId, input, modelId, promptId, sink);
+        return chatStream(hubId, input, modelId, promptId, null, sink);
+    }
+
+    public ChatDtos.ChatReply chatStream(String hubId, String input, String modelId, String promptId,
+                                         String reasoningEffort, ChatStream sink) {
+        return runChat(this, hubId, input, modelId, promptId, reasoningEffort, sink);
     }
 
     public ChatDtos.ChatReply chatStream(ChatExecution exec, String hubId, String input,
                                          String modelId, String promptId, ChatStream sink) {
-        return runChat(exec, hubId, input, modelId, promptId, sink);
+        return runChat(exec, hubId, input, modelId, promptId, null, sink);
     }
 
     public boolean requestStop(String hubId) {
@@ -162,7 +173,7 @@ public class ChatTurnRunner implements ChatExecution {
     }
 
     private ChatDtos.ChatReply runChat(ChatExecution exec, String hubId, String input,
-                                       String modelId, String promptId, ChatStream sink) {
+                                       String modelId, String promptId, String reasoningEffort, ChatStream sink) {
         HubRow row = exec.resolveOrCreate(hubId);
         String requestedModel=modelId;
         if(exec==this && (modelId==null || modelId.isBlank())){modelId=chatContext.modelIdFor(row.agentId(),modelId);}
@@ -171,6 +182,10 @@ public class ChatTurnRunner implements ChatExecution {
             throw new IllegalStateException(
                     "LLM 未配置：请在设置页添加模型，或在 .env 填写 "
                             + "LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL");
+        }
+        String effort = reasoningEffort == null || reasoningEffort.isBlank() ? null : reasoningEffort.strip();
+        if (effort != null && !ModelReasoning.efforts(target.model()).contains(effort)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "该模型不支持所选的思考强度");
         }
         /* 在途锁（STEP 4）：同一会话同一时刻只允许一次生成。重复触发（双击发送 / 两个标签页同时发）
            在这里被后端挡住，不再单靠前端 sendingRef；被拒的这次不落库、不动历史。
@@ -181,7 +196,7 @@ public class ChatTurnRunner implements ChatExecution {
                     "该会话正在生成中，请等它答完或先点停止。");
         }
         try {
-            return runChatInner(exec, row, target, input, modelId, requestedModel, promptId, sink);
+            return runChatInner(exec, row, target, input, modelId, requestedModel, promptId, effort, sink);
         } finally {
             if (exec.singleFlight()) {
                 inflight.remove(row.id());
@@ -197,7 +212,7 @@ public class ChatTurnRunner implements ChatExecution {
 
     private ChatDtos.ChatReply runChatInner(ChatExecution exec, HubRow row, ModelTarget target,
                                             String input, String modelId, String requestedModel, String promptId,
-                                            ChatStream sink) {
+                                            String reasoningEffort, ChatStream sink) {
         /* 流式请求登记停止标志（非流式不参与停止）：requestStop 按会话 id 置位，
             生成线程在增量与轮次边界检测；finally 里注销，避免残留标志误停下一次发送 */
         AtomicBoolean stopFlag = sink == null ? null : registerStop(row.id());
@@ -240,6 +255,9 @@ public class ChatTurnRunner implements ChatExecution {
            本类只负责备齐素材、把过程接到流式与留痕上、把结果落库 */
         ObjectNode body = MemoryScopeCtx.run(memScope, () ->
                 exec.requestBody(row, target, promptId, settings.chatContextWindow(modelId)));
+        // This body belongs to one turn and is retained through its tool rounds.
+        // Do not mutate the model's global settings or approximate effort with a prompt.
+        if (reasoningEffort != null) body.put("reasoning_effort", reasoningEffort);
         ArrayNode msgs = (ArrayNode) body.get("messages");
 
         /* 累计态交给内核就地写入（思考链跨轮拼接、分段、工具往返、原始返回）：本类持有，

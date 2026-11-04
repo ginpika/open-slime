@@ -41,18 +41,18 @@ public class AgentStore {
 
     /** 全部成员，按发言顺序（sort 相同则按建立时间，保证顺序稳定不抖动） */
     public List<AgentRow> peers() {
-        return jdbc.query("SELECT " + COLS + " FROM agent ORDER BY sort, created_at, id",
+        return jdbc.query("SELECT " + COLS + " FROM agent WHERE id <> 'builtin-coding' ORDER BY sort, created_at, id",
                 AgentStore::map);
     }
 
     public Optional<AgentRow> peer(String id) {
-        return jdbc.query("SELECT " + COLS + " FROM agent WHERE id = ?", AgentStore::map, id)
+        return jdbc.query("SELECT " + COLS + " FROM agent WHERE id = ? AND id <> 'builtin-coding'", AgentStore::map, id)
                 .stream().findFirst();
     }
 
     /** 按展示名查成员（发言里的 @名字 用它定位；同名取最早建立的那个） */
     public Optional<AgentRow> peerByName(String name) {
-        return jdbc.query("SELECT " + COLS + " FROM agent WHERE name = ? ORDER BY created_at, id",
+        return jdbc.query("SELECT " + COLS + " FROM agent WHERE name = ? AND id <> 'builtin-coding' ORDER BY created_at, id",
                         AgentStore::map, name)
                 .stream().findFirst();
     }
@@ -83,7 +83,7 @@ public class AgentStore {
     }
 
     public int delete(String id) {
-        return jdbc.update("DELETE FROM agent WHERE id = ?", id);
+        return jdbc.update("DELETE FROM agent WHERE id = ? AND id <> 'builtin-coding'", id);
     }
 
     /** 现有最大排序号（新成员排到末尾）；空名册返回 0 */

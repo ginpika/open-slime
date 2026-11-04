@@ -7,7 +7,11 @@ import java.util.List;
 public final class ChatDtos {
 
     /** POST /api/chat body：sessionId 缺省=最近会话或新建；modelId/promptId 缺省=设置页默认项 */
-    public record ChatRequest(String sessionId, String input, String modelId, String promptId) {
+    public record ChatRequest(String sessionId, String input, String modelId, String promptId,
+                              String reasoningEffort) {
+        public ChatRequest(String sessionId, String input, String modelId, String promptId) {
+            this(sessionId, input, modelId, promptId, null);
+        }
     }
 
     /** POST /api/chat/stop body：sessionId=要停止生成的会话 */

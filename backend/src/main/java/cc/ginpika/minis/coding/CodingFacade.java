@@ -32,7 +32,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Specialized coding use cases; directory configuration is integrated through CodingAgent. */
+/** IDE use cases executed by the default agent with its coding Skill. */
 @Service
 @DependsOnDatabaseInitialization
 public class CodingFacade {
@@ -399,7 +399,7 @@ public class CodingFacade {
     }
     private void launch(Run run,String continuation){Execution exec=new Execution(props,json);active.put(run.id(),exec);try{pool.execute(()->execute(run,continuation,exec));}catch(RuntimeException error){active.remove(run.id(),exec);store.phase(run.id(),"FAILED",error.getMessage());throw error;}}
     private void execute(Run run,String continuation,Execution exec){
-        AgentScope.run(BuiltinAgents.CODING,()->{
+        AgentScope.run(BuiltinAgents.CORE,()->{
             try(var actor=UserScope.bind(run.ownerId())){executeScoped(run,continuation,exec);}
             return null;
         });
@@ -524,7 +524,7 @@ public class CodingFacade {
         // A pure specialist batch is read-only. Start all its independent loops before waiting for reports.
         // Mixed batches retain order so a read cannot race a patch or command on the shared root copy.
         if(calls.size()>1 && calls.stream().allMatch(c->"delegate_agent".equals(c.path("function").path("name").asText()))) {
-            var pending=calls.stream().map(call->CompletableFuture.supplyAsync(()->AgentScope.run(BuiltinAgents.CODING,()->{
+            var pending=calls.stream().map(call->CompletableFuture.supplyAsync(()->AgentScope.run(BuiltinAgents.CORE,()->{
                 try(var actor=UserScope.bind(run.ownerId())) {return dispatch(run,repo,List.of(call),exec).getFirst();}
             }),pool)).toList();
             try{return pending.stream().map(CompletableFuture::join).toList();}

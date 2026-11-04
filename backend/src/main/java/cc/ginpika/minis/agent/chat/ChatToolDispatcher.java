@@ -1,7 +1,7 @@
 package cc.ginpika.minis.agent.chat;
 
 import cc.ginpika.minis.ai.knowledge.ingest.KnowledgeToolbox;
-import cc.ginpika.minis.ai.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
@@ -31,6 +31,10 @@ public class ChatToolDispatcher {
     private final KnowledgeToolbox toolbox;
     private final ProjectWorkflowService projectWorkflows;
     private cc.ginpika.minis.coding.CodingFacade coding;
+    private cc.ginpika.minis.ai.computer.integration.ComputerTools computer;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setComputer(cc.ginpika.minis.ai.computer.integration.ComputerTools computer) { this.computer = computer; }
 
     @org.springframework.beans.factory.annotation.Autowired
     public void setCoding(@org.springframework.context.annotation.Lazy cc.ginpika.minis.coding.CodingFacade coding) { this.coding=coding; }
@@ -76,6 +80,14 @@ public class ChatToolDispatcher {
             } catch (IllegalArgumentException error) {
                 return "询问参数无效：" + error.getMessage();
             }
+        }
+        if (cc.ginpika.minis.ai.computer.integration.ComputerTools.handles(name)) {
+            if (computer == null) return "computer 能力未就绪";
+            try {
+                JsonNode args = om.readTree(call.path("function").path("arguments").asText("{}"));
+                if (args == null || !args.isObject()) return "computer 工具参数必须是 JSON 对象";
+                return computer.run(name, args, hubId);
+            } catch (java.io.IOException error) { return "computer 工具参数不是有效 JSON"; }
         }
         if (cc.ginpika.minis.coding.integration.CodingTaskTool.NAME.equals(name)) {
             String owner=cc.ginpika.minis.ai.core.UserScope.get();

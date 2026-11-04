@@ -1,9 +1,9 @@
 package cc.ginpika.minis.coding;
 
 import cc.ginpika.minis.agent.workspace.WorkspaceService;
-import cc.ginpika.minis.ai.terminal.ExecTarget;
-import cc.ginpika.minis.ai.terminal.TerminalService;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.computer.terminal.ExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import cc.ginpika.minis.coding.api.CodingDtos.*;
 import cc.ginpika.minis.coding.config.CodingProps;
 import cc.ginpika.minis.coding.repository.CodingWorkspace;

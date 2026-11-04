@@ -108,7 +108,7 @@ public class CodingSubagents {
     private Child require(Run root,String id){Child child=executions.child(root.id(),id);if(child==null){throw new IllegalArgumentException("子 Agent 不属于当前编程会话");}return child;}
     private void launch(Run root,Repository repo,Child child,AtomicBoolean parent,String input,CodingBudget budget){
         Job job=new Job(root,parent,budget);if(active.putIfAbsent(child.id(),job)!=null){throw new IllegalStateException("子任务已启动");}
-        try{pool.execute(()->AgentScope.run(BuiltinAgents.CODING,()->{
+        try{pool.execute(()->AgentScope.run(BuiltinAgents.CORE,()->{
             try(var actor=UserScope.bind(root.ownerId());var scope=CodingExecutionScope.bind(new CodingExecutionScope.Identity(child.id(),child.role(),root.attempt(),child.attempt()))){execute(job,repo,child,input);}
             finally{active.remove(child.id(),job);job.done.complete(null);}return null;
         }));}catch(RuntimeException error){active.remove(child.id(),job);executions.phase(child.id(),"FAILED",error.getMessage());job.done.complete(null);throw error;}

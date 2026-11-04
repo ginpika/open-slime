@@ -404,10 +404,10 @@ function PeerAnchorPanel({
   )
 }
 
-export default function AgentDetail({ peerId }: { peerId: string }) {
+export default function AgentDetail({ peerId: requestedPeerId }: { peerId: string }) {
+  const peerId = requestedPeerId === CODING_AGENT_ID ? CORE_AGENT_ID : requestedPeerId
   const kit = usePageKit()
   const isNew = peerId === NEW_ID
-  const codingAgent = peerId === CODING_AGENT_ID
   const coreAgent = peerId === CORE_AGENT_ID
   const [peer, setPeer] = useState<MaPeer | null>(null)
   const [loading, setLoading] = useState(true)
@@ -424,7 +424,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
   const [savingProfile, setSavingProfile] = useRememberedState(`agent:${peerId}:saving`, false)
   /** 右栏当前显示哪一块：已有成员缺省停在「提示词」（最先要配的身份设定，放最左）；
    *  新建成员还没有 peer，提示词无从配起，先落在「能力」把资料与工具配上 */
-  const [tab, setTab] = useRememberedState<RightTab>(`agent:${peerId}:tab`, isNew ? 'cap' : codingAgent ? 'coding' : 'prompt')
+  const [tab, setTab] = useRememberedState<RightTab>(`agent:${peerId}:tab`, isNew ? 'cap' : 'prompt')
   /** 「可用工具」当前停在哪个业务领域 Tab（null = 默认选中第一个领域） */
   const [toolDomain, setToolDomain] = useState<string | null>(null)
   /**
@@ -644,7 +644,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
         /* 返回上级给一条明确的回路（原先的「取消」按钮由它取代）；保存挂页头最右端，
            与导航同处一行，不占正文也不悬空 */
         <span className="flex items-center gap-2.5">
-          {codingAgent && <a href="#/coding" className={miniBtn}>编程工作台 ↗</a>}
+          {coreAgent && <a href="#/coding" className={miniBtn}>编程工作台 ↗</a>}
           <a href="#/multi-agent" className={miniBtn} title="返回多智能体成员列表">
             <AppIcon name="chevron-left" className="h-3.5 w-3.5" />
             返回上级
@@ -670,9 +670,9 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
               meta={coreAgent ? <kit.Badge>系统主控</kit.Badge> : peer?.builtin ? <kit.Badge>内置</kit.Badge> : undefined}
             />
             <div className="flex flex-col gap-5 p-5">
-              {codingAgent && (
+              {coreAgent && (
                 <p className="text-sm leading-relaxed text-muted">
-                  可以自由设置头像和名字；角色人设在「提示词 & 上下文工程」中编辑身份提示词，编程工作台与对话共用。
+                  对话与编程 IDE 共用这份身份和模型。编程规程在「提示词 & 上下文工程 → Skills · 状态化提示词」中维护，仅在 IDE 项目任务中启用。
                 </p>
               )}
               <div className="flex flex-col items-center gap-3">
@@ -777,7 +777,7 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
               tab 选中 = 主行动钮（黄色实底印章），未选中走安静钮 */}
           <Card pad="none" className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3.5 pb-2.5 pt-3">
-              {(codingAgent ? [{ key: 'coding' as const, label: '编码项目与任务' }, ...RIGHT_TABS] : RIGHT_TABS).map((t) => (
+              {(coreAgent ? [...RIGHT_TABS, { key: 'coding' as const, label: '编程项目与任务' }] : RIGHT_TABS).map((t) => (
                 <button
                   key={t.key}
                   type="button"
@@ -792,13 +792,13 @@ export default function AgentDetail({ peerId }: { peerId: string }) {
             </div>
 
             <div className="p-5">
-            {codingAgent && tab === 'coding' && <AgentTasks />}
+            {coreAgent && tab === 'coding' && <AgentTasks />}
             {/* 能力：逐成员各配一份——额外可用工具（按业务领域分 Tab）+ 可访问的工作空间（绑了才给终端工具） */}
             {tab === 'tts' && (peer ? <TtsPanel agentId={peer.id} /> : <kit.Empty>请先保存 Agent，再配置语音档案。</kit.Empty>)}
             {tab === 'cap' && (
               <div className="flex flex-col gap-5">
                 <p className="text-md leading-relaxed text-muted">
-                  {coreAgent ? '内置 Agent 是系统主控，直接代表软件向你负责，协调其他 Agent 并检查交付。全部能力、工具和工作空间自动开放，无需逐项授权；新增工具和工作空间自动继承。' : codingAgent ? '编码任务通过 coding_task 接入同一工作台，任务工作空间由项目选择。下面的工作空间绑定只控制圆桌中直接调用终端工具的范围。' : '在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
+                  {coreAgent ? '内置 Agent 是系统主控，直接代表软件向你负责，协调其他 Agent 并检查交付。全部能力、工具和工作空间自动开放，无需逐项授权；新增工具和工作空间自动继承。' : '在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
                 </p>
 
                 <div>

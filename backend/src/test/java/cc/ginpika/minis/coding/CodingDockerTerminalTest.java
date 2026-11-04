@@ -1,7 +1,7 @@
 package cc.ginpika.minis.coding;
 
-import cc.ginpika.minis.ai.terminal.exec.DockerExecTarget;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore.TargetRow;
+import cc.ginpika.minis.ai.computer.terminal.exec.DockerExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore.TargetRow;
 import cc.ginpika.minis.config.Branding;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -47,7 +47,7 @@ class CodingDockerTerminalTest {
             } finally {shell.close();}
         } finally {try{docker("rm","-f",name);}finally{var shutdown=transport.getClass().getDeclaredMethod("shutdown");shutdown.setAccessible(true);shutdown.invoke(transport);}}
     }
-    private static void write(cc.ginpika.minis.ai.terminal.ExecTarget.Shell shell,String data) throws IOException {shell.input().write(data.getBytes(StandardCharsets.UTF_8));shell.input().flush();}
+    private static void write(cc.ginpika.minis.ai.computer.terminal.ExecTarget.Shell shell,String data) throws IOException {shell.input().write(data.getBytes(StandardCharsets.UTF_8));shell.input().flush();}
     private static void await(ByteArrayOutputStream bytes,String expected) throws InterruptedException {
         long until=System.currentTimeMillis()+8000;
         while(System.currentTimeMillis()<until){synchronized(bytes){if(bytes.toString(StandardCharsets.UTF_8).contains(expected)){return;}}Thread.sleep(20);}

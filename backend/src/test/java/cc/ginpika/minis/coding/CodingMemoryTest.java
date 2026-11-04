@@ -25,10 +25,10 @@ class CodingMemoryTest {
         try {
             ScriptUtils.executeSqlScript(ds.getConnection(),new ClassPathResource("schema.sql"));var jdbc=new JdbcTemplate(ds);
             var graph=new MemoryGraphStore(jdbc);var items=graph.claims();var props=new MemoryProps();
-            long id=items.insert(new MemoryItemStore.Ownership(null,"PROJECT","PROJECT","L2","coding-repository:r",null,null,BuiltinAgents.CODING),
-                    new MemoryItemStore.Governance(BuiltinAgents.CODING,"inferred","inferred","long",MemoryIdentity.REAL),"method","pooling","pooling evidence",0.9,"auto",null,null);
-            items.insert(new MemoryItemStore.Ownership(null,"PROJECT","PROJECT","L2","coding-repository:other",null,null,BuiltinAgents.CODING),
-                    new MemoryItemStore.Governance(BuiltinAgents.CODING,"inferred","inferred","long",MemoryIdentity.REAL),"method","pooling","pooling secret-other",0.9,"auto",null,null);
+            long id=items.insert(new MemoryItemStore.Ownership(null,"PROJECT","PROJECT","L2","coding-repository:r",null,null,BuiltinAgents.CORE),
+                    new MemoryItemStore.Governance(BuiltinAgents.CORE,"inferred","inferred","long",MemoryIdentity.REAL),"method","pooling","pooling evidence",0.9,"auto",null,null);
+            items.insert(new MemoryItemStore.Ownership(null,"PROJECT","PROJECT","L2","coding-repository:other",null,null,BuiltinAgents.CORE),
+                    new MemoryItemStore.Governance(BuiltinAgents.CORE,"inferred","inferred","long",MemoryIdentity.REAL),"method","pooling","pooling secret-other",0.9,"auto",null,null);
             var embedding=mock(EmbeddingClient.class);var work=mock(WorkingSetService.class);when(work.open(any(),anyInt())).thenReturn(List.of());
             var snapshots=new MemorySnapshotBuilder(new MemoryItemRecall(items,new MemoryItemEmbeddingStore(jdbc),embedding,props),new MemorySnapshotStore(jdbc),work,props);
             var ingest=mock(MemoryIngest.class);var json=new ObjectMapper();var memory=new CodingMemory(snapshots,ingest,props,new ContextProps(),json);
@@ -42,7 +42,7 @@ class CodingMemoryTest {
             assertFalse(messages.get(0).path("content").asText().contains("pooling evidence"));
             assertTrue(messages.get(0).path("content").asText().contains("coding rules"));
             memory.completed(run,repo,"a proposed result");
-            verify(ingest).tapExec(argThat(e->"coding-repository:r".equals(e.projectId()) && e.agentOrBuiltin().equals(BuiltinAgents.CODING)),contains("待验收"),eq("a proposed result"));
+            verify(ingest).tapExec(argThat(e->"coding-repository:r".equals(e.projectId()) && e.agentOrBuiltin().equals(BuiltinAgents.CORE)),contains("待验收"),eq("a proposed result"));
         } finally {ds.destroy();}
     }
 }

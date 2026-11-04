@@ -1,7 +1,7 @@
 package cc.ginpika.minis.coding.runner;
 
-import cc.ginpika.minis.ai.terminal.ExecTarget;
-import cc.ginpika.minis.ai.terminal.InteractiveTerminals;
+import cc.ginpika.minis.ai.computer.terminal.ExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.InteractiveTerminals;
 import cc.ginpika.minis.coding.workspace.WorkspaceProjects;
 import java.io.IOException;
 import org.springframework.http.HttpStatus;

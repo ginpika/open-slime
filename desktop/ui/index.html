@@ -468,6 +468,10 @@
       body[data-view='mail'] .brand {
         display: none;
       }
+      /* 邮件窗口栏与 HostID 工作区同色；其它视图仍使用原有承面。 */
+      body[data-view='mail'] .stage {
+        background: var(--mail-background, var(--s-bg));
+      }
 
       /* 邮件视图本身不放内容：邮件页由壳另开一个子 webview 盖在这块内容区上
          （顶层上下文，绕开 iframe 的跨站 cookie 限制），见 desktop_show_mail */
@@ -1288,16 +1292,10 @@
       const railButtons = [...document.querySelectorAll('.rail-btn[data-view]')]
       const views = [...document.querySelectorAll('.view')]
 
-      /**
-       * 主容器的圆角与底色：邮件页是壳另开的原生子 webview，吃不到 `.stage` 的圆角，
-       * 只能让它在自己四角盖一层同色圆角挡板 —— 半径与底色就从这里现读现给（见 desktop_show_mail）。
-       * 这样主题换了也跟着走，壳里不写死任何设计值。
-       */
-      function stageCorners() {
+      /** 邮件页是原生子 webview，由它自己按主容器的半径裁剪底部两角。 */
+      function stageCornerRadius() {
         const stage = document.querySelector('.stage')
-        if (!stage) return { radius: '', color: '' }
-        const style = getComputedStyle(stage)
-        return { radius: style.borderTopLeftRadius, color: style.backgroundColor }
+        return stage ? getComputedStyle(stage).borderBottomLeftRadius : '0px'
       }
 
       function showView(name) {
@@ -1309,11 +1307,9 @@
         // 视图名挂到 body：邮件视图要铺满主容器，品牌区靠这条让位（见 CSS）
         document.body.dataset.view = name
         // 邮件页是壳另开的子 webview（不是页面里的元素），切视图时告诉壳显示 / 收起它
-        const corners = stageCorners()
         invoke('desktop_show_mail', {
           visible: name === 'mail',
-          cornerRadius: corners.radius,
-          cornerColor: corners.color,
+          cornerRadius: stageCornerRadius(),
         }).catch(() => {})
       }
 

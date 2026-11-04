@@ -6,13 +6,13 @@
 
 工作空间项目沿用现有工作空间接口的登录权限，普通已认证用户可以新建/打开项目，项目所有者来自登录会话。SSH 的 `root` 与 SSO 的 `admin` 是不同身份，不要求用户修改 SSO 角色；旧宿主路径登记 API 仍要求管理员。最新页面与权限回归见 `docs/AI-Coding页面检查与修复-2026-10-14.md`。
 
-**编码 Agent 已接入统一智能体名册**：固定身份 `builtin-coding`，名称、模型和提示词在智能体页维护；工作台与对话通过同一个 CodingFacade 操作同一任务。编码执行仍在本包内，底层与普通智能体共用 ModelLoop。新增任务归属该 Agent，保存模型选择和提示词快照；通过 `coding_task` 委派的任务关联来源会话。接线、边界和验收见 `docs/AI-Coding与智能体统一-2026-10-14.md`。
+**编程已融合到默认 Agent**：工作台沿用 `builtin` 的名称、头像、模型与身份，名册不再单列编码 Agent。编程规程保留在 `ai/skills/coding.md`，作为独立的 `coding_skill` 状态化提示词，仅由 IDE 项目执行上下文加载；普通聊天不加载。可在默认 Agent 的「提示词 & 上下文工程 → Skills · 状态化提示词」中维护版本。任务保存身份与 Skill 快照，恢复仍沿用原配置。v6 数据迁移先备份再归并任务、会话和记忆归属，原编程提示词迁为 Skill 版本；旧名册和配置行保留作归档。
 
-**组合 Agent 与持续会话已实现第一阶段**：主 Agent 按需委派 Explore、Planner、Reviewer 三种只读专家。每个子任务有独立模型循环、上下文、检查点和操作记录；共享当前任务副本与累计预算。角色配置在现有编码 Agent 页维护，不额外创建三个永久智能体。已应用的任务可以在同一会话开启下一轮，规划结果可以在原任务批准后切换模式继续实施。实现边界与验收见 `docs/AI-Coding持续会话与组合Agent-2026-10-15.md`。
+**组合 Agent 与持续会话已实现第一阶段**：主 Agent 按需委派 Explore、Planner、Reviewer 三种只读专家。每个子任务有独立模型循环、上下文、检查点和操作记录；共享当前任务副本与累计预算。角色配置在默认 Agent 页的「编程项目与任务」中维护，不额外创建三个永久智能体。已应用的任务可以在同一会话开启下一轮，规划结果可以在原任务批准后切换模式继续实施。实现边界与验收见 `docs/AI-Coding持续会话与组合Agent-2026-10-15.md`。
 
 ## 边界与职责
 
-协作主控可通过 `start_work(assignments=[{id,reviewer},...],note=...)` 一批派发 1–8 项独立 TODO；相同编码 Agent 配置的各项执行使用独立副本。运行及独立复跑受 `MINIS_CODING_RUNS` 控制（默认 2），额外工作有界排队。检查前整合最新项目基准并重新验证；同路径并发修改拒绝覆盖。子代理评估、调度协议与完整边界见 `docs/collaboration-parallel-coding.md`。
+协作主控可通过 `start_work(assignments=[{id,reviewer},...],note=...)` 一批派发 1–8 项独立 TODO；相同默认 Agent 配置的各项执行使用独立副本。运行及独立复跑受 `MINIS_CODING_RUNS` 控制（默认 2），额外工作有界排队。检查前整合最新项目基准并重新验证；同路径并发修改拒绝覆盖。子代理评估、调度协议与完整边界见 `docs/collaboration-parallel-coding.md`。
 
 工作台输入区的运行设置使用模态弹窗；“权限”菜单选择自动代码审查或手动审阅。新工作台任务默认开启自动审查，`StartRun` / `ResumeRun` 的 `autoReview` 字段保存为任务审计事件，`GET /runs/{id}/permissions` 读取当前策略。旧 API 未传该字段时沿用手动审阅；继续任务未传则保留原策略。EDIT / EXECUTE 产生非空变更后，运行时按具体产物哈希调用只读 Reviewer，并记录 `review.started` / `review.finished`。审查失败会明确展示，产物仍可手动审阅；审查从不自动应用代码。
 

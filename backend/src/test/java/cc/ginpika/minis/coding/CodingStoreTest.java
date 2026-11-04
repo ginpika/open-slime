@@ -103,10 +103,10 @@ class CodingStoreTest {
         assertFalse(store.unknownOperations(run.id()));assertTrue(store.resultForCall(run.id(),"read-1").contains("NOT_RETURNED"));
     }
     @Test void codingTasksHaveTheSameDirectoryIdentityAndOwnerScopedVisibility(){
-        assertEquals(cc.ginpika.minis.ai.core.BuiltinAgents.CODING,jdbc.queryForObject("SELECT agent_id FROM task WHERE id=?",String.class,run.taskId()));
+        assertEquals(cc.ginpika.minis.ai.core.BuiltinAgents.CORE,jdbc.queryForObject("SELECT agent_id FROM task WHERE id=?",String.class,run.taskId()));
         assertTrue(store.ownsTask("alice",run.taskId()));assertFalse(store.ownsTask("bob",run.taskId()));assertFalse(store.ownsTask(null,run.taskId()));
         jdbc.update("UPDATE task SET agent_id=NULL WHERE id=?",run.taskId());store.recover();
-        assertEquals(cc.ginpika.minis.ai.core.BuiltinAgents.CODING,jdbc.queryForObject("SELECT agent_id FROM task WHERE id=?",String.class,run.taskId()));
+        assertEquals(cc.ginpika.minis.ai.core.BuiltinAgents.CORE,jdbc.queryForObject("SELECT agent_id FROM task WHERE id=?",String.class,run.taskId()));
     }
     @Test void effectiveAgentModelAndOriginalRequestRemainDistinctForIdempotency(){
         Run selected=store.create("alice",new StartRun(run.repositoryId(),"Task", "agent-model",Mode.PLAN,Runner.DOCKER,10),10,"request-1",null,"shared agent instructions");

@@ -37,7 +37,7 @@ class GraphMigrationTest {
             assertNull(context.getStartupFailure());
             var db=new JdbcTemplate(context.getBean(javax.sql.DataSource.class));
             assertEquals("old reliable memory",db.queryForObject("SELECT body FROM graph_claim WHERE id=42",String.class));
-            assertEquals(5,db.queryForObject("SELECT version FROM _schema",Integer.class));
+            assertEquals(6,db.queryForObject("SELECT version FROM _schema",Integer.class));
             assertEquals("conflicted",db.queryForObject("SELECT status FROM graph_claim WHERE id=(SELECT claim_id FROM graph_relation WHERE id='old-r')",String.class));
             assertTrue(db.queryForList("PRAGMA foreign_key_check").isEmpty());
             assertEquals(1,db.queryForObject("SELECT count(*) FROM graph_claim_fts WHERE graph_claim_fts MATCH 'reliable'",Integer.class));

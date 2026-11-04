@@ -68,6 +68,7 @@ public final class PromptLibrary {
 
     /** 上下文 key（顺序即提示词页 tab 顺序） */
     public static final String CTX_CHAT = "chat";
+    public static final String CTX_IDE = "ide";
     /** 子代理：被派出去的匿名 worker 的 system（独立于对话，不看对话历史） */
     public static final String CTX_SUBAGENT = "subagent";
     /** 子代理回报摘要：把交回的结论压成气泡卡片（标题 + 摘要）那次调用的 system */
@@ -83,6 +84,7 @@ public final class PromptLibrary {
 
     /** 大类 key（顺序即提示词页一级标签顺序） */
     public static final String CAT_CHAT = "chat";
+    public static final String CAT_SKILLS = "skills";
     public static final String CAT_DEV = "dev";
     /** 局部大类：只在智能体内部页出现（圆桌是全员共用的一套协作机制，不属于首页对话） */
     public static final String CAT_ROUNDTABLE = "roundtable";
@@ -107,6 +109,10 @@ public final class PromptLibrary {
                             + "其后是代码控制的历史对话与本次输入。",
                     List.of(IdentityBlock.KEY, ChatGuidanceBlock.KEY, TerminalBlock.KEY),
                     List.of(history(), input("代码控制：用户这一次发送的问题。"))),
+            new PromptContext(CTX_IDE, "编程 IDE",
+                    "仅在编程 IDE 的项目任务运行时加载。沿用默认 Agent 的身份与模型，普通聊天不启用编程 Skill。",
+                    List.of(cc.ginpika.minis.ai.core.prompt.skill.CodingSkill.KEY),
+                    List.of(input("代码控制：当前项目、任务模式、项目约定与实际可用工具。"))),
             new PromptContext(CTX_ROUNDTABLE, "圆桌",
                     "成员在圆桌上说话时的 system：它自己的人格（上一个分类那套）之后接这段协作规程，"
                             + "再往下是调度文书。协作规程逐成员一份（存在该成员的 agent_prompt_* 里），"
@@ -158,6 +164,9 @@ public final class PromptLibrary {
                     "与用户直接对话、以及对话派出去的子代理所用的上下文："
                             + "提示词块拼成 system，其后是代码控制的历史与本次输入。",
                     List.of(CTX_CHAT, CTX_SUBAGENT, CTX_SUBAGENT_SUMMARY)),
+            new PromptCategory(CAT_SKILLS, "Skills · 状态化提示词",
+                    "按工作状态启用的提示词。由实际运行场景激活，不根据聊天关键词自动加载。",
+                    List.of(CTX_IDE)),
             new PromptCategory(CAT_DEV, "开发者选项",
                     "文档→图谱流水线上的自动环节（切分、摘要、知识抽取与入库、chunk 增强），"
                             + "与工具和知识图谱强相关；不了解 agentic 流程的话，通常无需改动。",

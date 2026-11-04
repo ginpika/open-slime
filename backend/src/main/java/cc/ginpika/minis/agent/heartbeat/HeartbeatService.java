@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.core.type.TypeReference;
 import cc.ginpika.minis.ai.knowledge.ingest.KnowledgeToolbox;
-import cc.ginpika.minis.ai.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
 import cc.ginpika.minis.agent.chat.ChatThreads;
 import cc.ginpika.minis.agent.chat.SubagentTool;
 import cc.ginpika.minis.agent.chat.HeartbeatTool;

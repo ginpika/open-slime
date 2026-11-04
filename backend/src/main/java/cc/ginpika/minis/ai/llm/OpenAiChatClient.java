@@ -272,6 +272,7 @@ public class OpenAiChatClient {
 
     /** 递归累加节点内所有文本的估算 token 数（messages / tools / 聚合后的 message） */
     private static long estimateText(JsonNode node) {
+        if (node != null && "image_url".equals(node.path("type").asText())) return 4096;
         if (node == null || node.isMissingNode() || node.isNull()) {
             return 0;
         }

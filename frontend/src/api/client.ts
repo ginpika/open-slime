@@ -222,6 +222,8 @@ export type ChatStreamHandlers = {
   onTool?: (tool: { name: string; args: string }) => void
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 /**
  * 流式发问（SSE）：增量片段随回调实时到达，resolve 为最终回复（落库正本）。
  *
@@ -237,13 +239,14 @@ export async function chatStream(
   promptId: string | undefined,
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
+  reasoningEffort?: ReasoningEffort,
 ): Promise<ChatReply> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
   const res = await apiFetch('/api/chat/stream', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId, input, modelId, promptId }),
+    body: JSON.stringify({ sessionId, input, modelId, promptId, reasoningEffort }),
     signal,
   })
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''))
@@ -316,6 +319,11 @@ export function stopChat(sessionId: string): Promise<{ stopped: boolean }> {
 /** 最近会话列表（按更新时间倒序，首位即最近会话） */
 export function listSessions(): Promise<SessionItem[]> {
   return requestJson<SessionItem[]>('/api/sessions')
+}
+
+/** Lightweight sidebar previews; unlike reading a conversation, this keeps unread state. */
+export function sessionPreviews(): Promise<Record<string, string>> {
+  return requestJson<Record<string, string>>('/api/sessions/previews')
 }
 
 /* ---------- 在途生成（断点续传）：刷新/换标签页后重挂到后端还在跑的生成 ---------- */
@@ -1030,6 +1038,8 @@ export type ModelView = {
   contextWindow: number | null
   builtin: boolean
   maxOutputTokens?: number | null
+  /** Per-turn reasoning levels supported by this model; an empty list keeps provider defaults. */
+  reasoningEfforts?: ReasoningEffort[]
 }
 
 export type ModelRequest = {

@@ -3,7 +3,7 @@ package cc.ginpika.minis.agent.member;
 import cc.ginpika.minis.agent.member.AgentStore;
 import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.RoundtableSessionStore;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import cc.ginpika.minis.ai.core.BuiltinAgents;
 import cc.ginpika.minis.ai.core.tool.AiTool;
 import cc.ginpika.minis.ai.core.tool.ToolManager;

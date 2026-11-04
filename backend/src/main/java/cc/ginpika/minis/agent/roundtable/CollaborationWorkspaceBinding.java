@@ -1,7 +1,7 @@
 package cc.ginpika.minis.agent.roundtable;
 
 import cc.ginpika.minis.ai.core.UserScope;
-import cc.ginpika.minis.ai.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
 import cc.ginpika.minis.coding.api.CodingDtos;
 import cc.ginpika.minis.coding.workspace.WorkspaceProjects;
 import cc.ginpika.minis.project.ProjectStore;

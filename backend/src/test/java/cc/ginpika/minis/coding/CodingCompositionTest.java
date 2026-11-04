@@ -85,7 +85,7 @@ class CodingCompositionTest {
         var first=json.createObjectNode().put("role","assistant").put("reasoning_content","先确认读取范围");first.putArray("tool_calls").add(call("apply_patch",Map.of("patches",List.of())));
         AtomicInteger requests=new AtomicInteger();
         when(client.chatRaw(any(),any(),any(),anyString(),any())).thenAnswer(inv->{
-            assertEquals("alice",UserScope.get());assertEquals(BuiltinAgents.CODING,AgentScope.get());assertNotNull(CodingExecutionScope.get());
+            assertEquals("alice",UserScope.get());assertEquals(BuiltinAgents.CORE,AgentScope.get());assertNotNull(CodingExecutionScope.get());
             ObjectNode body=inv.getArgument(1);assertFalse(body.path("tools").toString().contains("delegate_agent"));assertFalse(body.path("tools").toString().contains("apply_patch"));
             String system=body.path("messages").get(0).path("content").asText();assertTrue(system.contains("Explore"));assertFalse(system.contains("主 Agent，负责"));assertFalse(system.contains("delegate_agent"));
             assertFalse(body.path("messages").toString().contains("主会话私有上下文"));

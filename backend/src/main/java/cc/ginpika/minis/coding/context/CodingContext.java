@@ -44,7 +44,12 @@ public class CodingContext {
         ModelLoop.ensureReasoning(result);
         return result;
     }
-    public String system(Run run,Repository repo,String instructions){return (instructions==null?"":"智能体配置：\n"+instructions+"\n\n编码运行契约：\n")+prompt(run,repo);}
+    public String system(Run run,Repository repo,String instructions){
+        // Pre-merge checkpoints saved identity only; the coding rules used to be appended separately.
+        String configured=instructions==null?"":"智能体配置：\n"+instructions;
+        if(instructions==null || !instructions.contains("<coding_skill>")) configured+="\n"+CodingPrompts.MAIN;
+        return configured+projectContext(run,repo);
+    }
     public String specialistSystem(Run run,Repository repo,String instructions){
         return """
                 你正在执行主 Agent 委派的一个独立只读子任务，角色配置如下：
@@ -97,9 +102,6 @@ public class CodingContext {
         messages.removeAll(); messages.addAll(kept);
         if(cc.ginpika.minis.stats.TokenUsageService.estimateTokens(body.toString())>tokenBudget){throw new ContextOverflow("压缩后请求仍超过模型上下文窗口，检查点已保存");}
         store.event(run.id(),"context.compacted",Map.of("remainingMessages",messages.size(),"budgetTokens",tokenBudget));
-    }
-    private String prompt(Run run,Repository repo) {
-        return CodingPrompts.MAIN+projectContext(run,repo);
     }
     private String projectContext(Run run,Repository repo) {
         StringBuilder rules=new StringBuilder();

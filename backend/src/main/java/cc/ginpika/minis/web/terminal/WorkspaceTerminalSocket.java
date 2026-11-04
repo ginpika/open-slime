@@ -1,6 +1,6 @@
 package cc.ginpika.minis.web.terminal;
 
-import cc.ginpika.minis.ai.terminal.WorkspaceTerminals;
+import cc.ginpika.minis.ai.computer.terminal.WorkspaceTerminals;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 

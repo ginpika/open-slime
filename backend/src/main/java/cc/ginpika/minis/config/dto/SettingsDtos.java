@@ -1,6 +1,7 @@
 package cc.ginpika.minis.config.dto;
 
 import cc.ginpika.minis.ai.core.prompt.dto.PromptDtos;
+import cc.ginpika.minis.config.ModelReasoning;
 import java.util.List;
 
 /** 设置页请求/响应对（config/SettingsService ↔ 前端）；提示词见 {@link PromptDtos} */
@@ -10,7 +11,9 @@ public final class SettingsDtos {
      *  contextWindow=上下文窗口（token 数）；保存时留空会尝试从模型 API 获取，空值仅见于历史数据、
      *  前端按默认值兜底 */
     public record ModelView(String id, String name, String baseUrl, String apiKey, String model,
-                            Integer contextWindow, boolean builtin,Integer maxOutputTokens) {
+                            Integer contextWindow, boolean builtin,Integer maxOutputTokens,
+                            List<String> reasoningEfforts) {
+        public ModelView(String id,String name,String baseUrl,String apiKey,String model,Integer contextWindow,boolean builtin,Integer maxOutputTokens){this(id,name,baseUrl,apiKey,model,contextWindow,builtin,maxOutputTokens,ModelReasoning.efforts(model));}
         public ModelView(String id,String name,String baseUrl,String apiKey,String model,Integer contextWindow,boolean builtin){this(id,name,baseUrl,apiKey,model,contextWindow,builtin,null);}
     }
 

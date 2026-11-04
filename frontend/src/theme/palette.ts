@@ -25,11 +25,11 @@ export const DEFAULT_THEME_ID: ThemeId = 'old'
 /** 主题 → 两档种子 */
 export const SEEDS: Record<ThemeId, Record<Scheme, ThemeSeed>> = {
   astrolabe: ASTROLABE_PALETTES.brass,
-  /* -------------------------------------------------------- Tailwind Mono
-   * 原 Old（现默认）：近纯黑墨 + 中性灰线 + 无彩点缀。极简、无阴影。 */
+  /* -------------------------------------------------------- Slime / Mono
+   * 浅档采用 GitHub 的白底、冷灰文字与绿色行动色；深档用纯暗底与荧光绿。 */
   old: {
-    light: { primary: '#0f0f0f', secondary: '#8b8f96', accent: '#0f0f0f', base: '#ffffff' },
-    dark: { primary: '#ededed', secondary: '#8b8f96', accent: '#ededed', base: '#101010' },
+    light: { primary: '#1f2328', secondary: '#8ca0b2', accent: '#1f883d', base: '#ffffff' },
+    dark: { primary: '#e6edf3', secondary: '#5b6670', accent: '#c8ff5f', base: '#0d0f10' },
   },
 
   /* ----------------------------------------------------------- Endfield

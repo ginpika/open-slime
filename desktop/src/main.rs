@@ -24,8 +24,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backend;
+mod computer;
 mod config;
 mod economy_capture;
+mod mail_appearance;
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -716,31 +718,27 @@ fn hide_mail_webview(app: &AppHandle) {
 /// 1. **去掉根层的底**：`html` / `body` 置透明（源站的元素都挂在 `body > #root`，那层底色照旧保留），
 ///    容器底色便能从根层透出来。注意 CSS 的**背景传播**：根元素没有背景时，`body` 的底会被提升去
 ///    铺满整个画布，所以两层必须一起清，只清 `html` 等于没清。
-/// 2. **圆角遮罩**：铺满视口、与主容器同色的圆角矩形，用 `box-shadow` 盖住四角之外——原生子窗口
-///    吃不到页面 CSS 的 `border-radius`，也不能用 Win32 的 1 位窗口区域（锯齿明显），
-///    只能让浏览器来画这段圆弧；那块颜色和主容器一模一样，接缝看不出来。
+/// 2. **底部圆角裁剪**：在邮件文档自身裁掉视口下沿的两角，让透明 WebView 露出壳的磨砂层。
+///    原生子窗口不受 `.stage` 的 CSS 裁剪；用白色阴影补角会把磨砂层再次盖住。
+///    邮件区从标题栏下方开始，上沿保持直角，与标题栏无缝衔接。
 ///
-/// <p>半径与底色不写死：引导页切视图时现读 `.stage` 的 `border-radius` / `background-color`
-/// 传进来，随主题变化自动跟着走。同一个脚本可重复执行：变量每次都更新，节点只建一次。
-fn mail_fit_script(radius: &str, color: &str) -> String {
+/// <p>半径由引导页现读 `.stage` 的圆角传入。同一个脚本可重复执行：变量每次都更新，节点只建一次。
+fn mail_fit_script(radius: &str) -> String {
     let radius = serde_json::to_string(radius).unwrap_or_else(|_| "\"\"".into());
-    let color = serde_json::to_string(color).unwrap_or_else(|_| "\"\"".into());
     r#"(function () {
   var root = document.documentElement
   if (!root) return
   root.style.setProperty('--minis-mail-radius', __RADIUS__)
-  root.style.setProperty('--minis-mail-corner', __COLOR__)
   if (document.getElementById('minis-mail-style')) return
   var style = document.createElement('style')
   style.id = 'minis-mail-style'
   style.textContent = [
     'html, body { background-color: transparent !important; background-image: none !important; }',
-    'html::after { content: ""; position: fixed; inset: 0; border-radius: var(--minis-mail-radius, 0px); box-shadow: 0 0 0 100vmax var(--minis-mail-corner, transparent); pointer-events: none; z-index: 2147483647; }'
+    'html { height: 100% !important; clip-path: inset(0 round 0 0 var(--minis-mail-radius, 0px) var(--minis-mail-radius, 0px)) !important; }'
   ].join('\n')
   ;(document.head || root).appendChild(style)
 })()"#
         .replace("__RADIUS__", &radius)
-        .replace("__COLOR__", &color)
 }
 
 /// 显示 / 隐藏邮件页（引导页切到「邮件」视图时调用）。
@@ -749,17 +747,12 @@ fn mail_fit_script(radius: &str, color: &str) -> String {
 /// （SameSite=Lax 的 sso_token）与浏览器的第三方 cookie 限制都不影响它；它铺满引导页「主视图」
 /// 区域，左侧菜单栏与自绘标题栏仍是引导页画的，照旧在。
 ///
-/// <p>`corner_radius` / `corner_color` 是引导页现读的主容器圆角与底色，用来让邮件页的根层透明、
-/// 并在四角盖同色挡板（见 mail_fit_script）——原生子窗口吃不到页面圆角，只能让它自己长出来。
+/// <p>`corner_radius` 是引导页现读的主容器圆角，用来在邮件文档内部裁剪底部两角
+/// （见 mail_fit_script），角外保持透明，露出下层磨砂背景。
 ///
 /// <p>首次显示才创建；隐藏只收起、不销毁，来回切换是瞬时的。
 #[tauri::command]
-fn desktop_show_mail(
-    app: AppHandle,
-    visible: bool,
-    corner_radius: Option<String>,
-    corner_color: Option<String>,
-) {
+fn desktop_show_mail(app: AppHandle, visible: bool, corner_radius: Option<String>) {
     // 新建 webview 不能在命令线程里做（Windows 上会死锁），统一放后台线程
     std::thread::spawn(move || {
         let Some(window) = app.get_window(WINDOW_LABEL) else {
@@ -769,10 +762,7 @@ fn desktop_show_mail(
             hide_mail_webview(&app);
             return;
         }
-        let fit = mail_fit_script(
-            corner_radius.as_deref().unwrap_or_default(),
-            corner_color.as_deref().unwrap_or_default(),
-        );
+        let fit = mail_fit_script(corner_radius.as_deref().unwrap_or("0px"));
         let address = mail_address(&app);
         if address.is_empty() {
             eprintln!("[minis-desktop] 还没配邮件地址：到引导页「用户」视图填，或用 hostid 地址兜底");
@@ -785,8 +775,10 @@ fn desktop_show_mail(
 
         if let Some(webview) = app.get_webview(MAIL_WEBVIEW) {
             let _ = webview.set_bounds(mail_bounds(&window));
-            // 圆角/底色可能换了（主题变了）：脚本事后重复执行一遍即可
+            // 圆角可能换了：脚本事后重复执行一遍即可
             let _ = webview.eval(&fit);
+            // 引导页可能重新加载过：重新发布当前外观快照，同步窗口栏底色。
+            let _ = webview.eval(mail_appearance::SCRIPT);
             let _ = webview.show();
             let _ = webview.set_focus();
             return;
@@ -798,7 +790,21 @@ fn desktop_show_mail(
                 // 透明底：WebView2 默认铺一层白底，加载中/页面透明处会露出来；
                 // 置空后透出下层（引导页的主容器），和主窗口一样是透的
                 .transparent(true)
-                .initialization_script(&fit),
+                .initialization_script(&fit)
+                .initialization_script(mail_appearance::SCRIPT)
+                .on_navigation({
+                    let nav_app = app.clone();
+                    move |nav| mail_appearance::intercept_navigation(&nav_app, nav)
+                })
+                .on_page_load({
+                    let page_app = app.clone();
+                    move |_webview, payload| {
+                        if matches!(payload.event(), PageLoadEvent::Started) {
+                            // 换地址 / 登录跳转后，等待新页面发布自己的外观。
+                            mail_appearance::reset(&page_app);
+                        }
+                    }
+                }),
             bounds.position,
             bounds.size,
         ) {
@@ -1537,6 +1543,9 @@ fn persist_sso_user(app: &AppHandle, payload: &str) {
  * ------------------------------------------------------------------ */
 
 fn main() {
+    if let Some(code) = computer::run_cli() {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         // 单实例必须最先注册：本机后端含 SQLite(WAL) 与进程内心跳/圆桌状态，不能双开
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

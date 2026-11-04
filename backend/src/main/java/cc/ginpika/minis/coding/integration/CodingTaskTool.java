@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 public class CodingTaskTool implements AiTool {
     public static final String NAME="coding_task";
     public String name(){return NAME;}
-    public String description(){return "编码任务入口。list 列出本项目、executionAuthorized 和当前待办的 collaborationRuns；主控可用 start_work 的 assignments 批量派发独立待办，同一编码 Agent 配置的各次执行使用独立副本，运行名额不足会排队。普通聊天 start 仅 PLAN/EDIT，有效执行派工可 start(mode=EXECUTE) 修改副本并运行命令。read 等待同一 runId（最多 30 秒）；diff/operations 读取实际差异与工具证据；message/resume(mode=EXECUTE) 继续同一副本；cancel 停止。执行者必须要求 run_validation 绑定当前版本。检查者用 verify 整合最新项目中的其他改动并独立复跑验证，必须重新读取整合后的 diff/operations，再 review_todo 接受。相同路径的并发修改会报 APPLICATION_CONFLICT，保留双方内容交主控整合，不能强行覆盖。不能自行提交、推送或部署。";}
+    public String description(){return "编码任务入口。list 列出本项目、executionAuthorized 和当前待办的 collaborationRuns；主控可用 start_work 的 assignments 批量派发独立待办，同一默认 Agent 配置的各次执行使用独立副本，运行名额不足会排队。普通聊天 start 仅 PLAN/EDIT，有效执行派工可 start(mode=EXECUTE) 修改副本并运行命令。read 等待同一 runId（最多 30 秒）；diff/operations 读取实际差异与工具证据；message/resume(mode=EXECUTE) 继续同一副本；cancel 停止。执行者必须要求 run_validation 绑定当前版本。检查者用 verify 整合最新项目中的其他改动并独立复跑验证，必须重新读取整合后的 diff/operations，再 review_todo 接受。相同路径的并发修改会报 APPLICATION_CONFLICT，保留双方内容交主控整合，不能强行覆盖。不能自行提交、推送或部署。";}
 
     public Set<ToolSurface> surfaces(){return Set.of(ToolSurface.CHAT);}
     public ToolRisk risk(){return ToolRisk.WRITE;}

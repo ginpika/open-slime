@@ -26,7 +26,7 @@ public class CodingExecutionStore {
         try{return tx.execute(status->{
             long now=System.currentTimeMillis();String id=UUID.randomUUID().toString();
             jdbc.update("INSERT INTO task(parent_id,kind,status,title,agent_id,model_id,workspace_id,payload,origin,created_at,updated_at) VALUES(?,'code','pending',?,?,?,?,?,'coding',?,?)",
-                    run.taskId(),title,BuiltinAgents.CODING,modelId,run.repositoryId(),run.id(),now,now);
+                    run.taskId(),title,BuiltinAgents.CORE,modelId,run.repositoryId(),run.id(),now,now);
             long task=jdbc.queryForObject("SELECT last_insert_rowid()",Long.class);
             jdbc.update("INSERT INTO coding_execution(id,run_id,task_id,role,title,prompt,model_id,instructions,config_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',?,?)",
                     id,run.id(),task,role.id(),title,prompt,modelId,role.instructions(),role.version(),now,now);

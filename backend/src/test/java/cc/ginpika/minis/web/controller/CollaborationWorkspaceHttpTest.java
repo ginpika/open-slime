@@ -9,8 +9,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import cc.ginpika.minis.agent.roundtable.*;
 import cc.ginpika.minis.agent.workspace.WorkspaceService;
 import cc.ginpika.minis.ai.core.UserScope;
-import cc.ginpika.minis.ai.terminal.ExecTarget;
-import cc.ginpika.minis.ai.terminal.store.TerminalStore;
+import cc.ginpika.minis.ai.computer.terminal.ExecTarget;
+import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import cc.ginpika.minis.coding.config.CodingProps;
 import cc.ginpika.minis.coding.repository.CodingWorkspace;
 import cc.ginpika.minis.coding.store.CodingStore;

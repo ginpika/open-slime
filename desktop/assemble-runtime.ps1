@@ -4,6 +4,7 @@
 # 按 branding.json 的 slug 去找 <slug>-backend.jar 与 jre/bin/javaw.exe（见 src/backend.rs 的
 # runtime_dir）。所以改名 slug 之后必须重跑本脚本，否则壳会报"未找到内置后端运行时"。
 #
+# macOS / Linux 使用同目录的 assemble-runtime.sh，见 README.md。
 # 用法（在 desktop/ 目录执行；从别处调用也行，脚本按自身位置解析路径）：
 #   powershell -ExecutionPolicy Bypass -File assemble-runtime.ps1
 #   powershell -ExecutionPolicy Bypass -File assemble-runtime.ps1 -SkipFrontend

@@ -43,7 +43,7 @@ import cc.ginpika.minis.ai.core.tool.subagent.DelegateSubagentTool;
 import cc.ginpika.minis.ai.core.tool.subagent.ReadSubagentRunTool;
 import cc.ginpika.minis.ai.core.tool.terminal.ListTerminalsTool;
 import cc.ginpika.minis.ai.core.tool.terminal.RunCommandTool;
-import cc.ginpika.minis.ai.terminal.TerminalService;
+import cc.ginpika.minis.ai.computer.terminal.TerminalService;
 import cc.ginpika.minis.config.ContextProps;
 import cc.ginpika.minis.config.MemoryProps;
 import cc.ginpika.minis.config.RoundtableProps;

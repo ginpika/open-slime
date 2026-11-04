@@ -1,6 +1,7 @@
 //! 本机后端的生命周期：拉起内置 JRE + fat jar，盯住 stdout 等 READY 握手，再让窗口跳过去。
 //!
-//! 运行时（jlink 裁剪出的 jre/ + 后端 jar）由 `desktop/assemble-runtime.ps1` 组装到
+//! 运行时（jlink 裁剪出的 jre/ + 后端 jar）由 `desktop/assemble-runtime.ps1`（Windows）
+//! 或 `desktop/assemble-runtime.sh`（macOS / Linux）组装到
 //! `desktop/runtime/`，打包时作为 Tauri resources 随应用分发，运行期从 resource_dir 取。
 //! 开发时可用环境变量 `MINIS_DESKTOP_RUNTIME` 直接指向该目录，省去每次重新打包。
 
@@ -64,8 +65,13 @@ fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
             return Ok(dir.clone());
         }
     }
+    let assemble_command = if cfg!(windows) {
+        "powershell -ExecutionPolicy Bypass -File assemble-runtime.ps1"
+    } else {
+        "bash assemble-runtime.sh"
+    };
     Err(format!(
-        "未找到内置后端运行时；已尝试：{}。请先在 desktop/ 目录执行 assemble-runtime.ps1 组装",
+        "未找到内置后端运行时；已尝试：{}。请先在 desktop/ 目录执行 {assemble_command} 组装",
         candidates
             .iter()
             .map(|p| p.display().to_string())
@@ -141,6 +147,13 @@ pub fn start(app: &AppHandle, token: &str) -> Result<(), String> {
             "--server.port=0".to_string(),
         ])
         .env("MINIS_DESKTOP", "1")
+        .env(
+            "MINIS_COMPUTER_WINDOW_HELPER",
+            std::env::current_exe()
+                .map_err(|e| format!("无法定位窗口截图程序：{e}"))?
+                .to_string_lossy()
+                .to_string(),
+        )
         .env("MINIS_LOCAL_TOKEN", token)
         .env("MINIS_LOCAL_USER_NAME", user_name)
         .env("MINIS_LOCAL_USER_AVATAR", user_avatar)

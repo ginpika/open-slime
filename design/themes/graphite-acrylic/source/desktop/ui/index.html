@@ -1,0 +1,1882 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title></title>
+    <style>
+      /* ============================================================================
+       * 引导页 = 桌面壳的启动器界面。
+       *
+       * 结构照 docs/endfield-launcher-demo.html：整窗一圈亚克力（--pad 10px）→
+       * 左侧独立圆角「菜单栏」（竖排）+ 右侧独立圆角「主视图」。
+       * 窗口已去掉系统装饰（见 src/main.rs 的 .decorations(false)），因此标题栏
+       * 也在这里自绘：主视图顶部一行（左段拖拽区 + 右段身份胶囊与窗口按钮），
+       * 以及四个窗缘的缩放手柄（#rz）。都经 desktop_window_* 命令回落系统行为。
+       *
+       * 本页跑在 tauri 源（壳自带资源）上，跳到 HTTP 源后即卸载；主应用的标题栏
+       * 由 frontend 的桌面框架另绘一份，两者共用同一组 desktop_window_* 命令。
+       * ========================================================================= */
+      :root {
+        --pad: 12px; /* 亚克力圈宽度 */
+        --gap: 10px; /* 菜单栏与主视图的间距 */
+        --rail-w: 88px; /* 左侧菜单栏宽度 */
+        /* 外壳 / 菜单栏 / 主视图共用同一个圆角：外壳的圆角与内部两个容器完全一致 */
+        --radius: 20px;
+        --r-card: 20px; /* 容器内卡片圆角 */
+
+        /* 深色轨（菜单栏 / 标题栏那排按钮）的字色 */
+        --yellow: #ffcf1b;
+        --text: #f2f4f8;
+        --text-dim: #9aa2b1;
+        --text-mute: #6f7787;
+
+        /* 主视图（黑白商务轨）：白底、墨字、1px 描边、零阴影。
+           与前端 Tailwind Mono 轨同源——底色白、主色近黑、线条 12% 墨 */
+        --s-bg: #ffffff;
+        --s-fg: #0f0f0f;
+        --s-muted: #6b7280;
+        --s-faint: #9ca3af;
+        --s-line: rgba(15, 15, 15, 0.12);
+        --s-line-strong: rgba(15, 15, 15, 0.3);
+        --s-fill: rgba(15, 15, 15, 0.04);
+        --s-danger: #c0392b;
+        --s-ok: #0f9d58;
+
+        /* 两个容器的轻量外阴影：近处一层薄边 + 远处一层大扩散，低透明度——
+           只把容器从亚克力上「托」起来，不当投影用。扩散半径略大于那一圈
+           亚克力（--pad），贴窗口边会被外壳裁掉一点，视觉上正好收住 */
+        --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.08), 0 10px 24px rgba(0, 0, 0, 0.14);
+
+        /* 标题栏控件（用户按钮 / 窗口按钮）的落影：同样是深色实底压在白色承面上，
+           只是控件小，影也收小一档 */
+        --shadow-chip: 0 1px 2px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.1);
+        /* 选中态：比 --shadow-card 更大更沉一档，用来把卡片从台面上"抬起来"（替代描边提示） */
+        --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.1), 0 16px 36px rgba(0, 0, 0, 0.18);
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      /* 关掉按钮的原生外观：WebView2 会按系统主题给 <button> 画「上亮下暗」的斜角填充，
+         把实底色冲淡成渐变（Chrome 不会）。主应用那份规则在 frontend/src/index.css，两处成对保留 */
+      button,
+      [type='button'],
+      [type='submit'] {
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        color-scheme: dark;
+        font:
+          14px/20px 'PingFang SC',
+          'Microsoft YaHei',
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        color: var(--text);
+        /* 页面不铺底色：窗口本身是透明的（见 src/main.rs 的 .transparent(true)），
+           桌面从这里透出来 —— 外壳的圆角外、以及那一圈亚克力里看到的都是它 */
+        background: transparent;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ------------------------------------------------ 自绘标题栏：窗缘缩放热区 */
+
+      /* 窗缘缩放手柄：无边框后系统不再给缩放热区，这里补一圈 5px 的透明热区 */
+      #rz {
+        position: fixed;
+        inset: 0;
+        z-index: 70;
+        pointer-events: none;
+      }
+      #rz i {
+        position: absolute;
+        pointer-events: auto;
+      }
+      #rz i[data-dir='North'] {
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 5px;
+        cursor: ns-resize;
+      }
+      #rz i[data-dir='South'] {
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 5px;
+        cursor: ns-resize;
+      }
+      #rz i[data-dir='West'] {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 5px;
+        cursor: ew-resize;
+      }
+      #rz i[data-dir='East'] {
+        top: 0;
+        bottom: 0;
+        right: 0;
+        width: 5px;
+        cursor: ew-resize;
+      }
+      #rz i[data-dir='NorthWest'] {
+        top: 0;
+        left: 0;
+        width: 12px;
+        height: 12px;
+        cursor: nwse-resize;
+      }
+      #rz i[data-dir='NorthEast'] {
+        top: 0;
+        right: 0;
+        width: 12px;
+        height: 12px;
+        cursor: nesw-resize;
+      }
+      #rz i[data-dir='SouthWest'] {
+        bottom: 0;
+        left: 0;
+        width: 12px;
+        height: 12px;
+        cursor: nesw-resize;
+      }
+      #rz i[data-dir='SouthEast'] {
+        bottom: 0;
+        right: 0;
+        width: 12px;
+        height: 12px;
+        cursor: nwse-resize;
+      }
+
+      /* ------------------------------------------------------------ 外壳 */
+
+      .shell {
+        position: relative;
+        height: 100vh;
+        padding: var(--pad);
+        display: flex;
+        gap: var(--gap);
+        /* 外壳圆角与内部两个容器一致；圆角外露出壁纸，外壳才是一块浮起来的亚克力板 */
+        border-radius: var(--radius);
+        overflow: hidden;
+      }
+      /* 最底层：白色亚克力磨砂遮罩。
+         磨砂的「糊」由系统做——blur/acrylic 是窗口级效果，CSS 的 backdrop-filter 只能
+         糊页面自己的内容，糊不到窗口背后的桌面；所以这里不写 backdrop-filter，
+         只压一层很薄的白当磨砂质感 —— 白给重了背后的内容就糊没了 */
+      .acrylic {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        border-radius: var(--radius);
+        background: rgba(200, 200, 200, 0.3);
+      }
+      .acrylic::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(150deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 32%, transparent 60%);
+        pointer-events: none;
+      }
+
+      /* ------------------------------------------- 左：菜单栏（独立圆角容器） */
+
+      .rail {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex: none;
+        flex-direction: column;
+        align-items: center;
+        width: var(--rail-w);
+        padding: 16px 0 18px;
+        border-radius: var(--radius);
+        /* 实底不透明：菜单栏是一块压在亚克力上的板，不再透出窗口后面的内容 */
+        background: #1c1b1d;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+          /* 轻量外阴影 */
+          var(--shadow-card);
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      /* 品牌标：白色圆底 + 深色 logo（图本身就是深色 + 透明底，不用再上色） */
+      .rail-logo {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        background: #fff;
+      }
+      .rail-logo img {
+        width: 46px;
+        height: 46px;
+      }
+      .rail-menu {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 42px;
+      }
+      .rail-foot {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: auto;
+      }
+      .rail-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        border: 0;
+        border-radius: 11px;
+        background: transparent;
+        color: var(--text-mute);
+        cursor: pointer;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .rail-btn svg {
+        width: 20px;
+        height: 20px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .rail-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+      }
+      /* .rail-btn 是 inline-flex，[hidden] 必须显式压回 display:none。
+         邮件入口默认不露出，接入过 hostid 才显示（见 renderMailEntry） */
+      .rail-btn[hidden] {
+        display: none;
+      }
+      .rail-btn[aria-current='page'] {
+        background: rgba(255, 207, 27, 0.16);
+        color: var(--yellow);
+      }
+
+      /* ------------------------------------------- 右：主视图（独立圆角容器） */
+
+      /* 主视图容器：黑白商务的承面 —— 实底白，不再是 demo 那块紫蓝渐变 */
+      .stage {
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        min-width: 0;
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--s-bg);
+        /* 轻量外阴影（与菜单栏同一个令牌，两块容器同一高度） */
+        box-shadow: var(--shadow-card);
+      }
+      .stage-body {
+        position: relative;
+        z-index: 2;
+        height: 100%;
+        overflow-y: auto;
+        padding: 72px 44px 36px;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(15, 15, 15, 0.2) transparent;
+      }
+
+      /* 进入实例的过渡层：铺满主视图（被 .stage 的圆角裁切），z 在内容之上、标题栏之下——
+         标题栏的窗口按钮仍可点，不然过渡期间关不掉窗口。
+         静止态 blur(0) + opacity 0；--on 时清晰 → 模糊渐入，撤下时模糊 → 清晰渐出 */
+      .veil {
+        position: absolute;
+        inset: 0;
+        z-index: 55;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* 与主容器同圆角：不能只靠父级 overflow:hidden 裁切——带 backdrop-filter 的层
+           在圆角裁切上不可靠，自己带上圆角才稳 */
+        border-radius: inherit;
+        background: rgba(255, 255, 255, 0.35);
+        backdrop-filter: blur(0px);
+        -webkit-backdrop-filter: blur(0px);
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          opacity 0.6s ease,
+          backdrop-filter 0.6s ease;
+      }
+      .veil--on {
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        opacity: 1;
+        pointer-events: auto;
+      }
+      /* Tailwind 式转圈：细环 + 一段深色弧（border-top），线性匀速 */
+      .veil-spinner {
+        width: 28px;
+        height: 28px;
+        border: 2px solid var(--s-line);
+        border-top-color: var(--s-fg);
+        border-radius: 999px;
+        animation: veil-spin 0.8s linear infinite;
+      }
+      @keyframes veil-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* 主视图顶部一行：左段空位是拖拽区，右段是身份胶囊 + 窗口按钮。
+         拖拽区与按钮是同一 flex 行里的兄弟（不是盖在按钮上的一层遮罩），
+         所以有按钮的那一段自然不参与拖拽 */
+      .topbar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 61;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 12px 0 8px;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      /* 没有按钮的那一段：data-tauri-drag-region 由框架内置脚本接管（单击拖拽、双击最大化） */
+      .topbar-drag {
+        flex: 1;
+        align-self: stretch;
+      }
+      .user-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 260px;
+        height: 32px;
+        padding: 0 14px 0 8px;
+        border: 0;
+        border-radius: 16px;
+        /* 与标题栏那三个窗口按钮同一套：实底 #1c1b1d，hover 提亮一档 */
+        background: #1c1b1d;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+          /* 优雅落影：深色实底压在白色承面上，只托起一点点 */
+          var(--shadow-chip);
+        color: #e8ebf2;
+        font: inherit;
+        font-size: 13px;
+        letter-spacing: 0.4px;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      .user-chip:hover {
+        background: #3a393d;
+      }
+      .chip-name {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .wbtn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-dim);
+        cursor: pointer;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .wbtn svg {
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .wbtn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+      }
+      /* 标题栏那三个窗口按钮：实底 #1c1b1d（与菜单栏同色），hover 提亮一档。
+         用 .topbar 限定作用域——提示条里的关闭钮也复用 .wbtn，不该跟着变实底 */
+      .topbar .wbtn {
+        background: #1c1b1d;
+        border-radius: 50%;
+        /* 与用户按钮同一个落影令牌，这一排控件看起来才在同一高度 */
+        box-shadow: var(--shadow-chip);
+      }
+      .topbar .wbtn:hover {
+        background: #3a393d;
+        color: #fff;
+      }
+
+      /* -------------------------------------------------------- 品牌与卡片 */
+
+      .brand {
+        margin-bottom: 28px;
+      }
+      .brand-cn {
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: var(--s-fg);
+      }
+      .brand-en {
+        margin-top: 6px;
+        color: var(--s-muted);
+        font-size: 13px;
+      }
+
+      .view {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        max-width: 620px;
+      }
+      .view[hidden] {
+        display: none;
+      }
+
+      /* 邮件视图铺满主容器：邮件页是壳的子 webview、盖住整块 .stage，
+         品牌区（品牌名 + 标语）在这一档让位，别从邮件页上沿露出来 */
+      body[data-view='mail'] .brand {
+        display: none;
+      }
+
+      /* 邮件视图本身不放内容：邮件页由壳另开一个子 webview 盖在这块内容区上
+         （顶层上下文，绕开 iframe 的跨站 cookie 限制），见 desktop_show_mail */
+      .view[data-view='mail'] {
+        max-width: none;
+      }
+
+      /* 卡片：白底 + 1px 描边，零阴影（黑白轨的signature） */
+      .card {
+        padding: 20px;
+        border: 1px solid var(--s-line);
+        border-radius: var(--r-card);
+        background: var(--s-bg);
+      }
+      .card h2 {
+        margin-bottom: 4px;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--s-fg);
+      }
+      .card p {
+        margin-bottom: 16px;
+        color: var(--s-muted);
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .card p:last-child {
+        margin-bottom: 0;
+      }
+      /* 上次用过的模式：不加深描边，改用一个更大的外阴影把卡片从台面上"抬起来"表达选中
+         （描边只留卡片自己的 1px 细线；黑白轨里也不用彩色提示） */
+      body[data-mode='local'] #card-local,
+      body[data-mode='remote'] #card-remote {
+        box-shadow: var(--shadow-lift);
+      }
+      /* 本地服务器卡 = 主推位：整张实底黑卡（比一圈黑描边更商业化）。
+         卡内文字与控件一起反相，不然黑底上看不见 */
+      #card-local {
+        border-color: #1c1b1d;
+        background: #1c1b1d;
+      }
+      #card-local h2 {
+        color: #fff;
+      }
+      #card-local p {
+        color: rgba(255, 255, 255, 0.72);
+      }
+      #card-local .btn--primary {
+        border-color: #fff;
+        background: #fff;
+        color: #1c1b1d;
+      }
+      #card-local .btn--primary:not(:disabled):hover {
+        border-color: #e4e4e6;
+        background: #e4e4e6;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+
+      /* 用过的远程后端：一排可删的胶囊标签，落在输入行下方。
+         与 .btn 同一套语言（999px 胶囊 + 1px 细线），只是矮一档、字轻一档 */
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .badges[hidden] {
+        display: none;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        height: 28px;
+        border: 1px solid var(--s-line);
+        border-radius: 999px;
+        background: var(--s-bg);
+        transition: border-color 0.15s ease;
+      }
+      .badge:hover {
+        border-color: var(--s-line-strong);
+      }
+      /* 地址本身也是按钮：点一下回填到输入框 */
+      .badge-url {
+        max-width: 260px;
+        padding: 0 2px 0 12px;
+        overflow: hidden;
+        border: 0;
+        background: none;
+        color: var(--s-muted);
+        font: inherit;
+        font-size: 13px;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        cursor: pointer;
+        transition: color 0.15s ease;
+      }
+      .badge:hover .badge-url {
+        color: var(--s-fg);
+      }
+      /* 删除钮：贴在右端的小圆点，hover 才从淡灰转成前景色 */
+      .badge-del {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        margin-right: 4px;
+        border: 0;
+        border-radius: 999px;
+        background: none;
+        color: var(--s-faint);
+        cursor: pointer;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      .badge-del:hover {
+        background: var(--s-fill);
+        color: var(--s-fg);
+      }
+      .badge-del svg {
+        width: 10px;
+        height: 10px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+      }
+
+      /* 按钮：形状 / 字重 / hover 与标题栏那三个窗口按钮同一套语言——
+         主级 = #1c1b1d 实底（就是窗口按钮的底色），hover 提亮一档；次级 = 白底细描边 */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 20px;
+        border: 1px solid var(--s-line);
+        border-radius: 999px;
+        background: var(--s-bg);
+        color: var(--s-fg);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease,
+          color 0.15s ease;
+      }
+      .btn:not(:disabled):hover {
+        border-color: var(--s-line-strong);
+        background: var(--s-fill);
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .btn--primary {
+        border-color: #1c1b1d;
+        background: #1c1b1d;
+        color: #fff;
+      }
+      .btn--primary:not(:disabled):hover {
+        border-color: #3a393d;
+        background: #3a393d;
+      }
+
+      .input {
+        flex: 1;
+        min-width: 0;
+        height: 38px;
+        padding: 0 12px;
+        border: 1px solid var(--s-line);
+        border-radius: 12px;
+        background: var(--s-bg);
+        color: var(--s-fg);
+        font: inherit;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 0.15s ease;
+      }
+      .input::placeholder {
+        color: var(--s-faint);
+      }
+      .input:hover {
+        border-color: var(--s-line-strong);
+      }
+      .input:focus {
+        border-color: var(--s-fg);
+      }
+
+      /* 状态条：启动 / 连接进度 */
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border: 1px solid var(--s-line);
+        border-radius: 12px;
+        background: var(--s-bg);
+        color: var(--s-muted);
+        font-size: 13px;
+      }
+      .dot {
+        flex: none;
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--s-ok);
+      }
+      body[data-phase='error'] .dot {
+        background: var(--s-danger);
+      }
+      body[data-phase='boot'] .dot {
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.25;
+        }
+      }
+
+      /* 会话失效提示条（仅在 hostid 会话校验失败时出现） */
+      .notice {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding: 10px 10px 10px 16px;
+        border: 1px solid rgba(192, 57, 43, 0.35);
+        border-radius: 12px;
+        background: var(--s-bg);
+        font-size: 14px;
+      }
+      .notice[hidden] {
+        display: none;
+      }
+      .notice-text {
+        flex: 1;
+        color: var(--s-danger);
+      }
+      /* 提示条里的关闭钮：.wbtn 的浅色 hover 是给深色底写的，白底上看不见，按浅色轨补一份 */
+      .notice .wbtn {
+        color: var(--s-muted);
+      }
+      .notice .wbtn:hover {
+        background: var(--s-fill);
+        color: var(--s-fg);
+      }
+
+      /* 身份列表（当前用户 / 本地用户 / hostid SSO 用户） */
+      .ids {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 12px;
+      }
+      /* 没有退出入口时列表就是卡片最后一块：不留多余的下边距 */
+      .ids:last-child {
+        margin-bottom: 0;
+      }
+      /* 身份列表底部：在线账户的退出入口（没有在线账户时整块隐藏） */
+      .ids-foot {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+      /* .ids-foot 是 flex 容器，[hidden] 必须显式压回 display:none */
+      .ids-foot[hidden] {
+        display: none;
+      }
+      .ids-foot__hint {
+        flex: 1;
+        min-width: 0;
+        color: var(--s-faint);
+        font-size: 12px;
+      }
+      .id-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--s-fg);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease;
+      }
+      .id-row:not(.active):hover {
+        border-color: var(--s-line);
+      }
+      /* 选中身份：黑底白字，与「本地服务器」卡同一套强调（#1c1b1d 实底）。
+         行内文字与头像一并反相，否则黑底上看不清 */
+      .id-row.active {
+        border-color: #1c1b1d;
+        background: #1c1b1d;
+        color: #fff;
+      }
+      .id-row.active:hover {
+        background: #3a393d;
+      }
+      .id-row.active .id-name,
+      .id-row.active .id-mark {
+        color: #fff;
+      }
+      .id-row.active .id-sub {
+        color: rgba(255, 255, 255, 0.72);
+      }
+      .id-row.active .avatar {
+        background: rgba(255, 255, 255, 0.14);
+        color: #fff;
+      }
+      .id-meta {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .id-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--s-fg);
+      }
+      .id-sub {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        color: var(--s-muted);
+        font-size: 12px;
+      }
+      .id-mark {
+        flex: none;
+        color: var(--s-fg);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .avatar {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--s-fill);
+        color: var(--s-muted);
+        font-weight: 600;
+        line-height: 1;
+      }
+      .avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .avatar.sm {
+        width: 20px;
+        height: 20px;
+        font-size: 11px;
+      }
+      .avatar.lg {
+        width: 40px;
+        height: 40px;
+        font-size: 16px;
+      }
+      /* 表单段：微标签 + 控件。与卡片的 1px 细线语言一致，不再用裸 label 堆叠 */
+      .field + .field {
+        margin-top: 14px;
+      }
+      .field-label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--s-faint);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      /* 头像编辑：可点头像块（悬停浮出「更换」）+ 右侧说明 / 移除 */
+      .avatar-edit {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .avatar-tile {
+        position: relative;
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 52px;
+        height: 52px;
+        border: 1px solid var(--s-line);
+        border-radius: 999px;
+        background: var(--s-bg);
+        cursor: pointer;
+        transition: border-color 0.15s ease;
+      }
+      .avatar-tile:hover,
+      .avatar-tile:focus-visible {
+        border-color: var(--s-line-strong);
+      }
+      .avatar-tile .avatar {
+        width: 44px;
+        height: 44px;
+        font-size: 17px;
+      }
+      .avatar-tile__hint {
+        position: absolute;
+        inset: 1px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        background: rgba(15, 15, 15, 0.55);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+      }
+      .avatar-tile:hover .avatar-tile__hint,
+      .avatar-tile:focus-visible .avatar-tile__hint {
+        opacity: 1;
+      }
+      .avatar-edit__meta {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+      }
+      .avatar-edit__hint {
+        color: var(--s-faint);
+        font-size: 12px;
+      }
+      /* 文字链接钮（次级动作，如「移除头像」）：hover 转危险色 */
+      .link-btn {
+        align-self: flex-start;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--s-muted);
+        font: inherit;
+        font-size: 13px;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        cursor: pointer;
+        transition: color 0.15s ease;
+      }
+      .link-btn:hover {
+        color: var(--s-danger);
+      }
+      /* 悬浮通知：与壳注入的「登录成功」同款深色胶囊（顶部居中、自动消失）。
+         页面内的行内提示（原 .msg）全部改走它，避免撑动卡片布局 */
+      .toasts {
+        position: fixed;
+        left: 50%;
+        top: 26px;
+        z-index: 2147483646;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        max-width: 70vw;
+        pointer-events: none;
+        transform: translateX(-50%);
+      }
+      .toast {
+        max-width: 100%;
+        padding: 10px 18px;
+        border-radius: 999px;
+        background: rgba(24, 24, 27, 0.94);
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.5;
+        text-align: center;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        opacity: 0;
+        transform: translateY(-6px);
+        transition:
+          opacity 0.2s ease,
+          transform 0.2s ease;
+      }
+      .toast--on {
+        opacity: 1;
+        transform: none;
+      }
+      /* 出错时左侧加一条状态色：与前端 Toast 的 border-l-4 同一套语言 */
+      .toast[data-kind='error'] {
+        padding-left: 14px;
+        border-left: 4px solid var(--s-danger);
+      }
+      .about-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .about-brand svg {
+        width: 40px;
+        height: 40px;
+        flex: none;
+        color: var(--s-fg);
+      }
+    </style>
+  </head>
+  <body data-phase="idle">
+    <div class="shell">
+      <div class="acrylic" aria-hidden="true"></div>
+
+      <!-- ===== 左：菜单栏（独立圆角容器） ===== -->
+      <aside class="rail">
+        <!-- 品牌标：项目自己的 logo（本身是深色 + 透明底），垫一层白色圆底 -->
+        <div class="rail-logo">
+          <img src="/icon-64x64.png" alt="" draggable="false" />
+        </div>
+
+        <nav class="rail-menu" aria-label="菜单">
+          <button class="rail-btn" type="button" data-view="launch" title="启动" aria-label="启动">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#launch" /></svg>
+          </button>
+          <button class="rail-btn" type="button" data-view="user" title="用户" aria-label="用户">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#user" /></svg>
+          </button>
+          <!-- 邮件：hostid 自带邮件服务；没接入 hostid 时不露出（见 renderMailEntry） -->
+          <button class="rail-btn" type="button" data-view="mail" title="邮件" aria-label="邮件" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#mail" /></svg>
+          </button>
+        </nav>
+
+        <div class="rail-foot">
+          <button class="rail-btn" type="button" data-view="about" title="关于" aria-label="关于">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#about" /></svg>
+          </button>
+        </div>
+      </aside>
+
+      <!-- ===== 右：主视图（独立圆角容器） ===== -->
+      <main class="stage">
+        <!-- 进入实例的过渡层：主视图渐入高斯模糊 + 居中转圈（相位 entering 时挂 .veil--on） -->
+        <div class="veil" id="veil" aria-hidden="true">
+          <span class="veil-spinner"></span>
+        </div>
+
+        <!-- 标题栏：一行 = 左侧拖拽区（无按钮的部分）+ 身份胶囊 + 窗口按钮 -->
+        <div class="topbar">
+          <div class="topbar-drag" data-tauri-drag-region></div>
+          <button class="user-chip" type="button" id="user-chip" title="用户">
+            <span class="avatar sm" id="chip-avatar"></span>
+            <span class="chip-name" id="chip-name">本地用户</span>
+          </button>
+          <button class="wbtn" type="button" id="win-min" title="最小化" aria-label="最小化">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#minimize" /></svg>
+          </button>
+          <button class="wbtn" type="button" id="win-max" title="最大化" aria-label="最大化">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" id="win-max-icon"><use href="lucide.svg#maximize" /></svg>
+          </button>
+          <button class="wbtn" type="button" id="win-close" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#close" /></svg>
+          </button>
+        </div>
+
+        <div class="stage-body">
+          <div class="brand">
+            <div class="brand-cn" id="brand-name"></div>
+            <div class="brand-en" id="brand-tagline"></div>
+          </div>
+
+          <!-- 会话失效提示：启动校验 hostid 会话失败时出现，要求重新登录 -->
+          <div class="notice" id="session-banner" hidden>
+            <span class="notice-text">hostid 会话已失效，请重新登录。</span>
+            <button id="session-relogin" class="btn btn--primary">重新登录</button>
+            <button id="session-dismiss" class="wbtn" aria-label="关闭">×</button>
+          </div>
+
+          <!-- 视图 一 · 启动：选本机还是远程 -->
+          <section class="view" data-view="launch">
+            <div class="status"><span class="dot"></span><span id="detail">正在准备…</span></div>
+
+            <div class="card" id="card-local">
+              <h2>本地服务器</h2>
+              <p>数据存在本机，固定单用户，不需要登录。</p>
+              <button id="choose-local" class="btn btn--primary">启动本地服务器</button>
+            </div>
+
+            <div class="card" id="card-remote">
+              <h2>远程后端</h2>
+              <p>使用服务端的数据，按 hostid SSO 登录。</p>
+              <div class="row">
+                <input
+                  id="remote-url"
+                  class="input"
+                  type="url"
+                  placeholder="https://minis.example.com"
+                  spellcheck="false"
+                />
+                <button id="choose-remote" class="btn">连接</button>
+              </div>
+              <!-- 用过的远程后端：点地址回填输入框，× 删掉这条记录（没有记录时整排隐藏） -->
+              <div class="badges" id="remote-hosts" hidden></div>
+            </div>
+          </section>
+
+          <!-- 视图 二 · 用户：身份切换 + 本地用户 + 登录 hostid -->
+          <section class="view" data-view="user" hidden>
+            <div class="card">
+              <h2>当前身份</h2>
+              <p>进入后端后按这里选中的身份渲染。</p>
+              <div class="ids" id="user-ids"></div>
+              <!-- 在线账户的退出入口：只有登录了 hostid 才出现（见 renderUsers） -->
+              <div class="ids-foot" id="sso-logout" hidden>
+                <span class="ids-foot__hint">退出会撤销 hostid 会话，本机不再保留该账户</span>
+                <button id="logout-sso" class="btn" type="button">退出登录</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>本地用户</h2>
+              <p>设置用户名与头像，进入本地服务器后由后端按它渲染。</p>
+
+              <div class="field">
+                <span class="field-label">头像</span>
+                <div class="avatar-edit">
+                  <button
+                    id="pick-avatar-btn"
+                    class="avatar-tile"
+                    type="button"
+                    title="选择头像"
+                    aria-label="选择头像"
+                  >
+                    <span class="avatar lg" id="pick-avatar"></span>
+                    <span class="avatar-tile__hint">更换</span>
+                  </button>
+                  <input id="avatar-file" type="file" accept="image/*" hidden />
+                  <div class="avatar-edit__meta">
+                    <span class="avatar-edit__hint">图片会压缩到 128px 后保存</span>
+                    <button id="avatar-clear" class="link-btn" type="button" hidden>移除头像</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="field-label">用户名</span>
+                <div class="row">
+                  <input
+                    id="local-name"
+                    class="input"
+                    type="text"
+                    placeholder="本地用户"
+                    spellcheck="false"
+                  />
+                  <button id="save-local" class="btn btn--primary">保存</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>登录 hostid</h2>
+              <p>输入 hostid 服务端地址，将弹出一个专用窗口完成登录；本界面不受影响。</p>
+              <div class="row">
+                <input
+                  id="hostid-url"
+                  class="input"
+                  type="url"
+                  placeholder="https://hostid.example.com"
+                  spellcheck="false"
+                />
+                <button id="login-hostid" class="btn">登录</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>邮件地址</h2>
+              <p>
+                左侧「邮件」打开的就是这个地址。hostid 自带邮件服务，但它前端与后端可能配在不同域，
+                这里填邮件前端的真实地址；留空则退回用 hostid 地址。
+              </p>
+              <div class="row">
+                <input
+                  id="mail-url"
+                  class="input"
+                  type="url"
+                  placeholder="https://mail.example.com"
+                  spellcheck="false"
+                />
+                <button id="save-mail" class="btn">保存</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 视图 三 · 邮件：内容由壳的子 webview 覆盖渲染（见 desktop_show_mail），本视图只作占位。
+               没接入 hostid、也没配邮件地址时入口与内容都不出现（见 renderMailEntry） -->
+          <section class="view" data-view="mail" hidden></section>
+
+          <!-- 视图 四 · 关于 -->
+          <section class="view" data-view="about" hidden>
+            <div class="card">
+              <div class="about-brand">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12 3 21 12l-9 9-9-9z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                    stroke-linejoin="round"
+                  />
+                  <circle cx="12" cy="12" r="3" fill="currentColor" />
+                </svg>
+                <div>
+                  <h2 id="about-name"></h2>
+                  <p id="about-tagline"></p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <!-- 自绘标题栏：窗缘缩放手柄 -->
+    <div id="rz" aria-hidden="true">
+      <i data-dir="North"></i>
+      <i data-dir="South"></i>
+      <i data-dir="West"></i>
+      <i data-dir="East"></i>
+      <i data-dir="NorthWest"></i>
+      <i data-dir="NorthEast"></i>
+      <i data-dir="SouthWest"></i>
+      <i data-dir="SouthEast"></i>
+    </div>
+
+    <!-- 悬浮通知：页面上原有的行内提示都走这里（见 toast()） -->
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script>
+      // 品牌名由壳启动时注入（见 desktop/src/main.rs 的 initialization_script），源自根 branding.json
+      ;(function () {
+        var b = window.__BRAND__ || {}
+        if (b.name) {
+          document.title = b.name
+          document.getElementById('brand-name').textContent = b.name
+          document.getElementById('about-name').textContent = b.name
+        }
+        if (b.tagline) {
+          document.getElementById('brand-tagline').textContent = b.tagline
+          document.getElementById('about-tagline').textContent = b.tagline
+        }
+        if (b.slug) {
+          var remote = document.getElementById('remote-url')
+          if (remote) remote.placeholder = 'https://' + b.slug + '.example.com'
+        }
+      })()
+    </script>
+
+    <script>
+      // 引导页跑在壳自带的资源上（tauri:// 源），可以使用 IPC；跳到 HTTP 源后本页即卸载。
+      const { invoke } = window.__TAURI__.core
+      const { listen } = window.__TAURI__.event
+
+      /* -------------------------------------------------- 自绘标题栏的窗口控制 */
+
+      const winMaxIcon = document.getElementById('win-max-icon')
+
+      /** 最大化状态 → 切换本地 Lucide sprite 的最大化 / 还原图标 */
+      function paintMaxIcon(maximized) {
+        winMaxIcon.querySelector('use').setAttribute('href', maximized ? 'lucide.svg#restore' : 'lucide.svg#maximize')
+        winMaxIcon.parentElement.title = maximized ? '还原' : '最大化'
+        winMaxIcon.parentElement.setAttribute('aria-label', maximized ? '还原' : '最大化')
+      }
+
+      // Tauri 核心 window 插件的命令；不传 label = 操作发起的那个窗口（主窗口）
+      const winCmd = (cmd, args) => invoke(`plugin:window|${cmd}`, args).catch(() => {})
+
+      document.getElementById('win-min').addEventListener('click', () => winCmd('minimize'))
+      document.getElementById('win-max').addEventListener('click', async () => {
+        await winCmd('toggle_maximize')
+        paintMaxIcon(await invoke('plugin:window|is_maximized').catch(() => false))
+      })
+      document.getElementById('win-close').addEventListener('click', () => winCmd('close'))
+
+      // 最大化状态由系统拖拽 / 双击 / Aero Snap 也能改变，靠 resize 事件回读
+      const syncMaxIcon = () =>
+        invoke('plugin:window|is_maximized')
+          .then(paintMaxIcon)
+          .catch(() => {})
+      syncMaxIcon()
+      window.addEventListener('resize', syncMaxIcon)
+
+      // 拖拽由标题栏左段（.topbar-drag）的 data-tauri-drag-region 接管，框架内置脚本
+      // 负责单击拖拽 / 双击最大化；身份胶囊与窗口按钮是它右侧的同层兄弟，不会被盖住
+
+      // 窗缘热区：按下即交给系统缩放
+      document.querySelectorAll('#rz i').forEach((handle) => {
+        handle.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return
+          e.preventDefault()
+          winCmd('start_resize_dragging', { value: handle.dataset.dir })
+        })
+      })
+
+      /* ------------------------------------------------------------ 视图切换 */
+
+      const railButtons = [...document.querySelectorAll('.rail-btn[data-view]')]
+      const views = [...document.querySelectorAll('.view')]
+
+      /**
+       * 主容器的圆角与底色：邮件页是壳另开的原生子 webview，吃不到 `.stage` 的圆角，
+       * 只能让它在自己四角盖一层同色圆角挡板 —— 半径与底色就从这里现读现给（见 desktop_show_mail）。
+       * 这样主题换了也跟着走，壳里不写死任何设计值。
+       */
+      function stageCorners() {
+        const stage = document.querySelector('.stage')
+        if (!stage) return { radius: '', color: '' }
+        const style = getComputedStyle(stage)
+        return { radius: style.borderTopLeftRadius, color: style.backgroundColor }
+      }
+
+      function showView(name) {
+        views.forEach((v) => (v.hidden = v.dataset.view !== name))
+        railButtons.forEach((b) => {
+          if (b.dataset.view === name) b.setAttribute('aria-current', 'page')
+          else b.removeAttribute('aria-current')
+        })
+        // 视图名挂到 body：邮件视图要铺满主容器，品牌区靠这条让位（见 CSS）
+        document.body.dataset.view = name
+        // 邮件页是壳另开的子 webview（不是页面里的元素），切视图时告诉壳显示 / 收起它
+        const corners = stageCorners()
+        invoke('desktop_show_mail', {
+          visible: name === 'mail',
+          cornerRadius: corners.radius,
+          cornerColor: corners.color,
+        }).catch(() => {})
+      }
+
+      railButtons.forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)))
+      // 顶部身份胶囊 = 用户视图的快捷入口
+      document.getElementById('user-chip').addEventListener('click', () => showView('user'))
+      // 默认停在「启动」视图（连接失败要让人看到错误，不能被别的视图挡住）。
+      // 壳要求切视图时走状态里的 openView（见 render）——实例页的首页按钮回来就带 openView=launch
+      showView('launch')
+
+      /* ---------------------------------------------- 邮件视图（hostid 自带的邮件服务） */
+
+      const mailBtn = document.querySelector('.rail-btn[data-view="mail"]')
+      const mailInput = document.getElementById('mail-url')
+      const mailSaveBtn = document.getElementById('save-mail')
+
+      /** 壳里记的 hostid 地址（登录 hostid 时记下）：没单独配邮件地址时拿它兜底 */
+      let hostidBase = ''
+
+      /** 邮件地址：优先用「用户」视图里配的真实地址（hostid 前后端不同域时就靠它），没配则退回 hostid 地址 */
+      function mailAddress() {
+        return ((lastState && lastState.mailUrl) || hostidBase).trim()
+      }
+
+      /**
+       * 邮件入口的显隐：配了邮件地址、或接入过 hostid（拿它兜底）才露出——两者都没有就整项不出现。
+       * 邮件页本身由壳的子 webview 渲染（见 desktop_show_mail），页面里不放内容。
+       */
+      function renderMailEntry() {
+        mailBtn.hidden = !mailAddress()
+      }
+
+      invoke('desktop_hostid_base')
+        .then((base) => {
+          hostidBase = typeof base === 'string' ? base.trim() : ''
+          renderMailEntry()
+        })
+        .catch(() => {})
+
+      mailSaveBtn.addEventListener('click', async () => {
+        try {
+          await invoke('desktop_save_mail_url', { url: mailInput.value })
+          toast('邮件地址已保存')
+        } catch (e) {
+          toast(String(e), 'error')
+        }
+      })
+
+      /* ---------------------------------------------------------- 悬浮通知 */
+
+      const toastsEl = document.getElementById('toasts')
+
+      /**
+       * 弹一条悬浮通知（与壳注入的「登录成功」同款胶囊）：顶部居中、自动消失。
+       * kind='error' 时左侧带状态色。页面上的行内提示一律改走它，不再撑动卡片布局。
+       */
+      function toast(text, kind) {
+        if (!toastsEl) return
+        const el = document.createElement('div')
+        el.className = 'toast'
+        if (kind) el.dataset.kind = kind
+        el.textContent = text
+        toastsEl.appendChild(el)
+        // 最多同时留 3 条，多了挤掉最旧的
+        while (toastsEl.children.length > 3) toastsEl.firstElementChild.remove()
+        requestAnimationFrame(() => el.classList.add('toast--on'))
+        setTimeout(
+          () => {
+            el.classList.remove('toast--on')
+            setTimeout(() => el.remove(), 300)
+          },
+          kind === 'error' ? 6000 : 4000,
+        )
+      }
+
+      /* -------------------------------------------------------- 启动 / 连接 */
+
+      const detailEl = document.getElementById('detail')
+      const remoteInput = document.getElementById('remote-url')
+      const localBtn = document.getElementById('choose-local')
+      const remoteBtn = document.getElementById('choose-remote')
+      const veilEl = document.getElementById('veil')
+
+      const LABELS = {
+        idle: '请选择要连接的后端',
+        boot: '正在启动本地服务器…',
+        entering: '正在进入远程实例…',
+        returning: '正在返回…',
+        ready: '已就绪',
+        remote: '远程模式',
+        error: '启动失败',
+      }
+
+      /**
+       * 主视图过渡层（高斯模糊 + 居中转圈）：
+       *   entering  = 正要进入实例：渐入到模糊（随后壳在层下跳转）
+       *   returning = 刚被壳带回来：一进页面就是模糊态，稍后自己渐出（模糊 → 清晰）
+       * 其余相位一律撤下。
+       */
+      let returningVeilDone = false
+      function applyVeil(phase) {
+        if (phase === 'entering') {
+          returningVeilDone = false
+          veilEl.classList.add('veil--on')
+          return
+        }
+        if (phase === 'returning') {
+          if (returningVeilDone) return
+          returningVeilDone = true
+          // 直接落到模糊态（不做渐入，免得先清晰一下再变模糊），再自己渐出；
+          // 不依赖后续事件——事件可能早于本页监听
+          veilEl.style.transition = 'none'
+          veilEl.classList.add('veil--on')
+          void veilEl.offsetHeight // 落地，避免下一步被当成过渡起点
+          veilEl.style.transition = ''
+          setTimeout(() => {
+            veilEl.classList.remove('veil--on')
+            // 放完动画让壳把相位收回 idle，免得状态行一直停在「正在返回…」
+            invoke('desktop_return_done').catch(() => {})
+          }, 700)
+          return
+        }
+        // 其余相位一律撤下（每次回到引导页都是重新加载，这里只是兜底）
+        returningVeilDone = false
+        veilEl.classList.remove('veil--on')
+      }
+
+      /** 启动中禁用两个按钮：本机模式要等后端 READY，期间别让重复点（文案由 renderCards 决定） */
+      function setBusy(busy) {
+        localBtn.disabled = busy
+        remoteBtn.disabled = busy
+      }
+
+      /** 最近一次壳状态：卡片文案随实例会话 / 输入框实时变化时要用 */
+      let lastState = null
+
+      /** 取源（scheme://host[:port]）；解析失败就退回「去空白去尾斜杠的原文」，两边同规则才比得上 */
+      function originOf(url) {
+        try {
+          return new URL(url).origin
+        } catch (e) {
+          return normalizeHost(url)
+        }
+      }
+
+      /**
+       * 对应模式是否有可回的实例：壳里记着它的地址（离开实例时连同 #hash 路由一起存下），
+       * 是则该卡片按钮变「回到实例」，点击直接导航回去、重新渲染。远程比「源」即可。
+       */
+      function sessionFor(mode) {
+        const inst = lastState && lastState.instance
+        if (!inst || inst.mode !== mode) return null
+        if (mode === 'remote' && originOf(inst.url) !== originOf(remoteInput.value)) return null
+        return inst
+      }
+
+      /** 重绘两张卡片的按钮：连接 / 启动 ↔ 回到实例 */
+      function renderCards() {
+        const boot = document.body.dataset.phase === 'boot'
+        localBtn.textContent = boot ? '启动中…' : sessionFor('local') ? '回到实例' : '启动本地服务器'
+        remoteBtn.textContent = sessionFor('remote') ? '回到实例' : '连接'
+      }
+
+      function render(state) {
+        lastState = state
+        document.body.dataset.phase = state.phase
+        if (state.mode) document.body.dataset.mode = state.mode
+        detailEl.textContent = state.detail || LABELS[state.phase] || state.phase
+        // 壳里记着的远程地址也算"用过"：启动时补进标签，历史列表就不止本次会话
+        if (state.remoteBaseUrl) rememberHost(state.remoteBaseUrl)
+        if (state.remoteBaseUrl && !remoteInput.value) {
+          remoteInput.value = state.remoteBaseUrl
+        }
+        // 邮件地址卡片：输入框空着才回填（别覆盖正在编辑的内容），再按新地址刷新入口与 iframe
+        if (state.mailUrl && !mailInput.value) mailInput.value = state.mailUrl
+        renderMailEntry()
+        setBusy(state.phase === 'boot')
+        renderCards()
+        // 主视图过渡层：进入实例渐入模糊、被带回来时先模糊后渐出
+        applyVeil(state.phase)
+        // 壳要求切到的视图（如实例页设置入口带来的「关于」）：应用后回执清除
+        if (state.openView) {
+          showView(state.openView)
+          invoke('desktop_view_applied').catch(() => {})
+        }
+        // 壳里记的「会话已失效」（登出 / 被 hostid 打回）：立刻显示重新登录横幅
+        sessionExpiredFlag = !!state.sessionExpired
+        paintSessionBanner()
+      }
+
+      invoke('desktop_state')
+        .then(render)
+        .catch((e) => toast(String(e), 'error'))
+      listen('minis://status', (event) => render(event.payload))
+
+      localBtn.addEventListener('click', async () => {
+        // 有可回的实例：直接导航回去（重新渲染，会话与业务数据都在后端，落回离开时的路由）
+        if (sessionFor('local')) {
+          invoke('desktop_show_instance').catch(() => {})
+          return
+        }
+        setBusy(true)
+        try {
+          await invoke('desktop_choose_local')
+        } catch (e) {
+          toast(String(e), 'error')
+          setBusy(false)
+        }
+      })
+
+      remoteBtn.addEventListener('click', async () => {
+        if (sessionFor('remote')) {
+          invoke('desktop_show_instance').catch(() => {})
+          return
+        }
+        // 先记下再连接；连接成功后窗口会导航走，这个页面连同它的 Promise 一起卸载
+        rememberHost(remoteInput.value)
+        try {
+          await invoke('desktop_choose_remote', { url: remoteInput.value })
+        } catch (e) {
+          toast(String(e), 'error')
+        }
+      })
+
+      // 地址被改动时，按钮在「连接 / 回到实例」之间跟着切换
+      remoteInput.addEventListener('input', renderCards)
+
+      /* ------------------------------- 用过的远程后端：一排可删的标签 ------------------------------- */
+
+      const HOSTS_KEY = 'desktop_remote_hosts'
+      const HOSTS_MAX = 6
+      const hostsEl = document.getElementById('remote-hosts')
+
+      /** 归一化：去空白、去尾斜杠（https://a/ 与 https://a 视为同一条） */
+      function normalizeHost(url) {
+        return (url || '').trim().replace(/\/+$/, '')
+      }
+
+      function loadHosts() {
+        try {
+          const list = JSON.parse(localStorage.getItem(HOSTS_KEY) || '[]')
+          return Array.isArray(list)
+            ? list.filter((v) => typeof v === 'string' && v).slice(0, HOSTS_MAX)
+            : []
+        } catch (e) {
+          /* 隐私模式 / 存储被禁用：退化成"没有历史"，不影响连接 */
+          return []
+        }
+      }
+
+      function saveHosts(list) {
+        try {
+          localStorage.setItem(HOSTS_KEY, JSON.stringify(list))
+        } catch (e) {
+          /* 同上：写不进去也不该打断连接 */
+        }
+        renderHosts(list)
+      }
+
+      /** 记住一个地址：最近用过的排最前；已存在则挪到最前，不新增一条 */
+      function rememberHost(url) {
+        const v = normalizeHost(url)
+        if (!v) return
+        const list = loadHosts()
+        if (list[0] === v) return
+        saveHosts([v, ...list.filter((h) => h !== v)].slice(0, HOSTS_MAX))
+      }
+
+      /** 标签只显示去掉协议前缀的地址（完整地址进 title）；点地址回填输入框，点 × 删掉这条 */
+      function renderHosts(list) {
+        const hosts = list || loadHosts()
+        hostsEl.hidden = hosts.length === 0
+        hostsEl.textContent = ''
+        for (const url of hosts) {
+          const tag = document.createElement('span')
+          tag.className = 'badge'
+
+          const pick = document.createElement('button')
+          pick.type = 'button'
+          pick.className = 'badge-url'
+          pick.textContent = url.replace(/^https?:\/\//, '')
+          pick.title = url
+          pick.addEventListener('click', () => {
+            remoteInput.value = url
+            remoteInput.focus()
+          })
+
+          const del = document.createElement('button')
+          del.type = 'button'
+          del.className = 'badge-del'
+          del.title = '删除这条记录'
+          del.setAttribute('aria-label', '删除 ' + url)
+          del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="lucide.svg#close" /></svg>'
+          del.addEventListener('click', () => {
+            saveHosts(loadHosts().filter((h) => h !== url))
+          })
+
+          tag.append(pick, del)
+          hostsEl.appendChild(tag)
+        }
+      }
+
+      renderHosts()
+
+      /* ------------------------------------------- 用户视图：身份 / 头像 / 登录 */
+
+      const userNameEl = document.getElementById('chip-name')
+      const idsEl = document.getElementById('user-ids')
+      const localNameEl = document.getElementById('local-name')
+      const hostidUrlEl = document.getElementById('hostid-url')
+      const pickAvatarEl = document.getElementById('pick-avatar')
+      const pickAvatarBtnEl = document.getElementById('pick-avatar-btn')
+      const avatarFileEl = document.getElementById('avatar-file')
+      const avatarClearEl = document.getElementById('avatar-clear')
+      const ssoLogoutEl = document.getElementById('sso-logout')
+
+      /** 身份视图：current="local"|"sso"；local/sso 各含 name/avatar，sso 未登录为 null */
+      let users = { current: 'local', local: { name: '', avatar: '' }, sso: null }
+      /** 菜单里刚选中、尚未保存的本地头像；null = 没动过，沿用已保存的 */
+      let pendingAvatar = null
+
+      /** 本地用户头像的「草稿」：动过就用草稿（'' = 明确移除），否则沿用已保存的 */
+      function localAvatarDraft() {
+        return pendingAvatar !== null ? pendingAvatar : users.local.avatar
+      }
+
+      /** 重绘本地用户头像位，并按有无头像决定「移除头像」是否露出 */
+      function paintLocalAvatar() {
+        const avatar = localAvatarDraft()
+        // 兜底首字母跟随输入框里正在编辑的名字，未保存也能即时看到
+        paintAvatar(pickAvatarEl, localNameEl.value || users.local.name, avatar)
+        avatarClearEl.hidden = !avatar
+      }
+
+      /** 头像位渲染：有图贴图，无图用首字母兜底 */
+      function paintAvatar(el, name, avatar) {
+        el.textContent = ''
+        if (avatar) {
+          const img = document.createElement('img')
+          img.src = avatar
+          img.alt = name || '用户'
+          el.appendChild(img)
+        } else {
+          el.textContent = (name || '?').trim().charAt(0).toUpperCase() || '?'
+        }
+      }
+
+      /** 当前选中身份的展示信息 */
+      function currentIdentity() {
+        if (users.current === 'sso' && users.sso) {
+          return { name: users.sso.name, avatar: users.sso.avatar, sub: users.sso.email || 'hostid SSO' }
+        }
+        return { name: users.local.name || '本地用户', avatar: users.local.avatar, sub: '本地用户' }
+      }
+
+      /** 一行身份（本地 / hostid），点击切换当前用户 */
+      function idRow(kind, name, avatar, sub) {
+        const row = document.createElement('button')
+        row.type = 'button'
+        row.className = 'id-row' + (users.current === kind ? ' active' : '')
+        const av = document.createElement('span')
+        av.className = 'avatar sm'
+        paintAvatar(av, name, avatar)
+        const meta = document.createElement('span')
+        meta.className = 'id-meta'
+        const n = document.createElement('span')
+        n.className = 'id-name'
+        n.textContent = name
+        const s = document.createElement('span')
+        s.className = 'id-sub'
+        s.textContent = sub
+        meta.appendChild(n)
+        meta.appendChild(s)
+        const mark = document.createElement('span')
+        mark.className = 'id-mark'
+        mark.textContent = users.current === kind ? '当前' : ''
+        row.appendChild(av)
+        row.appendChild(meta)
+        row.appendChild(mark)
+        row.addEventListener('click', () => switchUser(kind))
+        return row
+      }
+
+      function renderUsers() {
+        const cur = currentIdentity()
+        const name = cur.name || '本地用户'
+        paintAvatar(document.getElementById('chip-avatar'), cur.name, cur.avatar)
+        userNameEl.textContent = name
+        document.getElementById('user-chip').title = `${name} · ${cur.sub}`
+        paintLocalAvatar()
+        idsEl.innerHTML = ''
+        idsEl.appendChild(idRow('local', users.local.name || '本地用户', users.local.avatar, '本机模式使用'))
+        if (users.sso) {
+          idsEl.appendChild(idRow('sso', users.sso.name, users.sso.avatar, users.sso.email || 'hostid SSO'))
+        }
+        // 有在线账户才露出退出入口
+        ssoLogoutEl.hidden = !users.sso
+      }
+
+      async function switchUser(kind) {
+        if (users.current === kind) return
+        try {
+          users = await invoke('desktop_switch_user', { kind })
+          renderUsers()
+        } catch (e) {
+          /* 例如尚未登录 hostid：保持原样 */
+        }
+      }
+
+      /** 图片压到 128px 正方形（居中裁切）后转 JPEG data URL，控制体积以便经环境变量注入 */
+      function shrinkAvatar(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onerror = () => reject(new Error('读取图片失败'))
+          reader.onload = () => {
+            const img = new Image()
+            img.onerror = () => reject(new Error('不支持的图片格式'))
+            img.onload = () => {
+              const size = 128
+              const canvas = document.createElement('canvas')
+              canvas.width = size
+              canvas.height = size
+              const side = Math.min(img.width, img.height)
+              canvas
+                .getContext('2d')
+                .drawImage(
+                  img,
+                  (img.width - side) / 2,
+                  (img.height - side) / 2,
+                  side,
+                  side,
+                  0,
+                  0,
+                  size,
+                  size,
+                )
+              resolve(canvas.toDataURL('image/jpeg', 0.8))
+            }
+            img.src = reader.result
+          }
+          reader.readAsDataURL(file)
+        })
+      }
+
+      invoke('desktop_users')
+        .then((u) => {
+          users = u
+          localNameEl.value = (u.local && u.local.name) || ''
+          renderUsers()
+        })
+        .catch(() => renderUsers())
+
+      // 登录窗口取回 hostid 用户、或当前用户被切换后，壳会推一份新的身份视图
+      listen('minis://user', (event) => {
+        users = event.payload
+        renderUsers()
+        // 登录成功会清掉壳里的「会话已失效」标记：重读状态让横幅同步撤下
+        invoke('desktop_state').then(render).catch(() => {})
+      })
+
+      // 点头像块 = 选图（隐藏的 file 输入弹选择框）
+      pickAvatarBtnEl.addEventListener('click', () => avatarFileEl.click())
+
+      // 名字随打随更新兜底首字母（无头像时可见）
+      localNameEl.addEventListener('input', paintLocalAvatar)
+
+      // 移除头像：草稿置空串（= 明确移除），保存时按它落库
+      avatarClearEl.addEventListener('click', () => {
+        pendingAvatar = ''
+        paintLocalAvatar()
+        toast('头像已移除，点「保存」生效')
+      })
+
+      avatarFileEl.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0]
+        // 清掉选择值：否则再选同一张图不会触发 change
+        e.target.value = ''
+        if (!file) return
+        try {
+          pendingAvatar = await shrinkAvatar(file)
+          paintLocalAvatar()
+          toast('头像已选，点「保存」生效')
+        } catch (err) {
+          toast(String(err.message || err), 'error')
+        }
+      })
+
+      document.getElementById('save-local').addEventListener('click', async () => {
+        const name = localNameEl.value.trim()
+        const avatar = localAvatarDraft()
+        try {
+          await invoke('desktop_save_local_user', { name, avatar })
+          pendingAvatar = null
+          users.local = { name, avatar }
+          renderUsers()
+          toast('已保存；下次启动本地服务器时生效')
+        } catch (e) {
+          toast(String(e), 'error')
+        }
+      })
+
+      // 退出当前在线账户：壳先本地清身份（界面立刻变），再后台撤销 hostid 会话
+      document.getElementById('logout-sso').addEventListener('click', async () => {
+        try {
+          await invoke('desktop_logout_hostid')
+          users = await invoke('desktop_users')
+          renderUsers()
+        } catch (e) {
+          /* 壳不可达时保持原样 */
+        }
+      })
+
+      document.getElementById('login-hostid').addEventListener('click', async () => {
+        // 登录窗立即打开；地址不可达 / 不是 hostid 由壳在窗口里判定，会关窗并另行通知
+        try {
+          await invoke('desktop_login_hostid', { url: hostidUrlEl.value })
+          toast('已打开登录窗口，请在其中完成 hostid 登录')
+        } catch (e) {
+          toast(String(e), 'error')
+        }
+      })
+
+      /* ---------- 启动校验 hostid 会话：失效则在主视图顶部弹出提示 ---------- */
+
+      const sessionBanner = document.getElementById('session-banner')
+
+      /**
+       * 是否显示「会话已失效」横幅：只认壳状态里的确定性标记（用户登出 / 被 hostid 打回登录页）。
+       * 登录成功后壳会清掉标记，引导页重读 desktop_state 即撤下。
+       * 不做「后台探测 hostid」——探测失败与确实失效无法区分，会误报。
+       */
+      let sessionExpiredFlag = false
+
+      function paintSessionBanner() {
+        sessionBanner.hidden = !sessionExpiredFlag
+      }
+
+      // 预填上次用过的 hostid 地址
+      invoke('desktop_hostid_base')
+        .then((base) => {
+          if (base && !hostidUrlEl.value) hostidUrlEl.value = base
+        })
+        .catch(() => {})
+
+      document.getElementById('session-dismiss').addEventListener('click', () => {
+        sessionExpiredFlag = false
+        paintSessionBanner()
+        // 连壳里的标记一起清：否则之后重读 desktop_state（如切身份）会把横幅又带回来
+        invoke('desktop_dismiss_session_notice').catch(() => {})
+      })
+
+      document.getElementById('session-relogin').addEventListener('click', async () => {
+        showView('user')
+        try {
+          await invoke('desktop_relogin_hostid')
+          toast('已打开登录窗口，请在其中完成 hostid 登录')
+          // 窗口确实开出来了，这时才收起横幅
+          sessionExpiredFlag = false
+          paintSessionBanner()
+        } catch (e) {
+          toast(String(e), 'error')
+        }
+      })
+    </script>
+  </body>
+</html>

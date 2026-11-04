@@ -55,7 +55,7 @@ pub async fn economy_capture_window(webview: Webview, id: u32, pid: u32) -> Resu
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn list() -> Result<Vec<WindowInfo>, String> {
+pub(crate) fn list() -> Result<Vec<WindowInfo>, String> {
     let windows =
         xcap::Window::all().map_err(|e| format!("无法列出窗口，请检查系统屏幕录制权限：{e}"))?;
     Ok(windows
@@ -79,7 +79,7 @@ fn list() -> Result<Vec<WindowInfo>, String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn capture(id: u32, pid: u32) -> Result<Frame, String> {
+pub(crate) fn capture(id: u32, pid: u32) -> Result<Frame, String> {
     let window = xcap::Window::all()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -125,11 +125,11 @@ fn encode_frame(pixels: image::RgbaImage) -> Result<String, String> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn list() -> Result<Vec<WindowInfo>, String> {
+pub(crate) fn list() -> Result<Vec<WindowInfo>, String> {
     Err("原生窗口观察仅支持 Windows/macOS".into())
 }
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn capture(_: u32, _: u32) -> Result<Frame, String> {
+pub(crate) fn capture(_: u32, _: u32) -> Result<Frame, String> {
     Err("原生窗口观察仅支持 Windows/macOS".into())
 }
 

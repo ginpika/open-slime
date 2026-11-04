@@ -25,7 +25,7 @@ import { presenceLabel, useAgentOverview } from '../api/agentPresence'
 import Toast from '../components/Toast'
 import { usePageKit } from '../kit'
 import SystemPanel from './SystemPanel'
-import { isCodingAgent, sortAgentPeers } from '../api/agentRuntime'
+import { CORE_AGENT_ID, sortAgentPeers } from '../api/agentRuntime'
 
 type Option = { value: string; label: string }
 
@@ -73,7 +73,7 @@ function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: 
   const activity = new Map(overview?.agents.map(a => [a.id, a]))
   return (
     <>
-      <kit.Toolbar left="统一管理智能体的模型、提示词与能力。内置编码 Agent 与编程工作台共用项目和任务。" />
+      <kit.Toolbar left="统一管理智能体的模型、提示词与能力。默认 Agent 在编程 IDE 中自动启用编程 Skill。" />
 
       <PageBoundary>
         {/*
@@ -109,7 +109,7 @@ function MembersPanel({ peers, modelOptions }: { peers: MaPeer[]; modelOptions: 
                     <AgentRole role={p.role} color={p.roleColor} />
                     <span className="text-xs leading-4 text-muted">{presenceLabel(activity.get(p.id)?.working, stale)}</span>
                   </div>
-                  <p className="mt-1 truncate text-[0.75rem] leading-[1.125rem] text-hint">{isCodingAgent(p) ? '编码工作台 · 项目与任务共用' : '提示词 · 每位成员独立一套'}</p>
+                  <p className="mt-1 truncate text-[0.75rem] leading-[1.125rem] text-hint">{p.id === CORE_AGENT_ID ? '对话与编程共用 · IDE 启用编程 Skill' : '提示词 · 每位成员独立一套'}</p>
                   <p className="mt-0.5 truncate text-[0.75rem] leading-[1.125rem] text-hint" title={labelOf(modelOptions, p.modelId ?? '')}>
                     模型 · {labelOf(modelOptions, p.modelId ?? '')}
                   </p>

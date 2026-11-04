@@ -10,10 +10,10 @@ const output = path.resolve(frontend, '../backend/target/agent-capabilities-brow
 await fs.mkdir(output, { recursive: true })
 const require = createRequire(path.join(process.env.MINIS_PLAYWRIGHT_DIR || frontend, 'package.json'))
 const { chromium } = require('playwright')
-const peers = ['builtin', 'member', 'builtin-coding'].map((id, sort) => ({
-  id, sort, name: ['核心助手', '专业成员', '编码 Agent'][sort], builtin: id !== 'member',
+const peers = ['builtin', 'member'].map((id, sort) => ({
+  id, sort, name: ['核心助手', '专业成员'][sort], builtin: id !== 'member',
   tools: [], terminals: [], modelId: null, avatar: null, note: null, role: null, roleColor: null,
-  executionKind: id === 'builtin-coding' ? 'CODING' : 'CHAT',
+  executionKind: 'CHAT',
 }))
 const tools = [
   { name: 'read_doc', description: '读取文档内容。', defaultGranted: true, writes: false, domain: 'doc', domainLabel: '文档' },
@@ -47,14 +47,17 @@ try {
     if (url.pathname === '/api/settings') return json({ models: [], embedding: { mode: 'llm' }, rerank: { mode: 'off' } })
     if (url.pathname === '/api/terminal') return json({ targets })
     if (url.pathname === '/api/agents/peers') return json(peers)
-    if (url.pathname === '/api/coding/capabilities') return json({ enabled: true, agent: peers.find(p => p.id === 'builtin-coding') })
+    if (url.pathname === '/api/coding/capabilities') return json({ enabled: true, agent: peers.find(p => p.id === 'builtin') })
     if (url.pathname === '/api/coding/projects') return json([{ id: 'p1', name: '角色配置验收', workspaceId: 'one', workspaceName: '开发环境', directory: '.', kind: 'ssh', enabled: true }])
     if (url.pathname.endsWith('/files')) return json({ entries: [], path: '.' })
     if (url.pathname === '/api/agents/tools') {
       const id = url.searchParams.get('peerId'); queries.push(id)
       return json(id === 'builtin' ? tools : tools.slice(0, 2))
     }
-    if (url.pathname.endsWith('/prompts')) return json({ categories: [{ key: 'chat', name: '对话', description: '', contexts: [] }] })
+    if (url.pathname.endsWith('/prompts')) return json({ categories: [
+      { key: 'chat', name: '对话', description: '', contexts: [] },
+      ...(url.pathname.includes('/builtin/') ? [{ key: 'skills', name: 'Skills · 状态化提示词', description: '仅在编程 IDE 中启用。', contexts: [{ key: 'ide', name: '编程 IDE', description: '普通聊天不加载。', parts: [{ key: 'coding_skill', name: '编程 Skill', description: 'IDE 状态规程', builtin: '保留调查、实施、验证与交付规程。', builtinSource: 'code', versions: [] }], runtime: [] }] }] : []),
+    ] })
     if (req.method() === 'PUT' && url.pathname.startsWith('/api/agents/peers/')) {
       const id = url.pathname.split('/').at(-1), body = req.postDataJSON()
       saves.push({ id, body }); Object.assign(peers.find(p => p.id === id), body)
@@ -64,7 +67,7 @@ try {
   })
   const open = async id => {
     await page.goto(`http://agent-capabilities.test/#/multi-agent/${id}`)
-    await page.getByRole('heading', { name: peers.find(p => p.id === id).name, exact: true }).waitFor()
+    await page.getByRole('heading', { name: peers.find(p => p.id === (id === 'builtin-coding' ? 'builtin' : id)).name, exact: true }).waitFor()
     await page.getByRole('button', { name: '能力', exact: true }).click()
     await page.getByText('可用工具', { exact: true }).waitFor()
   }
@@ -112,13 +115,17 @@ try {
   assert.deepEqual(saves.at(-1).body.tools, ['write_doc'])
   assert.deepEqual(saves.at(-1).body.terminals, ['one'])
   await open('builtin-coding')
-  assert.equal(await page.getByText('全部开放', { exact: true }).count(), 0)
-  assert.equal(await page.getByRole('button', { name: /write_doc/ }).getAttribute('aria-pressed'), 'false')
-  assert.deepEqual(new Set(queries), new Set(['builtin', 'member', 'builtin-coding']))
+  assert.equal(await page.getByText('全部开放', { exact: true }).count(), 1)
+  assert.equal(await page.getByRole('button', { name: /write_doc/ }).getAttribute('aria-pressed'), 'true')
+  assert.deepEqual(new Set(queries), new Set(['builtin', 'member']))
 
   await page.goto('http://agent-capabilities.test/#/coding?project=p1')
-  await page.getByRole('link', { name: '编辑编码 Agent的头像、名字与人设', exact: true }).click()
-  await page.getByRole('heading', { name: '编码 Agent', exact: true }).waitFor()
+  await page.getByRole('link', { name: '编辑核心助手的头像、名字与人设', exact: true }).click()
+  await page.getByRole('heading', { name: '核心助手', exact: true }).waitFor()
+  await page.getByRole('button', { name: '提示词 & 上下文工程', exact: true }).click()
+  await page.getByRole('button', { name: 'Skills · 状态化提示词', exact: true }).click()
+  await page.getByText('编程 Skill', { exact: true }).waitFor()
+  await page.getByText('普通聊天不加载。', { exact: true }).waitFor()
   await page.getByRole('textbox', { name: /^名字/ }).fill('牧濑红莉栖')
   await page.locator('input[type=file]').setInputFiles({ name: 'character.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=', 'base64') })
   await page.getByRole('button', { name: '移除', exact: true }).waitFor()

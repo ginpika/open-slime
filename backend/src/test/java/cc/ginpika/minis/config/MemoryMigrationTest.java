@@ -21,7 +21,7 @@ class MemoryMigrationTest {
             jdbc.update("INSERT INTO memory_event(event_key,kind,actor,ref_type,ref_id,created_at) VALUES('legacy','chat','user','chat_message',1,1)");
             var migration = new SchemaMigrations(jdbc,new TransactionTemplate(new DataSourceTransactionManager(ds)),"jdbc:sqlite::memory:");
             migration.apply(); migration.apply();
-            assertEquals(5,jdbc.queryForObject("SELECT version FROM _schema",Integer.class));
+            assertEquals(6,jdbc.queryForObject("SELECT version FROM _schema",Integer.class));
             assertEquals("L3",jdbc.queryForObject("SELECT layer FROM graph_claim",String.class));
             assertNull(jdbc.queryForObject("SELECT agent_id FROM memory_event",String.class));
             assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM memory_event",Integer.class));

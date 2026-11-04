@@ -4,19 +4,17 @@
  * 只在桌面壳里渲染（见 App.tsx 的 isDesktopShell() 判断）：窗口已去掉系统装饰，
  * 标题栏、拖拽区、窗口按钮、窗缘缩放都要页面自己给。
  *
- *   ┌ 外层一圈亚克力（12px）────────────────────────────────┐
+ *   ┌ 外层纯色窗缘（12px）────────────────────────────────┐
  *   │ ┌ 菜单栏 88px ┐ ┌ 主视图容器 ───────────────────────┐ │
  *   │ │ 白底 logo   │ │ 标题栏（拖拽区+身份胶囊+窗口按钮） │ │
  *   │ │ 竖排 NAV    │ │ 页面内容（AppShell 渲染在这里）    │ │
  *   │ └─────────────┘ └───────────────────────────────────┘ │
  *   └───────────────────────────────────────────────────────┘
  *
- * 这一层是「窗口外壳」，和引导页（desktop/ui/index.html）是同一块东西：外观严格同源，
- * 深色轨配色（#1c1b1d 菜单栏 / 圆形窗口按钮 / 身份胶囊）刻意写死、不跟主题走；
- * 只有主视图里装的 AppShell 跟随主题（--c-*）。
+ * 菜单栏、标题栏、窗口按钮与身份胶囊跟随 data-scheme 切换纯浅色 / 深色，
+ * 主视图里的 AppShell 继续使用应用主题令牌（--c-*）。
  *
- * 两者分属不同构建产物（tauri 自带静态资源 vs Vite 产物），无法共用代码，
- * 所以改引导页那套配色/尺寸时，必须回 desktopFrame.css 成对同步。
+ * Vite 入口 index.html 提供同尺寸、同配色的首帧占位，调整外壳视觉时需同步其骨架样式。
  */
 import { AppIcon } from '../components/AppIcon'
 import { AstrolabeLogo } from '../components/AstrolabeLogo'
@@ -51,9 +49,12 @@ export function DesktopFrame({
   userSlot,
   toolsSlot,
   homeSlot,
+  hideRail = false,
   children,
 }: {
   activePath: string
+  /** 隐藏左侧菜单轨；对话首页另外将窗口控件叠在内容上，不占标题栏高度。 */
+  hideRail?: boolean
   /** 身份胶囊：状态与用户逻辑由 App 持有（见 App.tsx 的 UserMenu），框架只给位置 */
   userSlot?: ReactNode
   /** 标题栏工具位（主题按钮）：隐藏顶栏时由 App 挪到这里，位于身份胶囊左侧 */
@@ -64,16 +65,18 @@ export function DesktopFrame({
 }) {
   const [maximized, setMaximized] = useState(false)
   const { themeId } = useThemeState()
+  const conversation = hideRail && activePath === '/'
+  const mac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
 
   /* 页面整体让出底色（见 desktopFrame.css 的 body[data-df]）：窗口是透明的，桌面要从
-     外壳的圆角外与那一圈亚克里透出来。用 layout effect 赶在首帧前挂上，
+     外壳的圆角外透出来。用 layout effect 赶在首帧前挂上，
      免得先闪一帧不透明的 --c-bg */
   useLayoutEffect(() => {
     document.body.dataset.df = 'on'
     /* 首帧骨架（index.html 预置）到位即撤：形状与外壳一致，撤下时看不出变化。
        先挂 data-df 把底让给桌面、再撤骨架，中间不会闪出一帧不透明底 */
     document.getElementById('minis-df-skeleton')?.remove()
-    document.documentElement.classList.remove('minis-df-skeleton')
+    document.documentElement.classList.remove('minis-df-skeleton', 'minis-df-conversation')
     return () => {
       delete document.body.dataset.df
     }
@@ -96,11 +99,11 @@ export function DesktopFrame({
   }, [])
 
   return (
-    <div className="df">
+    <div className={`df${conversation ? ' df--conversation' : ''}${mac ? ' df--mac' : ''}`}>
       <div className="df__acrylic" aria-hidden="true" />
 
       {/* -------------------------------------------- 左：菜单栏 */}
-      <aside className="df__rail">
+      {!hideRail && <aside className="df__rail">
         {/* 品牌位也当拖拽区（整块含内边距都能拖，故用 deep） */}
         <div className="df__brand" data-tauri-drag-region="deep" title={BRAND.name} role="img" aria-label={BRAND.name}>
           {themeId === 'astrolabe' ? <AstrolabeLogo /> : <img src="/icon-64x64.png" alt="" draggable={false} />}
@@ -123,21 +126,21 @@ export function DesktopFrame({
             )
           })}
         </nav>
-      </aside>
+      </aside>}
 
       {/* -------------------------------------------- 右：主视图 */}
       <div className="df__stage">
         {/* 标题栏：一行 = 左段拖拽区 + 身份胶囊 + 窗口按钮。
-            与引导页同构——拖拽区是按钮的同层前兄弟，不覆盖按钮 */}
+            拖拽区是按钮的同层前兄弟，不覆盖按钮 */}
         <div className="df__titlebar">
           <div className="df__drag" data-tauri-drag-region />
-          {toolsSlot}
-          {homeSlot}
-          {userSlot}
+          {!conversation && toolsSlot}
+          {!conversation && homeSlot}
+          {!conversation && userSlot}
           <div className="df__win">
             <button
               type="button"
-              className="df__wbtn"
+              className="df__wbtn df__wbtn--minimize"
               title="最小化"
               aria-label="最小化"
               onClick={minimizeWindow}
@@ -146,7 +149,7 @@ export function DesktopFrame({
             </button>
             <button
               type="button"
-              className="df__wbtn"
+              className="df__wbtn df__wbtn--maximize"
               title={maximized ? '还原' : '最大化'}
               aria-label={maximized ? '还原' : '最大化'}
               onClick={() => toggleMaximizeWindow().then(setMaximized)}

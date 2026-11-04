@@ -1,0 +1,102 @@
+{
+  "id": "graphite-acrylic",
+  "name": "深灰亚克力桌面外壳",
+  "status": "archived-candidate",
+  "archivedOn": "2026-11-05",
+  "sourceCommit": "42e20b97097f852d7c5f9a7c63ab933812987e01",
+  "sourceDate": "2026-10-29",
+  "shellStyleLastChangedCommit": "f7439f3",
+  "shellFirstAddedCommit": "7823cf0",
+  "files": [
+    {
+      "path": "source/frontend/src/shell/DesktopFrame.tsx",
+      "gitPath": "frontend/src/shell/DesktopFrame.tsx",
+      "gitBlob": "ae7e7f67becfbbc3e48f5224f90e19872a8ef60d",
+      "sha256": "ff20f4c9dcd432293ee10fac893a2d9078ae0e63b293c361ebfaa28440df0200"
+    },
+    {
+      "path": "source/frontend/src/shell/desktopFrame.css",
+      "gitPath": "frontend/src/shell/desktopFrame.css",
+      "gitBlob": "f6748e7e647e01f1aacfb64eb18cc4125d4a51cb",
+      "sha256": "bb8129953b993170fb70105831d090034b3d45943c5b86b88c6e1a04d7b320c4"
+    },
+    {
+      "path": "source/frontend/src/shell/nav.ts",
+      "gitPath": "frontend/src/shell/nav.ts",
+      "gitBlob": "f110eeb15be2a0f3a2d749749d7b9d212a0183f9",
+      "sha256": "17857ae58853fe7f5f7043915e8483594f739035b65f63c3d67acc656edd6c77"
+    },
+    {
+      "path": "source/frontend/src/shell/icons.tsx",
+      "gitPath": "frontend/src/shell/icons.tsx",
+      "gitBlob": "725e55fa620938b5a18268a57d33903089bf26be",
+      "sha256": "80d277d8dce62f14ef691e37f499c7893dcec625d5f8a0ef314f51acb0d1d222"
+    },
+    {
+      "path": "source/frontend/src/components/AppIcon.tsx",
+      "gitPath": "frontend/src/components/AppIcon.tsx",
+      "gitBlob": "ed9b3f97e0510064d14cf61ea23d5ba09ef3b366",
+      "sha256": "2741e721e8db17a6926008a1c213c96888b7e3d5473377dd69e0787bea3cd1e0"
+    },
+    {
+      "path": "source/frontend/src/api/desktop.ts",
+      "gitPath": "frontend/src/api/desktop.ts",
+      "gitBlob": "7d3abdd9b74b13d017544cc80a945120f3b85c41",
+      "sha256": "0fb3d0f5770d405415cd65b0ee2977b729742c80a3f24026c536b978eec4a640"
+    },
+    {
+      "path": "source/frontend/index.html",
+      "gitPath": "frontend/index.html",
+      "gitBlob": "4e0fba36248eb56b58b69f5ffd014ff22e1c4de3",
+      "sha256": "c0cafff2b4a0f57074fe29b5be0cca004ac395a56f9f27bfe2bd473b31108d27"
+    },
+    {
+      "path": "source/frontend/public/icon-64x64.png",
+      "gitPath": "frontend/public/icon-64x64.png",
+      "gitBlob": "550a892b4aa268aa92128d36cfe006e0c0521285",
+      "sha256": "be129f921220512047647c3743e068d9f2dc4eaf49e7c1afcc2b54c913557f94"
+    },
+    {
+      "path": "source/desktop/ui/index.html",
+      "gitPath": "desktop/ui/index.html",
+      "gitBlob": "0abb79df292e4a0a56da8c0e59b876d853b56186",
+      "sha256": "600eae6cb93af9269e5649940713b9e6cafc7e5229ba8ae1df6edd9512385241"
+    },
+    {
+      "path": "source/desktop/ui/icon-64x64.png",
+      "gitPath": "desktop/ui/icon-64x64.png",
+      "gitBlob": "550a892b4aa268aa92128d36cfe006e0c0521285",
+      "sha256": "be129f921220512047647c3743e068d9f2dc4eaf49e7c1afcc2b54c913557f94"
+    },
+    {
+      "path": "source/desktop/ui/lucide.svg",
+      "gitPath": "desktop/ui/lucide.svg",
+      "gitBlob": "cf79997f0e0d0377b8454775fea916a4a84b8df8",
+      "sha256": "bd5f215322724859b7071f1895bb5ab3705470e6d9e96b9b0342af4286583b27"
+    },
+    {
+      "path": "source/desktop/ui/lucide.LICENSE.txt",
+      "gitPath": "desktop/ui/lucide.LICENSE.txt",
+      "gitBlob": "718bb3f0e44153809972abed31839375804bf652",
+      "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+    },
+    {
+      "path": "source/desktop/src/main.rs",
+      "gitPath": "desktop/src/main.rs",
+      "gitBlob": "9f7052b9b1bcc98e25a70e74855a55993e572de5",
+      "sha256": "b9372bbc279394103c66dc0fabd0ae9ef30a95c1654db87dcf7d0d92ead96ac0"
+    },
+    {
+      "path": "source/desktop/tauri.conf.json",
+      "gitPath": "desktop/tauri.conf.json",
+      "gitBlob": "ab742278cb90cfbb81aec6452fa234a1b7b06d02",
+      "sha256": "97fe2b856b1b59a02442650774b442fb43a2d15a2aae037476a86068a05f7448"
+    },
+    {
+      "path": "source/desktop/Cargo.toml",
+      "gitPath": "desktop/Cargo.toml",
+      "gitBlob": "8c7eb186cb91cb905c4738640799bce83a19694d",
+      "sha256": "468b44b3faee814806697a0b2f19958ab626006ffcd4a549dbfd96b555e9f61d"
+    }
+  ]
+}

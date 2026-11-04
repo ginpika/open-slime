@@ -334,7 +334,7 @@ type DecoupledInputHandle = {
   /** 覆盖文本（发送后清空 / 回退回填） */
   setValue: (v: string) => void
   /** 聚焦输入框 */
-  focus: () => void
+  focus: (options?: FocusOptions) => void
 }
 
 const DecoupledInput = forwardRef<
@@ -369,7 +369,7 @@ const DecoupledInput = forwardRef<
     () => ({
       getValue: () => inputRef.current?.value ?? '',
       setValue: (v: string) => update(v),
-      focus: () => inputRef.current?.focus(),
+      focus: (options?: FocusOptions) => inputRef.current?.focus(options),
     }),
     [update],
   )
@@ -657,6 +657,8 @@ export default function Home({ connErr }: Props) {
    *  打字本身只重渲染输入框组件，不触发这里（否则长会话会随击键全量重渲染） */
   const [hasText, setHasText] = useState(false)
   const [chatMode, setChatMode] = useState(false)
+  /** 当前可见屏幕独立于会话是否存在；返回首页保留会话，但后台更新不能再切屏。 */
+  const [homeView, setHomeView] = useState<'search' | 'conversation'>('search')
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
   /** 当前会话的个人待办清单（plan-of-record）：TODO 卡片的数据源；
    *  由会话事件（kind=todo）与生成结束（busy→false）驱动刷新（见下方两个效应） */
@@ -794,11 +796,20 @@ export default function Home({ connErr }: Props) {
   /** 新建会话期间的并发闸门：此时尚无 sessionId，来不及由 live 快照拦住连点 */
   const sendingRef = useRef(false)
   const hasChat = chatMode && (sessionActive || msgs.length > 0 || live !== null)
-  /** main 的实际可视高度（随 header 高度/登录态/窗口变化）：两页各自撑满它，才能严格首尾相接 */
+  const showingChat = hasChat && homeView === 'conversation'
+
+  /* 屏幕显隐完成后复位唯一的外层滚动容器并移交焦点，避免 WebView 恢复屏外控件的焦点
+     时又把页面带回会话。两屏保持挂载，输入草稿和历史消息无需重新加载。 */
+  useLayoutEffect(() => {
+    const main = searchPageRef.current?.closest('main')
+    main?.scrollTo({ top: 0, behavior: 'instant' })
+    const input = showingChat ? chatInputRef.current : searchInputRef.current
+    input?.focus({ preventScroll: true })
+  }, [showingChat])
+  /** main 的实际可视高度（随 header 高度/登录态/窗口变化），用于撑满当前屏幕。 */
   const [pageH, setPageH] = useState(0)
 
-  /* 量出 main 的可视高度喂给两页：header 高度会随登录态/窗口/导航换行变化，写死 calc(100dvh-8.5rem)
-     会算短，搜索页比一屏矮，第 2 页对话页的顶部就从主页底部露出一小截 */
+  /* 量出 main 的可视高度，让当前屏幕随顶栏、登录态与窗口大小撑满内容区。 */
   useLayoutEffect(() => {
     const main = searchPageRef.current?.closest('main')
     if (!main) return
@@ -899,32 +910,12 @@ export default function Home({ connErr }: Props) {
 
   /* 上报「正在看哪条会话」：页级通知据此跳过「你正看着它」的提醒（见 ChatNotifier） */
   useEffect(() => {
-    setActiveChatSession(chatMode && sessionActive ? sessionId : null)
+    setActiveChatSession(showingChat ? sessionId : null)
     return () => setActiveChatSession(null)
-  }, [chatMode, sessionActive, sessionId])
+  }, [showingChat, sessionId])
 
-  /* 跨页滚动时间窗：进入会话发起 main 平滑滚动的时刻 + 余量。贴底 effect 据此知道
-     main 还在滚——滚动期间 content-visibility 只逐步补齐真实高度，此刻的贴底是
-     假象，不能据此收工；滚完且连续几帧都贴底后才算到位 */
-  const mainScrollUntilRef = useRef(0)
-
-  /* 两页模式：进入会话（或带着记录切回会话模式）时把内容滚到第 2 页对话页 */
-  useEffect(() => {
-    if (hasChat) {
-      mainScrollUntilRef.current = performance.now() + 900
-      chatPageRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [chatMode, sessionActive])
-
-  /* 有新消息时保持对话页在场（会话内小滚动，滚动条照常） */
-  useEffect(() => {
-    if (hasChat) chatPageRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [view.length])
-
-  /* 两页模式下 main 的滚动条永久隐去（槽保留，宽度恒定无抖动）：滚轮锁已把 main
-     变成纯「页面传送带」，露出滚动条就穿帮「其实是一个长页面在滚」的把戏；
-     会话内容的长列表滚动走对话页内层（scrollbar-hide），main 的滚动条没有存在价值。
-     仅在首页挂载期间生效，切到别的页面照常恢复 */
+  /* 首页和会话由显式视图切换；隐藏外层滚动条，消息列表使用自己的滚动容器。
+     仅在首页挂载期间生效，切到其它页面照常恢复。 */
   useEffect(() => {
     const mainEl = searchPageRef.current?.closest('main')
     if (!mainEl) return
@@ -989,7 +980,7 @@ export default function Home({ connErr }: Props) {
   /* 对话页滚轮只作用于消息列表：内容不足一屏或已到边界时不再外溢回搜索页 */
   useEffect(() => {
     const el = chatScrollRef.current
-    if (!hasChat || !el) return
+    if (!showingChat || !el) return
     const onWheel = (ev: WheelEvent) => {
       const max = el.scrollHeight - el.clientHeight
       if (
@@ -1002,14 +993,14 @@ export default function Home({ connErr }: Props) {
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [hasChat])
+  }, [showingChat])
 
   /* 对话页里除消息列表以外的区域（底部输入框、页面留白等）没有可滚内容：落在其中的
-     滚轮会冒泡到 App 的 main，把视口带回上方的搜索页。这里在 main 上兜底拦截——
+     滚轮会冒泡到 App 的 main，移动外层视口。这里在 main 上兜底拦截——
      从事件目标向上找可滚容器（消息列表、抽屉、「…」菜单各自会滚），还能滚就放行，
-     滚到边界或压根没有可滚容器才 preventDefault，把会话页彻底锁在第 2 页 */
+     滚到边界或没有可滚容器才 preventDefault，避免外层页面被滚离当前视图。 */
   useEffect(() => {
-    if (!hasChat) return
+    if (!showingChat) return
     const main = chatPageRef.current?.closest('main')
     if (!main) return
     const onWheel = (ev: WheelEvent) => {
@@ -1028,7 +1019,7 @@ export default function Home({ connErr }: Props) {
     }
     main.addEventListener('wheel', onWheel, { passive: false })
     return () => main.removeEventListener('wheel', onWheel)
-  }, [hasChat])
+  }, [showingChat])
 
   /* 搜索页滚轮向下不进入会话页：首页不再内联展示结果，向下滚一律留在第 1 页 */
   useEffect(() => {
@@ -1041,29 +1032,13 @@ export default function Home({ connErr }: Props) {
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
-  /* 拖拽选中文本时浏览器会对可滚动祖先（App 的 main）做自动滚动，可能把视口带回搜索页。
-     对话页内按住鼠标（选中起点，见对话页 onMouseDown）期间 main 已被锁为 overflow:hidden；
-     这里监听全局 mouseup 解锁，卸载时兜底恢复，避免锁定状态泄漏 */
-  useEffect(() => {
-    if (!hasChat) return
-    const main = chatPageRef.current?.closest('main')
-    const unlock = () => {
-      if (main) main.style.overflow = ''
-    }
-    window.addEventListener('mouseup', unlock)
-    return () => {
-      window.removeEventListener('mouseup', unlock)
-      unlock()
-    }
-  }, [hasChat])
-
   /* 新消息 / 加载历史后，消息列表贴到底部（最后一条——通常就是大模型的回答——落在视野内）。
      屏外消息靠 content-visibility 的占位高度参与布局，跳到底后浏览器才把视野附近的真实高度补齐，
-     scrollHeight 随之变化、位置跟着漂；点通知气泡跳进来时还会同时平滑滚到对话页，补齐要横跨整段动画。
-     所以不是「滚一次就完」，而是连着几帧校正、直到连续几帧都贴底才收工（用户一动滚轮就立刻让位） */
+     scrollHeight 随之变化、位置跟着漂；连续几帧校正到稳定贴底后收工，用户一动滚轮就立刻让位。
+     首页可见时不操作隐藏的消息列表，避免 WebView 将它重新滚入视口。 */
   useEffect(() => {
     const el = chatScrollRef.current
-    if (!el) return
+    if (!showingChat || !el) return
     let raf = 0
     let frames = 0
     let stable = 0
@@ -1077,27 +1052,18 @@ export default function Home({ connErr }: Props) {
     }
     el.addEventListener('wheel', yieldToUser, { passive: true })
     el.addEventListener('touchstart', yieldToUser, { passive: true })
-    /* main 一滚就重置稳定计数：时间窗只是估的余量，实际滚动更长时由事件兜底 */
-    const mainEl = el.closest('main')
-    const onMainScroll = () => {
-      stable = 0
-    }
-    mainEl?.addEventListener('scroll', onMainScroll, { passive: true })
     const settle = () => {
       raf = 0
       if (stopped) return
-      /* main 跨页滚动时间窗内：content-visibility 只逐步补齐真实高度，此刻的
-         贴底是假象——不累计稳定计数、不消耗帧数预算，滚完后再按常规收工 */
-      const inWindow = performance.now() < mainScrollUntilRef.current
       const max = el.scrollHeight - el.clientHeight
       if (el.scrollTop < max) {
         /* 高度又长出来了（刚补齐的这几屏比占位高）：再贴一次 */
         el.scrollTop = max
         stable = 0
-      } else if (!inWindow && ++stable >= 3) {
+      } else if (++stable >= 3) {
         return
       }
-      if (!inWindow && ++frames >= 90) return
+      if (++frames >= 90) return
       raf = requestAnimationFrame(settle)
     }
     const begin = () => {
@@ -1105,16 +1071,14 @@ export default function Home({ connErr }: Props) {
       el.scrollTop = el.scrollHeight
       raf = requestAnimationFrame(settle)
     }
-    /* 立即贴底：进入会话时列表还在视口外（main 刚起滚），这次瞬移不会被看见，
-       用户随 main 的平滑滚动一路看到的就是列表底部；滚动期间每帧校正新补齐的高度 */
+    /* 显示会话或历史更新后先贴底，再校正屏外消息的占位高度。 */
     begin()
     return () => {
       el.removeEventListener('wheel', yieldToUser)
       el.removeEventListener('touchstart', yieldToUser)
-      mainEl?.removeEventListener('scroll', onMainScroll)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [view, busy])
+  }, [view, busy, showingChat])
 
   /* backend 健康检查失败（App 注入）：以错误 message box 提示，不再占据首页排版 */
   useEffect(() => {
@@ -1277,9 +1241,8 @@ export default function Home({ connErr }: Props) {
       }
       setPanelOpen(false)
       void refreshSessions() // 后端已把该会话未读清零，刷新列表去掉未读点
-      // 从首页再次打开同一会话时，激活态和消息数可能不变，仍需显式切回会话屏。
-      mainScrollUntilRef.current = performance.now() + 900
-      requestAnimationFrame(() => chatPageRef.current?.scrollIntoView({ behavior: 'smooth' }))
+      // 再次打开同一会话时，消息数和激活态可能未变，仍需显式切回会话屏。
+      setHomeView('conversation')
     } catch (e) {
       const msg = errorText(e)
       if (msg !== null) setToast(`会话加载失败：${msg}`)
@@ -1372,6 +1335,7 @@ export default function Home({ connErr }: Props) {
       const s = await createSession(projectId || null)
       setSessionId(s.id)
       setSessionActive(true)
+      setHomeView('conversation')
       setMsgs([])
       setPanelOpen(false)
       /* 新会话延续模型 / Agent / CoT / 轮次计数显示选择；身份提示词不延续——新会话默认跟随提示词页的「对话身份」绑定 */
@@ -1458,6 +1422,7 @@ export default function Home({ connErr }: Props) {
         /* 模型/提示词随本次请求落库，这里补记 Agent 选择、CoT 显示与轮次计数，便于再次进入该会话时回显 */
         await saveConfig(s.id, { agentId: agentId || null, showCot, showRounds })
       }
+      setHomeView('conversation')
       startChat({
         sessionId: sid,
         text,
@@ -1547,9 +1512,23 @@ export default function Home({ connErr }: Props) {
     }
   }
 
+  const returnToSearch = useCallback(() => {
+    setHomeView('search')
+    setMenuOpen(false)
+    setPanelOpen(false)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('minis:home-search', returnToSearch)
+    return () => window.removeEventListener('minis:home-search', returnToSearch)
+  }, [returnToSearch])
+
   /** 切换检索/会话模式：搜索框左侧图标按钮与下方滑块共用同一入口 */
   const switchMode = (toChat: boolean) => {
-    if (toChat === chatMode) return
+    if (toChat === chatMode) {
+      if (toChat && hasChat) setHomeView('conversation')
+      return
+    }
     if (toChat) {
       /* 切入会话模式：自动拉开左侧抽屉并刷新会话列表，省去再点箭头的一步 */
       setChatMode(true)
@@ -1560,6 +1539,7 @@ export default function Home({ connErr }: Props) {
       /* 切回检索模式：清空会话上下文，避免再次切入会话模式时自动恢复
          上次的对话——历史会话的唯一入口是左侧抽屉；身份钉住一并清除，
          新会话回到跟随提示词页绑定 */
+      returnToSearch()
       setChatMode(false)
       setPanelMountFade(false)
       setSessionActive(false)
@@ -1628,11 +1608,12 @@ export default function Home({ connErr }: Props) {
       )}
       {/* 错误轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
-      {/* 欢迎语 + 居中搜索框（Google 式首页）；点左侧图标在检索/会话模式间切换。
-          撑满一屏并垂直居中，让第 2 页对话页正好从下一屏开始 */}
+      {/* 欢迎语 + 居中搜索框：隐藏的屏幕不参与布局或焦点导航，避免屏外合成层残留。 */}
       <section
         ref={searchPageRef}
-        style={pageH ? { minHeight: pageH } : undefined}
+        data-home-view="search"
+        hidden={showingChat}
+        style={{ minHeight: pageH || undefined, display: showingChat ? 'none' : undefined }}
         className={`flex min-h-[calc(100dvh-8.5rem)] flex-col${themeId === 'astrolabe' ? ' astro-home' : ''}`}
       >
         {/* 标题到搜索框的整体区域，在 content 内垂直居中 */}
@@ -1790,21 +1771,14 @@ export default function Home({ connErr }: Props) {
         </div>
       </section>
 
-      {/* 第 2 页：会话视图的对话页；新建会话或发送后内容自动滚动到这里（模拟搜索栏上移消失）。
-          定高一屏：上半为内部滚动的消息列表（滚轮不外溢），底部常驻输入框继续会话 */}
+      {/* 会话屏：保持挂载以保留草稿；仅在显式进入会话时显示，不用外层滚动模拟路由切换。 */}
       {hasChat && (
         <section
           ref={chatPageRef}
           data-home-view="conversation"
-          onMouseDown={(ev) => {
-            /* 左键在对话页按下（拖拽选中的起点）：临时把 main 锁为不可滚，
-               否则选中文本的自动滚动会把视口带回上方的搜索页；mouseup 后解锁 */
-            if (ev.button === 0) {
-              chatPageRef.current?.closest('main')?.style.setProperty('overflow', 'hidden')
-            }
-          }}
+          hidden={!showingChat}
           className="relative flex h-[calc(100dvh-8.5rem)] flex-col"
-          style={pageH ? { height: pageH } : undefined}
+          style={{ height: pageH || undefined, display: showingChat ? undefined : 'none' }}
         >
           {/* 待办清单悬浮卡片（plan-of-record）：固定在视口右侧、垂直居中，不随消息列表滚动。
               外层 pointer-events-none 让卡片四周的空白不挡交互，只有卡片本身可点/可滚 */}
@@ -1817,8 +1791,7 @@ export default function Home({ connErr }: Props) {
           )}
           {/* 会话目录（形态同文档渲染页）：圆点轨与正文右缘留出空隙，宽屏向外移 64px，
               窄窗口至少保留 8px 的右侧边距，避免轨道超出可视区域。
-              hover 浮出各次提问，点它跳到那一条提问。随对话页一起进出场——滚回上方的
-              搜索页时整页下移，它也跟着走，不会浮在搜索页上 */}
+              hover 浮出各次提问，点它跳到那一条提问；返回搜索屏时随会话屏一起隐藏。 */}
           {tocItems.length > 0 && (
             <aside className="absolute right-[max(0.5rem,calc(50%_-_26rem))] top-1/2 z-20 hidden -translate-y-1/2 lg:block">
               <TocRail items={tocItems} side="right" scroller={getChatScroller} compact />
@@ -1863,14 +1836,12 @@ export default function Home({ connErr }: Props) {
             </div>
           </div>
 
-          {/* 底部输入框：不随消息列表滚动，可直接继续会话；左侧按钮平滑滚回搜索页 */}
+          {/* 底部输入框：不随消息列表滚动；左侧按钮返回搜索屏并移交焦点。 */}
           <div className="mx-auto w-full max-w-2xl pb-4">
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() =>
-                  searchPageRef.current?.scrollIntoView({ behavior: 'smooth' })
-                }
+                onClick={returnToSearch}
                 title="返回搜索"
                 aria-label="返回搜索界面"
                 className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-accent-fg shadow-lg transition hover:bg-accent-hover"

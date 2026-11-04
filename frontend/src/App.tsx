@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { loginUrlOf, logout, me, type SsoUser } from './api/client'
 import { isDesktopShell, backToLauncher, openDesktopHome } from './api/desktop'
-import Home from './pages/Home'
+import AgentHome from './pages/agent/AgentHome'
+import Dashboard from './pages/Dashboard'
 import Knowledge from './pages/Knowledge'
 import Economy from './pages/Economy'
 import EconomyResearch from './pages/economy/EconomyResearch'
@@ -259,11 +260,6 @@ function App() {
   /* 每页包一层 data-page（语义锚点），内容由 PageSlot 决定：原生页面或注册表中的渲染版本 */
   const page = (
     <>
-      {route === '/' && (
-        <div data-page="home">
-          <PageSlot route="home" props={{ connErr }} fallback={<Home connErr={connErr} />} />
-        </div>
-      )}
       {route === '/knowledge' && <div data-page="knowledge"><Knowledge /></div>}
       {route === '/economy' && <div data-page="economy"><Economy /></div>}
       {route === '/economy/research' && <EconomyResearch />}
@@ -403,6 +399,30 @@ function App() {
         variant={variant}
       />
     ) : null
+
+  /* 对话首页与 Dashboard 不再套带侧栏的 AppShell：窗口本身只留 Agent / 收纳页。
+     其余页面仍走原有外壳，路由与链接保持不变。 */
+  if (route === '/' || route === '/dashboard') {
+    const standalone = route === '/' ? <AgentHome connErr={connErr} userSlot={renderUser({ placement: 'up', withName: false })} /> : <Dashboard />
+    return (
+      <>
+        {desktop ? (
+          <DesktopFrame
+            hideRail
+            activePath={route}
+            toolsSlot={null}
+            homeSlot={homeButton}
+            userSlot={renderUser({ placement: 'down', withName: true }, 'chip')}
+          >
+            {standalone}
+          </DesktopFrame>
+        ) : (
+          standalone
+        )}
+        <ChatNotifier />
+      </>
+    )
+  }
 
   const shell = (
     <AppShell

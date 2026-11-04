@@ -1,13 +1,8 @@
 /* ============================================================================
  * 桌面框架样式 —— 无边框窗口的自绘外壳（见 DesktopFrame.tsx）
  *
- * 这一层是「窗口外壳」，不是应用内容。外观与引导页（desktop/ui/index.html）**严格同源**：
- *   外壳 12px 亚克力圈 + 20px 圆角
- *   左：菜单栏 88px / #1c1b1d 实底 / 白底圆角 logo
- *   右：主视图容器，顶部一行（拖拽区 + 身份胶囊 + 三个圆形窗口按钮，48px）
- *
- * 所以这里的深色轨配色是刻意写死的（不跟主题走）——它属于窗口外壳，和引导页是同一块东西；
- * 只有主视图里装的 AppShell 跟随主题（--c-*）。改引导页那套时，这里的数值要成对同步。
+ * 外壳保留 12px 圈、20px 圆角和 88px 菜单栏；颜色跟随明暗主题。
+ * 标题栏、身份胶囊与菜单栏使用同一组纯色，避免外壳与应用内容割裂。
  *
  * 本文件是「无层（unlayered）」规则：需要压过 utilities 层的少数几处（外壳根元素的
  * h-screen → 填满主视图、.df-chip 压住 UserMenu 的默认底色）依赖这一点，改动时勿加 @layer。
@@ -20,19 +15,22 @@ body[data-df] {
 }
 
 .df {
-  /* 与引导页同源的结构常数与深色轨配色 */
+  /* 结构常数不变；默认浅色配色，深档见下方 data-scheme 覆盖。 */
   --df-pad: 12px;
   --df-gap: 10px;
   --df-radius: 20px;
   --df-rail-w: 88px;
-  --df-chrome: #1c1b1d;
-  --df-chrome-hover: #3a393d;
-  --df-ink: #f2f4f8;
-  --df-ink-dim: #9aa2b1;
-  --df-ink-mute: #6f7787;
-  --df-accent: #ffcf1b;
-  --df-shadow-card: 0 2px 6px rgba(0, 0, 0, 0.08), 0 10px 24px rgba(0, 0, 0, 0.14);
-  --df-shadow-chip: 0 1px 2px rgba(0, 0, 0, 0.1), 0 4px 12px rgba(0, 0, 0, 0.1);
+  --df-chrome: #f6f8fa;
+  --df-chrome-hover: #eaeef2;
+  --df-ink: #1f2328;
+  --df-ink-dim: #59636e;
+  --df-ink-mute: #59636e;
+  --df-line: #d1d9e0;
+  --df-accent: var(--c-accent, #1f883d);
+  --df-accent-soft: var(--c-accent-soft, #dafbe1);
+  --df-frame: #eaeef2;
+  --df-shadow-card: 0 0 0 1px var(--df-line);
+  --df-shadow-chip: none;
 
   position: relative;
   display: flex;
@@ -44,26 +42,23 @@ body[data-df] {
   overflow: hidden;
 }
 
-/* 最底层：一圈亚克力磨砂。糊是系统做的（窗口级 blur/acrylic），页面只压一层半透明 */
+:root[data-scheme='dark'] .df {
+  --df-chrome: #141719;
+  --df-chrome-hover: #24292e;
+  --df-ink: #e6edf3;
+  --df-ink-dim: #a0a9b2;
+  --df-ink-mute: #a0a9b2;
+  --df-line: #2c3236;
+  --df-frame: #0d0f10;
+}
+
+/* 最底层使用纯色窗缘；不叠加渐变或光晕。 */
 .df__acrylic {
   position: absolute;
   inset: 0;
   pointer-events: none;
   border-radius: var(--df-radius);
-  background: rgba(200, 200, 200, 0.3);
-}
-.df__acrylic::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    150deg,
-    rgba(255, 255, 255, 0.14) 0%,
-    rgba(255, 255, 255, 0.03) 32%,
-    transparent 60%
-  );
-  pointer-events: none;
+  background: var(--df-frame);
 }
 
 /* ------------------------------------------------ 左：菜单栏（88px 独立圆角容器） */
@@ -79,9 +74,7 @@ body[data-df] {
   padding: 16px 0 18px;
   border-radius: var(--df-radius);
   background: var(--df-chrome);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    var(--df-shadow-card);
+  box-shadow: var(--df-shadow-card);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -128,11 +121,11 @@ body[data-df] {
     color 150ms ease;
 }
 .df__item:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--df-chrome-hover);
   color: var(--df-ink);
 }
 .df__item[aria-current='page'] {
-  background: rgba(255, 207, 27, 0.16);
+  background: var(--df-accent-soft);
   color: var(--df-accent);
 }
 .df__icon {
@@ -151,7 +144,7 @@ body[data-df] {
   min-width: 0;
   border-radius: var(--df-radius);
   overflow: hidden;
-  /* 主视图装的是应用内容，底色跟主题走（外壳其它部分是写死的深色轨） */
+  /* 主视图底色跟随应用主题。 */
   background: var(--c-bg);
   box-shadow: var(--df-shadow-card);
 }
@@ -165,6 +158,9 @@ body[data-df] {
   gap: 8px;
   height: 48px;
   padding: 0 12px 0 8px;
+  border-bottom: 1px solid var(--df-line);
+  background: var(--df-chrome);
+  color: var(--df-ink);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -178,7 +174,7 @@ body[data-df] {
   gap: 8px;
 }
 
-/* 窗口按钮：实底 #1c1b1d + 圆形，hover 提亮一档（与引导页同一套）。
+/* 窗口按钮使用外壳纯色，hover 提亮一档。
    .df__toolbtn 是标题栏里的工具钮（隐藏顶栏时挪来的主题按钮），与窗口按钮同风格 */
 .df__wbtn,
 .df__toolbtn {
@@ -200,7 +196,7 @@ body[data-df] {
 .df__wbtn:hover,
 .df__toolbtn:hover {
   background: var(--df-chrome-hover);
-  color: #fff;
+  color: var(--df-ink);
 }
 .df__wbtn svg {
   width: 12px;
@@ -215,7 +211,7 @@ body[data-df] {
   height: 16px;
 }
 
-/* 身份胶囊：与引导页 .user-chip 同值。由 UserMenu 的 chip 档挂上这个类 */
+/* 身份胶囊由 UserMenu 的 chip 档挂上这个类。 */
 .df-chip {
   display: flex;
   align-items: center;
@@ -226,10 +222,8 @@ body[data-df] {
   border: 0;
   border-radius: 16px;
   background: var(--df-chrome);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    var(--df-shadow-chip);
-  color: #e8ebf2;
+  box-shadow: inset 0 0 0 1px var(--df-line);
+  color: var(--df-ink);
   font: inherit;
   font-size: 13px;
   letter-spacing: 0.4px;
@@ -243,8 +237,8 @@ body[data-df] {
   width: 20px;
   height: 20px;
   font-size: 12px;
-  background: rgba(15, 15, 15, 0.04);
-  color: #6b7280;
+  background: var(--df-chrome-hover);
+  color: var(--df-ink-dim);
 }
 .df-chip__name {
   overflow: hidden;
@@ -263,6 +257,96 @@ body[data-df] {
 }
 .df__view > * {
   height: 100%;
+}
+
+/* The conversation fills the window. Its own header and Agent rail share the
+   first row with real window controls, rather than sitting below a second bar. */
+.df--conversation {
+  --df-pad: 0px;
+  --df-gap: 0px;
+  height: 100dvh;
+}
+.df--conversation .df__stage {
+  border-radius: 0;
+  box-shadow: none;
+}
+.df--conversation .df__titlebar {
+  position: absolute;
+  z-index: 40;
+  inset: 0 0 auto;
+  height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.df--conversation .df__drag {
+  position: absolute;
+  top: 0;
+  right: 120px;
+  left: 100px;
+  height: 10px;
+  pointer-events: auto;
+}
+.df--conversation .df__win {
+  position: absolute;
+  top: 15px;
+  right: 16px;
+  pointer-events: auto;
+}
+.df--conversation:not(.df--mac) .sl-chat__header {
+  padding-right: 120px;
+}
+.df--conversation.df--mac .df__drag {
+  right: 12px;
+}
+.df--conversation.df--mac .df__win {
+  top: 15px;
+  right: auto;
+  left: 16px;
+  gap: 9px;
+}
+.df--conversation.df--mac .df__wbtn {
+  width: 14px;
+  height: 14px;
+  border: 1px solid #00000018;
+  box-shadow: none;
+}
+.df--conversation.df--mac .df__wbtn--close {
+  order: 0;
+  background: #ff5f57;
+  color: #7e1613;
+}
+.df--conversation.df--mac .df__wbtn--minimize {
+  order: 1;
+  background: #febc2e;
+  color: #815000;
+}
+.df--conversation.df--mac .df__wbtn--maximize {
+  order: 2;
+  background: #28c840;
+  color: #075b15;
+}
+.df--conversation.df--mac .df__wbtn svg {
+  width: 9px;
+  height: 9px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.df--conversation.df--mac .df__win:hover .df__wbtn svg,
+.df--conversation.df--mac .df__wbtn:focus-visible svg {
+  opacity: 1;
+}
+.df--conversation.df--mac .sl-agents__close {
+  margin-left: 68px;
+  opacity: 0;
+}
+.df--conversation.df--mac .sl-agents__head:hover .sl-agents__close,
+.df--conversation.df--mac .sl-agents__close:focus-visible {
+  opacity: 1;
+}
+.df--conversation.df--mac .sl-chat:not(.is-sidebar-open) .sl-chat__header {
+  padding-left: 100px;
 }
 
 /* --------------------------------------------------------- 窗缘缩放热区 */
