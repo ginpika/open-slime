@@ -46,11 +46,17 @@ public class ChatTurnCompletion {
 
     public void complete(ChatExecution exec, HubRow row, MemoryExec memScope, long taskId,
                          long userMsgId, String input, String answer) {
+        complete(exec, row, memScope, taskId, userMsgId, input, answer, true);
+    }
+
+    /** Archive-backed evidence may inform a reply without becoming general memory. */
+    public void complete(ChatExecution exec, HubRow row, MemoryExec memScope, long taskId,
+                         long userMsgId, String input, String answer, boolean captureAssistant) {
         if (!exec.turnTracked()) {
             return;
         }
         if (!sessions.memoryOff(row.id())) {
-            captureMemory(row, memScope, userMsgId, input, answer);
+            captureMemory(row, memScope, userMsgId, input, captureAssistant ? answer : null);
             saveCheckpoint(taskId, memScope);
         }
         nameSession(row, input);

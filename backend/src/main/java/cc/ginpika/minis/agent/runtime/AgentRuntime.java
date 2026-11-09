@@ -3,7 +3,11 @@ package cc.ginpika.minis.agent.runtime;
 import cc.ginpika.minis.agent.chat.ChatTrace;
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 import cc.ginpika.minis.agent.context.ChatProtocol;
+import cc.ginpika.minis.ai.core.MemoryScopeCtx;
 import cc.ginpika.minis.ai.llm.OpenAiChatClient;
+import cc.ginpika.minis.ai.memory.MemoryLiveContext;
+import cc.ginpika.minis.ai.memory.MemorySnapshot;
+import cc.ginpika.minis.ai.runtime.ModelLoop;
 import cc.ginpika.minis.config.ModelTarget;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -60,9 +64,19 @@ public class AgentRuntime {
      * @param dispatch  一次工具调用该由谁办
      * @param listener  过程回调；不需要过程通知的流传 null
      * @param runState  累计态（思考链 / 分段 / 工具往返 / 原始返回）的落点，由调用方持有
+     * @param steering  可选的运行中输入与模型请求生命周期
      */
     public record Spec(ModelTarget target, String source, ObjectNode body, ToolDispatch dispatch,
-                       Listener listener, RunState runState) {
+                       Listener listener, RunState runState, ModelLoop.Steering steering,
+                       ModelLoop.RequestPreparation preparation) {
+        public Spec(ModelTarget target, String source, ObjectNode body, ToolDispatch dispatch,
+                    Listener listener, RunState runState) {
+            this(target, source, body, dispatch, listener, runState, null, null);
+        }
+        public Spec(ModelTarget target, String source, ObjectNode body, ToolDispatch dispatch,
+                    Listener listener, RunState runState, ModelLoop.Steering steering) {
+            this(target, source, body, dispatch, listener, runState, steering, null);
+        }
     }
 
     /** 一次工具调用的执行入口：调用方决定这件工具归谁办、能不能并行 */
@@ -71,6 +85,10 @@ public class AgentRuntime {
         String run(JsonNode call);
 
         default String answerAfterTools(List<JsonNode> calls, List<String> results) { return null; }
+
+        default String answerAfterTools(int round, List<JsonNode> calls, List<String> results) {
+            return answerAfterTools(calls, results);
+        }
 
         /** 该工具名是否可并行（默认不可并行） */
         default boolean parallelizable(String name) {
@@ -163,6 +181,28 @@ public class AgentRuntime {
 
     // ---------- 循环 ----------
 
+    /** Answer a follow-up while an earlier tool is still running. This completion cannot invoke tools. */
+    public String replyWhileWorking(ModelTarget target, ObjectNode body, String source,
+                                    OpenAiChatClient.CallControl control, MemorySnapshot snapshot,
+                                    ModelLoop.RequestPreparation preparation) {
+        body.remove(List.of("tools", "tool_choice", "parallel_tool_calls"));
+        if (control.cancelled()) { return ""; }
+        if (liveMemory != null && snapshot != null) {
+            var previous = MemoryLiveContext.current();
+            MemoryLiveContext.restore(snapshot);
+            try {
+                MemoryScopeCtx.runVoid(snapshot.exec(), () -> liveMemory.refresh((ArrayNode) body.path("messages")));
+            } finally {
+                MemoryLiveContext.restore(previous);
+            }
+        }
+        var prepared = preparation == null ? new ModelLoop.PreparedRequest(body, null) : preparation.prepare(0, body);
+        var submission = prepared.beforeAttempt() == null ? null : prepared.beforeAttempt().apply(0);
+        var response = submission == null ? client.chatRaw(target, prepared.body(), null, source, control)
+                : client.chatRaw(target, prepared.body(), null, source, control, submission);
+        return response.message().path("content").asText("");
+    }
+
     /** 跑一次：多轮模型往返与工具批，直到拿到最终回答、用户停止或上游失败 */
     public Result run(Spec spec) {
         var previous = cc.ginpika.minis.ai.memory.MemoryLiveContext.begin((ArrayNode) spec.body().get("messages"));
@@ -180,7 +220,7 @@ public class AgentRuntime {
     }
 
     private Result runScoped(Spec spec) {
-        var hooks = new cc.ginpika.minis.ai.runtime.ModelLoop.Hooks() {
+        var hooks = new ModelLoop.Hooks() {
             @Override public void beforeRound(int round, ObjectNode body) {
                 if (liveMemory != null) { liveMemory.refresh((ArrayNode) body.get("messages")); }
                 if (spec.listener() != null) { spec.listener().round(round); }
@@ -193,8 +233,11 @@ public class AgentRuntime {
                 spec.runState().llmCalls.add(new ChatDtos.LlmCall(round, body.toString(), raw.rawResponse(), tools));
             }
             @Override public void rejected(int round, ObjectNode body, RuntimeException error, boolean tools) {
-                spec.runState().llmCalls.add(new ChatDtos.LlmCall(round, body.toString(), null, tools));
+                interrupted(round, body, tools);
                 if (spec.listener() != null) { spec.listener().rejected(round, body, error); }
+            }
+            @Override public void interrupted(int round, ObjectNode body, boolean tools) {
+                spec.runState().llmCalls.add(new ChatDtos.LlmCall(round, body.toString(), null, tools));
             }
             @Override public void reasoning(int round, String text) {
                 var state = spec.runState();
@@ -209,21 +252,27 @@ public class AgentRuntime {
                 if (spec.listener() != null) { spec.listener().tool(name, args); }
             }
             @Override public void message(JsonNode message) { spec.runState().toolRounds.add(message); }
+            @Override public void interjection() {
+                spec.runState().toolRounds.add(spec.body().objectNode().put(ChatTrace.INTERJECTION_MARKER, true));
+            }
             @Override public void progress() { if (spec.listener() != null) { spec.listener().progress(); } }
             @Override public String answerAfterTools(int round, List<JsonNode> calls, List<String> results) {
-                return spec.dispatch().answerAfterTools(calls, results);
+                return spec.dispatch().answerAfterTools(round, calls, results);
             }
             @Override public void fallback(int round, String text, String raw) {
                 if (spec.listener() != null) { spec.listener().fallbackToReasoning(round, text.length(), raw); }
             }
         };
-        var result = new cc.ginpika.minis.ai.runtime.ModelLoop(client).run(
-                new cc.ginpika.minis.ai.runtime.ModelLoop.Spec(spec.target(), spec.source(), spec.body(),
+        var result = new ModelLoop(client).run(
+                new ModelLoop.Spec(spec.target(), spec.source(), spec.body(),
                         true,
                         calls -> ToolBatch.run(calls, spec.dispatch()::parallelizable, call -> {
                             if (liveMemory != null) { liveMemory.refresh((ArrayNode) spec.body().get("messages")); }
+                            if (spec.steering() != null && spec.steering().hasPending()) {
+                                return "收到用户的新消息，本次工具调用尚未执行。请先处理新消息，再判断是否仍需调用。";
+                            }
                             return spec.dispatch().run(call);
-                        }), hooks, null));
+                        }), hooks, null, spec.steering(), spec.preparation()));
         return new Result(result.content(), result.rawResponse(), End.valueOf(result.end().name()), result.round());
     }
 }

@@ -1,0 +1,117 @@
+.sl-page:has(> .sl-page__main > [data-page='multi-agent']) {
+  display: grid;
+  /* Equal outer rows center the scroll area on the page, with room for the header. */
+  grid-template-rows: minmax(auto, 1fr) minmax(0, max-content) minmax(0, 1fr);
+}
+
+.sl-page:has(> .sl-page__main > [data-page='multi-agent']) > .sl-page__header {
+  align-self: start;
+}
+
+.agent-roster {
+  width: 100%;
+  max-width: 68rem;
+  margin-inline: auto;
+  padding: 1.5rem clamp(1rem, 4vw, 2rem);
+}
+
+.agent-roster:has(> .agent-roster__grid) {
+  display: grid;
+  grid-template-rows: 1fr auto 1fr;
+}
+
+.agent-roster__count {
+  margin: 0 0 .75rem;
+  color: var(--sl-muted);
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+
+.agent-roster__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: .75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-roster__grid > li { display: flex; min-width: 0; }
+
+.agent-roster__card {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 7rem;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: 1rem;
+  border: 1px solid var(--sl-line);
+  border-radius: .5rem;
+  background: var(--sl-panel);
+  color: var(--sl-fg);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.agent-roster__card:hover {
+  border-color: var(--sl-line-strong);
+  background: var(--sl-side);
+}
+
+.agent-roster__identity,
+.agent-roster__heading,
+.agent-roster__meta {
+  display: flex;
+  align-items: center;
+}
+
+.agent-roster__identity { align-items: flex-start; gap: .75rem; }
+.agent-roster__avatar { display: flex; flex: none; --ui-card-fill: var(--sl-panel); }
+.agent-roster__card:hover .agent-roster__avatar { --ui-card-fill: var(--sl-side); }
+.agent-roster__profile { min-width: 0; }
+.agent-roster__heading { flex-wrap: wrap; gap: .25rem .5rem; }
+.agent-roster__name { min-width: 0; font-size: 1rem; font-weight: 600; line-height: 1.5; }
+
+.agent-roster__badge {
+  padding: 0 .4rem;
+  border: 1px solid var(--sl-line);
+  border-radius: 1rem;
+  color: var(--sl-muted);
+  font-size: .75rem;
+  line-height: 1.5;
+}
+
+.agent-roster__role { margin-top: .25rem; }
+.agent-roster__role > span { white-space: normal; }
+
+.agent-roster__meta {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: .25rem .75rem;
+  color: var(--sl-muted);
+  font-size: .8125rem;
+  line-height: 1.5;
+}
+
+.agent-roster__meta > span { min-width: 0; }
+
+.agent-roster__card--new {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: .375rem;
+  border-style: dashed;
+  background: transparent;
+  color: var(--sl-muted);
+  font-size: .875rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.agent-roster__card--new:hover { color: var(--sl-link); }
+
+@media (max-width: 42rem) {
+  .agent-roster__card--new { font-size: 1rem; }
+}

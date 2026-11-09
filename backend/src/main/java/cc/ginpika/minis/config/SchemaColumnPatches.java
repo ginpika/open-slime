@@ -57,6 +57,8 @@ public class SchemaColumnPatches {
             new ColumnPatch("chat_message", "event_kind", "TEXT"),
             new ColumnPatch("hub_session", "agent_id", "TEXT"),
             new ColumnPatch("hub_session", "project_id", "TEXT"),
+            new ColumnPatch("hub_session", "context_scope_revision", "INTEGER"),
+            new ColumnPatch("hub_session", "context_stage", "TEXT"),
             new ColumnPatch("roundtable_todo", "depends_on", "TEXT"),
             new ColumnPatch("roundtable_todo", "priority", "INTEGER"),
             new ColumnPatch("roundtable_todo", "block_with", "TEXT"),

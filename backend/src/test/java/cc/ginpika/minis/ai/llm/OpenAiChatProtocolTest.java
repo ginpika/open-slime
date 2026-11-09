@@ -3,9 +3,12 @@ package cc.ginpika.minis.ai.llm;
 import cc.ginpika.minis.config.*;
 import cc.ginpika.minis.stats.TokenUsageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -51,5 +54,31 @@ class OpenAiChatProtocolTest {
     @Test void serviceFailureIsRetryable(){
         status.set(503);response.set("{\"error\":{\"message\":\"temporarily unavailable\"}}");
         var error=assertThrows(OpenAiChatClient.ChatFailure.class,()->client.chatRaw(target,body()));assertEquals(503,error.status());assertTrue(error.retryable());
+    }
+
+    @Test void submissionReportsFinalWireBodyForProviderFailureAndSkipsPreCancelledRequest() throws Exception {
+        status.set(503);
+        response.set("{\"error\":{\"message\":\"temporarily unavailable\"}}");
+        List<ObjectNode> sent = new ArrayList<>();
+        List<Long> lengths = new ArrayList<>();
+        OpenAiChatClient.SubmissionListener observer = (wire, bytes) -> {
+            sent.add(wire.deepCopy());
+            lengths.add(bytes);
+        };
+        var draft = body().put("model", "preview-model");
+        draft.putArray("messages").addObject().put("role", "user").put("content", "检查请求字节数");
+        assertThrows(OpenAiChatClient.ChatFailure.class,
+                () -> client.chatRaw(target, draft, null, "chat", null, observer));
+        assertEquals(1, sent.size());
+        assertEquals(json.readTree(request.get()), sent.getFirst());
+        assertEquals("fixture-model", sent.getFirst().path("model").asText());
+        assertTrue(sent.getFirst().path("stream_options").path("include_usage").asBoolean());
+        assertEquals((long) request.get().getBytes(StandardCharsets.UTF_8).length, lengths.getFirst());
+
+        var cancelled = new OpenAiChatClient.CallControl();
+        cancelled.cancel();
+        assertThrows(OpenAiChatClient.ChatFailure.class,
+                () -> client.chatRaw(target, draft, null, "chat", cancelled, observer));
+        assertEquals(1, sent.size());
     }
 }

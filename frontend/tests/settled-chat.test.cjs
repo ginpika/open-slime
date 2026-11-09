@@ -7,8 +7,8 @@ const source = readFileSync(join(__dirname, '../src/components/settledChat.ts'),
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } })
 const loaded = { exports: {} }
 new Function('exports', compiled.outputText)(loaded.exports)
-const { backfillSettledReply } = loaded.exports
-const live = { sessionId: 's', userText: 'question', userMessageId: 10, content: 'answer', reasoning: '', trace: [], running: false, error: null }
+const { backfillSettledReply, mergeLiveChat } = loaded.exports
+const live = { sessionId: 's', userText: 'question', userMessageId: 10, content: 'answer', reasoning: '', trace: [], steers: [], interims: [], running: false, error: null }
 const history = () => [{ id: 10, role: 'user', content: 'question' }, { role: 'assistant', content: 'answer', streaming: false }]
 const row = (id, role, content, extra = {}) => ({ id, role, content, reasoning: null, trace: null, kind: null, subagent: null, createdAt: null, ...extra })
 
@@ -25,7 +25,24 @@ test('completed reply receives its persisted ID immediately without leaving the 
 })
 test('identical replies and asynchronous subagent messages do not select the wrong branch point', () => {
   const rows = [row(1, 'user', 'question'), row(2, 'assistant', 'answer'), row(10, 'user', 'question'), row(12, 'assistant', 'report', { kind: 'subagent' }), row(13, 'assistant', 'answer')]
-  assert.equal(backfillSettledReply(history(), live, rows)[1].id, 13)
+  assert.deepEqual(backfillSettledReply(history(), live, rows).map(message => message.id), [10, 12, 13])
+})
+test('a subagent batch arriving before the reply remains separate during reconnect and settlement', () => {
+  const subagent = { title: 'Findings', summary: 'Short excerpt', status: 'done', execId: 42 }
+  const report = row(11, 'assistant', 'Full report', { kind: 'subagent', subagent })
+  const batch = row(12, 'assistant', 'Batch summary', { kind: 'subagent_batch' })
+  const user = row(10, 'user', 'question')
+  const reconnected = mergeLiveChat([user, report, batch], live)
+  assert.deepEqual(reconnected.map(message => message.content), ['question', 'Full report', 'Batch summary', 'answer'])
+
+  const rows = [user, report, batch, row(13, 'assistant', 'answer')]
+  assert.equal(mergeLiveChat(rows, live), rows)
+  const settled = backfillSettledReply(history(), live, rows)
+  assert.deepEqual(settled.map(message => message.id), [10, 11, 12, 13])
+  assert.equal(settled[1].content, 'Full report')
+  assert.deepEqual(settled[1].subagent, subagent)
+  assert.equal(settled[2].kind, 'subagent_batch')
+  assert.deepEqual(backfillSettledReply(reconnected, live, rows).map(message => message.id), [10, 11, 12, 13])
 })
 test('late synchronization does not resurrect a rewound reply or overwrite a replacement', () => {
   const rows = [row(10, 'user', 'question'), row(11, 'assistant', 'answer')]

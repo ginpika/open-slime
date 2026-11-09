@@ -12,27 +12,16 @@ import cc.ginpika.minis.config.LlmProps;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 /**
  * 记忆事件流 M0 的回归冒烟（内存 SQLite，不起 Spring 上下文）：
  * 幂等去重、时间倒序召回、写入侧截断与失败隔离。
  */
 class MemoryEventStoreTest {
-
-    /** 与 schema.sql 的 memory_event 同构（去注释） */
-    private static final String DDL = """
-            CREATE TABLE memory_event(agent_id TEXT, project_id TEXT, session_id TEXT, task_id INTEGER, identity TEXT,
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              event_key TEXT NOT NULL UNIQUE,
-              kind TEXT NOT NULL,
-              actor TEXT NOT NULL,
-              title TEXT,
-              payload TEXT,
-              ref_type TEXT NOT NULL,
-              ref_id INTEGER NOT NULL,
-              created_at INTEGER NOT NULL)""";
 
     /** 未配置的 embedding 桩（M0 路径不触发向量补齐，见 MemoryRecallTest 的完整桩） */
     private static EmbeddingClient unconfiguredEmbedding() {
@@ -46,9 +35,8 @@ class MemoryEventStoreTest {
 
     private static MemoryEventStore store() {
         SingleConnectionDataSource ds = new SingleConnectionDataSource("jdbc:sqlite::memory:", true);
-        JdbcTemplate jdbc = new JdbcTemplate(ds);
-        jdbc.execute(DDL);
-        return new MemoryEventStore(jdbc);
+        new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(ds);
+        return new MemoryEventStore(new JdbcTemplate(ds));
     }
 
     @Test

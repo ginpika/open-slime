@@ -35,11 +35,16 @@ public class ChatThreads {
      * 会话不存在返回 empty；存在时返回会话标题（无标题用 id），供工具回执称呼。
      */
     public Optional<String> appendAssistantMessage(String threadId, String content) {
+        return appendAssistantMessage(threadId, content, null);
+    }
+
+    /** 带消息种类的后台投递，便于会话将回报与普通回答分开。 */
+    public Optional<String> appendAssistantMessage(String threadId, String content, String kind) {
         HubRow session = sessions.findById(threadId).orElse(null);
         if (session == null) {
             return Optional.empty();
         }
-        long id = messages.insert(threadId, "assistant", content, null, null, null, null, null);
+        long id = messages.insert(threadId, "assistant", content, null, null, null, kind, null);
         /* 投递不是人问的：没有触发端，落一条「系统投递」的 Turn，历史配对才完整 */
         turnStore.record(threadId, TurnTrigger.Source.SYSTEM, id);
         sessions.touch(threadId, null);

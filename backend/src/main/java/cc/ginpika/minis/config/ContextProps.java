@@ -19,6 +19,15 @@ public class ContextProps {
     /** 记忆注入：按本次用户输入召回相关记忆条目注入 system（用户是谁 / 在做什么 / 答应过什么）。默认开 */
     private boolean injectMemory = true;
 
+    /** P1 单聊试点。关闭时沿用现有历史选取与诊断路径。 */
+    private boolean ephemeralChat = false;
+
+    /** 阶段续接试点，依赖单聊动态上下文。 */
+    private boolean stageContinuation = false;
+
+    /** 单聊待办确认试点，依赖单聊动态上下文。 */
+    private boolean todoApprovals = false;
+
     /**
      * 贴临界裁历史（默认<b>开</b>）：组装请求体前估算 token，只有逼近「模型上下文窗口」时才降级——
      * 先从最早的轮次整条丢掉，仍超才对保留部分做截断。不到临界一行不动，普通会话完全不受影响。
@@ -51,6 +60,30 @@ public class ContextProps {
 
     public void setInjectMemory(boolean injectMemory) {
         this.injectMemory = injectMemory;
+    }
+
+    public boolean isEphemeralChat() {
+        return ephemeralChat;
+    }
+
+    public void setEphemeralChat(boolean ephemeralChat) {
+        this.ephemeralChat = ephemeralChat;
+    }
+
+    public boolean isStageContinuation() {
+        return stageContinuation;
+    }
+
+    public void setStageContinuation(boolean stageContinuation) {
+        this.stageContinuation = stageContinuation;
+    }
+
+    public boolean isTodoApprovals() {
+        return todoApprovals;
+    }
+
+    public void setTodoApprovals(boolean todoApprovals) {
+        this.todoApprovals = todoApprovals;
     }
 
     public boolean isCompressHistory() {

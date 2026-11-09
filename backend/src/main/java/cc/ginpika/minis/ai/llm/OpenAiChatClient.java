@@ -15,6 +15,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import okhttp3.Call;
+import okhttp3.EventListener;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -80,6 +82,18 @@ public class OpenAiChatClient {
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(props.getChatTimeoutMs(), TimeUnit.MILLISECONDS)
+                .eventListener(new EventListener() {
+                    @Override
+                    public void requestBodyEnd(Call call, long byteCount) {
+                        Submission submission = call.request().tag(Submission.class);
+                        if (submission == null) return;
+                        try {
+                            submission.listener().submitted(submission.body(), byteCount);
+                        } catch (RuntimeException error) {
+                            log.warn("记录模型请求清单失败：{}", error.getClass().getSimpleName());
+                        }
+                    }
+                })
                 .build();
     }
 
@@ -153,6 +167,14 @@ public class OpenAiChatClient {
         void onDelta(String reasoning, String content);
     }
 
+    /** HTTP 层每写完一次请求正文触发。监听器同步读取已定稿的请求，不应修改或保留正文。 */
+    @FunctionalInterface
+    public interface SubmissionListener {
+        void submitted(ObjectNode finalizedBody, long bodyBytes);
+    }
+
+    private record Submission(SubmissionListener listener, ObjectNode body) {}
+
     /** A per-run cancellation handle; also cancels a request before its first response chunk. */
     public static final class CallControl {
         private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
@@ -198,6 +220,11 @@ public class OpenAiChatClient {
 
     public RawResult chatRaw(ModelTarget target, ObjectNode body, DeltaListener listener,
                              String source, CallControl control) {
+        return chatRaw(target, body, listener, source, control, null);
+    }
+
+    public RawResult chatRaw(ModelTarget target, ObjectNode body, DeltaListener listener,
+                             String source, CallControl control, SubmissionListener submissionListener) {
         if (!target.configured()) {
             throw new IllegalStateException("LLM 未配置：请在设置页添加模型，或在 .env 填写 "
                     + "LLM_BASE_URL / LLM_API_KEY / LLM_CHAT_MODEL");
@@ -211,13 +238,15 @@ public class OpenAiChatClient {
         boolean attempted = false;
         boolean succeeded = false;
         try {
-            Request request = new Request.Builder()
+            Request.Builder request = new Request.Builder()
                     .url(join(target.baseUrl(), "chat/completions"))
                     .post(RequestBody.create(objectMapper.writeValueAsString(body), JSON))
-                    .header("Authorization", "Bearer " + target.apiKey())
-                    .build();
+                    .header("Authorization", "Bearer " + target.apiKey());
+            if (submissionListener != null) {
+                request.tag(Submission.class, new Submission(submissionListener, body));
+            }
             rate.start();
-            okhttp3.Call call = client.newCall(request);
+            okhttp3.Call call = client.newCall(request.build());
             if (control != null) { control.attach(call); }
             attempted = true;
             try (Response response = call.execute()) {
@@ -233,11 +262,15 @@ public class OpenAiChatClient {
                 if (control != null) { control.release(call); }
             }
         } catch (ChatFailure error) {
-            log.warn("chat 调用失败：model={} baseUrl={} error={}",target.model(),target.baseUrl(),error.getMessage());
+            if (control == null || !control.cancelled()) {
+                log.warn("chat 调用失败：model={} baseUrl={} error={}",target.model(),target.baseUrl(),error.getMessage());
+            }
             throw error;
         } catch (IOException e) {
-            log.warn("chat 调用失败：model={} baseUrl={} error={}",
-                    target.model(), target.baseUrl(), e.getMessage(), e);
+            if (control == null || !control.cancelled()) {
+                log.warn("chat 调用失败：model={} baseUrl={} error={}",
+                        target.model(), target.baseUrl(), e.getMessage(), e);
+            }
             throw new ChatFailure(0,e.getMessage(),e);
         } finally {
             if (attempted) recordUsage(source, target, body, meter, succeeded,

@@ -47,6 +47,9 @@ public interface SubagentTool {
      */
     String runChatTool(String agentId, JsonNode call, String runId, String hubId);
 
+    /** Personal-chat pilot dispatch, using the parent execution scope bound by the runtime. */
+    String runScopedChatTool(String agentId, JsonNode call, String runId, String hubId, String actorId);
+
     /**
      * 本会话还在跑的子代理 → 一段注入主模型每轮上下文的提示块；没有在跑的返回空串。
      *

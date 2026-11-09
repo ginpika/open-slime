@@ -1,16 +1,18 @@
 /** The everyday Slime surface. Existing specialist tools live in Dashboard. */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowDown, ArrowUp, AudioLines, BookOpen, Check, Copy, History, MessageSquare, Mic, PanelLeftOpen, PenLine, Plus, Search, ShieldCheck, Sparkles, Square, X } from 'lucide-react'
-import { createSession, getSettings, listMaPeers, listSessions, sessionMessages, sessionPreviews, updateSessionConfig, type MaPeer, type ReasoningEffort, type SessionItem, type SessionMessage, type SettingsView } from '../../api/client'
+import { ArrowDown, BookOpen, Check, Copy, History, MessageSquare, PanelLeftOpen, PenLine, Plus, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { ApiError, createSession, getSettings, listMaPeers, listSessions, sessionMessages, sessionPreviews, updateSessionConfig, type MaPeer, type ReasoningEffort, type SessionItem, type SessionMessage, type SettingsView } from '../../api/client'
 import { CORE_AGENT_ID, isCodingAgent, sortAgentPeers } from '../../api/agentRuntime'
+import { AppIcon } from '../../components/AppIcon'
+import AgentMessageReceipt from '../../components/AgentMessageReceipt'
 import ChatMarkdown from '../../components/ChatMarkdown'
 import UserQuestionCard from '../../components/UserQuestionCard'
 import { SlimeAppearanceButton } from '../../components/SlimeAppearance'
 import { registerChatOpener } from '../../components/ChatNotifier'
 import { subscribeSessionEvents } from '../../components/sessionEvents'
-import { backfillSettledReply } from '../../components/settledChat'
-import { questionContent, userQuestion } from '../../components/userQuestion'
-import { attachLive, clearLive, getLive, setActiveChatSession, startChat, stopChat, useLiveChat, type ChatMsg, type LiveChat } from '../../components/chatLive'
+import { AGENT_MESSAGE_SENT, backfillSettledReply, isBackgroundReply, mergeAgentMessageReceipts, mergeLiveChat } from '../../components/settledChat'
+import { questionTurn } from '../../components/userQuestion'
+import { attachLive, clearLive, getLive, setActiveChatSession, startChat, steerActiveChat, stopChat, useLiveChat, type ChatMsg, type LiveChat } from '../../components/chatLive'
 import { BRAND } from '../../branding'
 import AgentSidebar, { type AgentPreview } from './AgentSidebar'
 import ComposerModelPicker from './ComposerModelPicker'
@@ -27,7 +29,7 @@ const SUGGESTIONS = [
   { icon: PenLine, label: '写点东西', text: '我想写点东西，帮我一起打磨。' },
 ]
 function toViewMsg(row: SessionMessage): ViewMsg {
-  return { id: row.id, role: row.role === 'assistant' ? 'assistant' : 'user', content: row.content,
+  return { id: row.id, role: row.role === 'user' ? 'user' : 'assistant', content: row.content,
     reasoning: row.reasoning ?? undefined, trace: row.trace ?? undefined, kind: row.kind ?? undefined,
     subagent: row.subagent ?? undefined, at: row.createdAt }
 }
@@ -44,22 +46,6 @@ function agentOf(session: SessionItem): string | null { return !session.agentId 
 function previewSnippet(value?: string | null): string | undefined {
   return value?.replace(/\s+/g, ' ').trim().slice(0, 220) || undefined
 }
-function withLive(history: ViewMsg[], live: LiveChat): ViewMsg[] {
-  // A history response can already contain this completed turn (for example after
-  // visiting Dashboard during generation). Keep the persisted reply in that case.
-  const userIndex = live.userMessageId === null ? -1 : history.findIndex(message => message.role === 'user' && message.id === live.userMessageId)
-  if (userIndex >= 0) {
-    const after = history.slice(userIndex + 1)
-    if (after.some(message => message.role === 'user') || (!live.running && after.some(message => message.role === 'assistant' && message.kind !== 'subagent'))) return history
-  }
-  const last = history.at(-1)
-  const duplicate = last?.role === 'user' && (live.userMessageId !== null ? last.id === live.userMessageId : last.content === live.userText)
-  return [...(duplicate ? history.slice(0, -1) : history),
-    { role: 'user', content: live.userText, id: live.userMessageId ?? undefined },
-    { role: 'assistant', content: live.content, reasoning: live.reasoning || undefined,
-      trace: live.trace.length ? live.trace : undefined, streaming: live.running }]
-}
-
 export default function AgentHome({ connErr, userSlot }: { connErr?: string | null; userSlot?: ReactNode }) {
   const { slogan, randomize: randomizeSlogan } = useWelcomeSlogan()
   const [sessions, setSessions] = useState<SessionItem[]>([])
@@ -128,7 +114,6 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
     dictation.stop()
     if (moreRef.current) moreRef.current.open = false
   }, [sessionId, selectedAgentId, dictation.stop])
-  useEffect(() => { if (busy) dictation.stop() }, [busy, dictation.stop])
   useEffect(() => {
     const closeMore = (event: PointerEvent) => {
       if (moreRef.current && !moreRef.current.contains(event.target as Node)) moreRef.current.open = false
@@ -215,12 +200,12 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
       selectIdentity(agentOf(session))
       restorePreferences(id, session.modelId ?? '')
       const history = rows.map(toViewMsg)
-      setMsgs(settled?.error ? withLive(history, settled) : history)
+      setMsgs(settled?.error ? mergeLiveChat(history, settled) : history)
       if (settled?.error) setToast(`上次回复未完成：${settled.error}`)
       setSessions(list => list.map(s => s.id === id ? { ...s, unread: false } : s))
     }).catch(() => {
       if (currentRef.current !== id || historyVersion.current !== version) return
-      if (settled) { setMsgs(withLive([], settled)); setToast('暂时无法加载完整历史，已保留最近的回复') }
+      if (settled) { setMsgs(mergeLiveChat([], settled)); setToast('暂时无法加载完整历史，已保留最近的回复') }
       else setMessageError(true)
     }).finally(() => {
       if (currentRef.current === id && historyVersion.current === version) setLoading(false)
@@ -300,12 +285,15 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
   // Keep background delivery visible without replacing a newer turn with a stale history request.
   useEffect(() => subscribeSessionEvents(event => {
     if (event.kind === 'todo') return
-    reloadSessions()
+    const receipt = event.kind === AGENT_MESSAGE_SENT
+    if (!receipt) reloadSessions()
     const id = currentRef.current
-    if (!id || event.sessionId !== id || event.kind !== 'delivered' || getLive(id)?.running) return
+    if (!id || event.sessionId !== id || (!receipt && (event.kind !== 'delivered' || getLive(id)?.running))) return
     const version = historyVersion.current
     void sessionMessages(id).then(rows => {
-      if (currentRef.current === id && historyVersion.current === version && !getLive(id)?.running) setMsgs(rows.map(toViewMsg))
+      if (currentRef.current !== id || historyVersion.current !== version) return
+      if (receipt) setMsgs(previous => mergeAgentMessageReceipts(previous, rows))
+      else if (!getLive(id)?.running) setMsgs(rows.map(toViewMsg))
     }).catch(() => { /* A later delivery or reopening can retry the request. */ })
   }), [reloadSessions])
 
@@ -313,7 +301,7 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
     if (!live || live.running || settledRef.current === live || loading) return
     settledRef.current = live
     const id = live.sessionId
-    setMsgs(previous => withLive(previous, live).filter(m => m.role === 'user' || m.content || m.trace?.length))
+    setMsgs(previous => mergeLiveChat(previous, live).filter(m => m.role === 'user' || m.content || m.trace?.length))
     clearLive(id)
     void sessionMessages(id).then(rows => {
       if (currentRef.current !== id || settledRef.current !== live || getLive(id)?.running) return
@@ -360,12 +348,19 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
 
   const sendText = useCallback(async (raw: string) => {
     const value = raw.trim()
-    if (!value || creatingRef.current || loading || messageError || getLive(currentRef.current)?.running) return
+    if (!value || creatingRef.current || loading || messageError) return
+    let id = currentRef.current
+    const active = getLive(id)
+    if (active?.running && (active.stopping || active.userMessageId == null)) return
     creatingRef.current = true; setCreating(true)
     followBottom.current = true; setAwayFromBottom(false)
-    let id = currentRef.current
     const agentId = selectedAgentRef.current
     try {
+      if (id && active?.running && active.userMessageId != null) {
+        await steerActiveChat(id, active.userMessageId, value)
+        if (currentRef.current === id) setText(current => current === raw ? '' : current)
+        return
+      }
       if (!id) {
         const created = await createSession()
         if (agentId || modelId) {
@@ -387,14 +382,20 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
       composerPreferences.current.set(id, { modelId, effort: supportedEffort })
       startChat({ sessionId: id, text: value, modelId: modelId || undefined, reasoningEffort: supportedEffort, onSettled: reloadSessions })
       reloadSessions()
-    } catch {
-      setText(value); setToast('暂时无法发送，请稍后重试')
+    } catch (error) {
+      if (active?.running) {
+        setToast(error instanceof ApiError && error.status === 409
+          ? '当前任务状态已变化，请重新发送'
+          : '补充消息未能发送，请稍后重试')
+      } else {
+        setText(value); setToast('暂时无法发送，请稍后重试')
+      }
     } finally { creatingRef.current = false; setCreating(false) }
   }, [loading, messageError, reloadSessions, modelId, supportedEffort])
 
-  const view = useMemo(() => live ? withLive(msgs, live) : msgs, [live, msgs])
+  const view = useMemo(() => live ? mergeLiveChat(msgs, live) : msgs, [live, msgs])
   const empty = !loading && !messageError && view.length === 0
-  const latestTurn = view.findLastIndex(m => m.kind !== 'subagent')
+  const latestTurn = view.findLastIndex(m => !isBackgroundReply(m))
   const scrollToBottom = () => {
     const element = scrollRef.current
     if (element) element.scrollTop = element.scrollHeight
@@ -417,7 +418,9 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
   const title = sessions.find(s => s.id === sessionId)
   const mainAgent = peers.find(peer => peer.id === CORE_AGENT_ID) ?? null
   const currentAgent = selectedAgentId ? peers.find(peer => peer.id === selectedAgentId) : mainAgent
+  const peersById = useMemo(() => new Map(peers.map(peer => [peer.id, peer])), [peers])
   const agentName = currentAgent?.name || (selectedAgentId ? 'Agent' : BRAND.name)
+  const composerPlaceholder = dictation.listening ? '正在听你说…' : busy ? '继续提问或调整当前任务…' : `和 ${agentName} 一起工作`
   const agentAvatar = currentAgent?.avatar || (!selectedAgentId ? '/icon-64x64.png' : null)
   const agentPreviews = useMemo(() => {
     const result: Record<string, AgentPreview> = {}
@@ -426,7 +429,7 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
       const key = agentOf(session) ?? 'main'
       const current = result[key]
       const snapshot = getLive(session.id)
-      const local = session.id === sessionId ? view.at(-1)?.content : snapshot?.content
+      const local = session.id === sessionId ? view.findLast(message => message.kind !== AGENT_MESSAGE_SENT)?.content : snapshot?.content
       const running = session.generating || snapshot?.running === true
       if (!current) result[key] = { text: previewSnippet(local) || previewSnippet(previews[session.id]) || previewSnippet(session.title), unread: Boolean(session.unread), running }
       else { current.unread ||= Boolean(session.unread); current.running ||= running }
@@ -489,11 +492,14 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
             </div>
             : <div className="sl-chat__thread" role="log" aria-label="对话消息">
               {view.map((message, index) => {
-                const question = userQuestion(message)
+                if (message.kind === AGENT_MESSAGE_SENT) {
+                  return sessionId ? <AgentMessageReceipt key={message.id} sessionId={sessionId} content={message.content} peers={peersById} /> : null
+                }
+                const turn = questionTurn(message)
                 return <article key={message.id ?? `live-${index}`} className={`sl-chat__turn sl-chat__turn--${message.role}`} aria-label={message.role === 'user' ? '你的消息' : `${agentName} 的回复`}>
                   {message.role === 'user' ? <div className="sl-chat__bubble">{message.content}</div> : <>
                     <div className="sl-chat__answer">
-                      {question ? <><UserQuestionCard key={JSON.stringify(question)} question={question} active={!busy && !creating && !loading && !live?.error && index === latestTurn} onAnswer={sendText} /><ChatMarkdown content={message.content.slice(questionContent(question).length)} /></>
+                      {turn ? <>{turn.before && <ChatMarkdown content={turn.before} />}<UserQuestionCard key={JSON.stringify(turn.question)} question={turn.question} active={!busy && !creating && !loading && !live?.error && index === latestTurn} onAnswer={sendText} />{turn.after && <ChatMarkdown content={turn.after} />}</>
                         : message.streaming ? message.content ? <div className="sl-chat__stream">{message.content}</div> : <span className="sl-chat__thinking" role="status" aria-label="正在思考"><i /><i /><i /></span>
                         : <ChatMarkdown content={message.content} />}
                     </div>
@@ -511,7 +517,7 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !narrow) {
                   event.preventDefault(); void sendText(text)
                 }
-              }} placeholder={dictation.listening ? '正在听你说…' : `和 ${agentName} 一起工作`} aria-label={`给 ${agentName} 发消息`} disabled={loading || messageError} />
+              }} placeholder={composerPlaceholder} aria-label={`给 ${agentName} 发消息`} disabled={loading || messageError} />
             <div className="sl-chat__composerbar">
               <div className="sl-chat__compose-left">
                 <details ref={moreRef} className="sl-chat__compose-more">
@@ -529,10 +535,24 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
                 value={modelId} inheritedModelId={inheritedModelId} inheritedLabel={settings?.models.find(model => model.id === inheritedModelId)?.model || '跟随 Agent'}
                 effort={supportedEffort} onModelChange={value => { setModelId(value); setReasoningEffort(undefined) }} onEffortChange={setReasoningEffort}
                 disabled={busy || creating || loading} loading={settingsLoading} error={settingsError} onRetry={reloadSettings} />
-              {dictation.supported && <button type="button" className={`sl-chat__dictate${dictation.listening ? ' is-listening' : ''}`} title={dictation.listening ? '结束听写' : '语音输入'} aria-label={dictation.listening ? '结束听写' : '语音输入'} aria-pressed={dictation.listening} disabled={busy || creating || loading || messageError} onClick={toggleDictation}><Mic size={18} /></button>}
-              {busy ? <button type="button" className="sl-chat__send is-stop" title="停止回复" aria-label="停止回复" onClick={() => sessionId && stopChat(sessionId)}><Square size={14} fill="currentColor" /></button>
-                : !text.trim() && dictation.supported ? <button type="button" className={`sl-chat__send${dictation.listening ? ' is-stop' : ''}`} title={dictation.listening ? '结束听写' : '语音输入'} aria-label={dictation.listening ? '结束听写' : '语音输入'} disabled={creating || loading || messageError} onClick={toggleDictation}>{dictation.listening ? <Square size={12} fill="currentColor" /> : <AudioLines size={18} />}</button>
-                : <button type="submit" className="sl-chat__send" title="发送消息" aria-label="发送消息" disabled={!text.trim() || creating || loading || messageError}><ArrowUp size={18} strokeWidth={2.2} /></button>}
+              {dictation.supported && <button type="button" className={`sl-chat__dictate${dictation.listening ? ' is-listening' : ''}`} title={dictation.listening ? '结束听写' : '语音输入'} aria-label={dictation.listening ? '结束听写' : '语音输入'} aria-pressed={dictation.listening} disabled={creating || loading || messageError} onClick={toggleDictation}><AppIcon name="microphone" /></button>}
+              {busy && <button
+                type="button"
+                className="sl-chat__send is-stop"
+                title={live?.stopping ? '正在停止回复' : '停止回复'}
+                aria-label={live?.stopping ? '正在停止回复' : '停止回复'}
+                disabled={live?.stopping || live?.userMessageId == null}
+                onClick={() => sessionId && stopChat(sessionId)}
+              ><AppIcon name="stop" size={14} /></button>}
+              {!busy && !text.trim() && dictation.supported
+                ? <button type="button" className={`sl-chat__send${dictation.listening ? ' is-stop' : ''}`} title={dictation.listening ? '结束听写' : '语音输入'} aria-label={dictation.listening ? '结束听写' : '语音输入'} disabled={creating || loading || messageError} onClick={toggleDictation}><AppIcon name={dictation.listening ? 'stop' : 'dictation'} size={dictation.listening ? 12 : 16} /></button>
+                : <button
+                  type="submit"
+                  className="sl-chat__send"
+                  title={busy ? '发送到当前任务' : '发送消息'}
+                  aria-label="发送消息"
+                  disabled={!text.trim() || creating || loading || messageError || (busy && (live?.stopping || live?.userMessageId == null))}
+                ><AppIcon name="arrow-up" /></button>}
               </div>
             </div>
           </form>

@@ -60,6 +60,16 @@ class ChatTurnCompletionTest {
         verify(events).publish(any());
     }
 
+    @Test void archiveBackedAnswerKeepsOnlyUserInputInExtraction() {
+        when(execution.turnTracked()).thenReturn(true);
+        when(sessions.findById("s")).thenReturn(Optional.of(row));
+        when(working.checkpointDigest(scope)).thenReturn("checkpoint");
+        completion.complete(execution, row, scope, 7L, 9L, "question", "archived report text", false);
+        verify(memory).tap(eq("s"), eq(scope), eq("question"), isNull(), anyString());
+        verify(checkpoints).save(7L, "checkpoint");
+        verify(events).publish(any());
+    }
+
     @Test void roundtableSpeechHasNoDirectChatCompletionSideEffects() {
         completion.complete(execution, row, scope, 7L, 9L, "question", "answer");
         verifyNoInteractions(sessions, projects, memory, working, checkpoints, titles, events);

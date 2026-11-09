@@ -30,11 +30,16 @@ import cc.ginpika.minis.ai.core.tool.subagent.ReadSubagentRunTool;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
@@ -42,6 +47,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 子代理：被当场交代去独立干一件活的<b>匿名 worker</b>——不建档案、跑完即逝。
@@ -79,11 +85,17 @@ public class SubagentService implements SubagentTool {
 
     /** 回放过程时正文/思维链的截断上限 */
     private static final int REPLAY_LIMIT = 6000;
+    private static final int SYNC_WAIT_SECONDS = 20;
+    private static final int HANDOFF_SUMMARY = 480;
 
     @org.springframework.beans.factory.annotation.Autowired
     private cc.ginpika.minis.agent.chat.store.HubSessionStore hubSessions;
     @org.springframework.beans.factory.annotation.Autowired
     private cc.ginpika.minis.project.ProjectStore projects;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ScopedSubagentRun scopedRun;
+    @org.springframework.beans.factory.annotation.Autowired
+    private SubagentScope scope;
     private final AgentRunner runner;
     private final ExecStore store;
     /** 任务：对话侧的异步派活每条落一行，进程重启后可恢复为「已中断、可重跑」 */
@@ -113,6 +125,7 @@ public class SubagentService implements SubagentTool {
 
     /** 已请求收批的批次（调用方的 finally 先到、子代理后跑完时，由后者真正收） */
     private final Set<String> closeRequested = ConcurrentHashMap.newKeySet();
+    private final Set<String> scopedBatches = ConcurrentHashMap.newKeySet();
 
     /** 各会话在跑的子代理（hubId → 执行 id）：每轮据此告诉主模型「还有什么活派出去没回来」 */
     private final ConcurrentHashMap<String, Set<Long>> running = new ConcurrentHashMap<>();
@@ -140,10 +153,10 @@ public class SubagentService implements SubagentTool {
     public String runTool(String agentId, JsonNode call, String runId, String trigger,
                           Long parentTaskId) {
         String name = call.path("function").path("name").asText("");
-        JsonNode args = readTree(call.path("function").path("arguments").asText(""));
+        JsonNode args = toolArgs(call);
         return switch (name) {
             case DelegateSubagentTool.NAME -> delegateTool(args, agentId, runId, trigger, parentTaskId);
-            case ReadSubagentRunTool.NAME -> replayTool(args);
+            case ReadSubagentRunTool.NAME -> replayTool(args, agentId, null);
             default -> "未知工具: " + name;
         };
     }
@@ -152,11 +165,27 @@ public class SubagentService implements SubagentTool {
     @Override
     public String runChatTool(String agentId, JsonNode call, String runId, String hubId) {
         String name = call.path("function").path("name").asText("");
-        JsonNode args = readTree(call.path("function").path("arguments").asText(""));
+        JsonNode args = toolArgs(call);
         return switch (name) {
             case DelegateSubagentTool.NAME -> delegateAsync(args, agentId, runId, hubId);
-            case ReadSubagentRunTool.NAME -> replayTool(args);
+            case ReadSubagentRunTool.NAME -> replayTool(args, agentId, hubId);
             default -> "未知工具: " + name;
+        };
+    }
+
+    @Override
+    public String runScopedChatTool(String agentId, JsonNode call, String runId, String hubId, String actorId) {
+        String name = call.path("function").path("name").asText("");
+        JsonNode args = toolArgs(call);
+        MemoryExec parent = MemoryScopeCtx.get();
+        if (parent == null || !Objects.equals(hubId, parent.sessionId())
+                || !Objects.equals(agentId, parent.agentOrBuiltin()) || parent.surface() != MemorySurface.CHAT) {
+            return error("当前任务没有有效的委派作用域");
+        }
+        return switch (name) {
+            case DelegateSubagentTool.NAME -> delegateScoped(args, parent, runId, hubId, actorId);
+            case ReadSubagentRunTool.NAME -> readScoped(args, parent);
+            default -> error("未知工具：" + name);
         };
     }
 
@@ -189,21 +218,21 @@ public class SubagentService implements SubagentTool {
      */
     private void settle(String runId) {
         AtomicInteger left = pending.get(runId);
-        if (left == null || left.get() > 0 || !closeRequested.contains(runId)) {
+        if (left == null || left.get() > 0 || !closeRequested.contains(runId) || !pending.remove(runId, left)) {
             return;
         }
         List<ExecStore.ExecRow> execs = store.execsByRun(runId);
         boolean failed = execs.stream().anyMatch(e -> !"done".equals(e.status()));
         store.finishRun(runId, failed ? "failed" : "done", execs.size(),
                 failed ? "有子代理未产出结论" : null);
-        pending.remove(runId);
         closeRequested.remove(runId);
         /* 发事件交给后台线程：收批可能发生在对话请求线程的 finally 里（子代理跑得太快时，
            调用方的收批请求反而后到），而整体总结要跑模型，不能把那个线程占住 */
         String hubId = batchHub.remove(runId);
+        boolean contextScoped = scopedBatches.remove(runId);
         if (hubId != null && !execs.isEmpty()) {
-            int count = execs.size();
-            POOL.execute(() -> publisher.publishEvent(new SubagentBatchDoneEvent(hubId, runId, count)));
+            List<Long> ids = execs.stream().map(ExecStore.ExecRow::id).toList();
+            POOL.execute(() -> publisher.publishEvent(new SubagentBatchDoneEvent(hubId, runId, ids, contextScoped)));
         }
     }
 
@@ -344,6 +373,135 @@ public class SubagentService implements SubagentTool {
         return receipt(execId, title(args.path("name").asText(""), instruction));
     }
 
+    private String delegateScoped(JsonNode args, MemoryExec parent, String runId, String hubId, String actorId) {
+        String instruction = args.path("instruction").asText("").strip();
+        if (!args.isObject() || instruction.isBlank()) {
+            return error("请在 instruction 里写明委派目标和预期产出");
+        }
+        ScopedSubagentRun.Handoff handoff;
+        try {
+            if (args.has("tools") && (!args.path("tools").isArray()
+                    || !java.util.stream.StreamSupport.stream(args.path("tools").spliterator(), false)
+                            .allMatch(JsonNode::isTextual))) {
+                return error("tools 必须是只读资料工具名称列表");
+            }
+            handoff = scopedRun.capture(args, hubSessions.findById(hubId).orElse(null), parent, actorId,
+                    bounded(title(args.path("name").asText(""), instruction), 80), names(args.path("tools")));
+        } catch (IllegalArgumentException invalid) {
+            return error(invalid.getMessage());
+        }
+        boolean background = args.path("background").asBoolean(true);
+        String batchId = runId == null ? openRun(parent.agentOrBuiltin(), "chat") : runId;
+        try {
+            ScopedExecution execution = startScoped(handoff, batchId, parent.taskId());
+            if (background) {
+                deliverWhenReady(handoff, batchId, execution);
+                return handoff(handoff, execution.id(), "running", null, null);
+            }
+            try {
+                AgentRunner.Outcome result = execution.outcome().get(SYNC_WAIT_SECONDS, TimeUnit.SECONDS);
+                finishScoped(handoff, batchId, execution.id(), result, false);
+                return scope.visible(execution.id(), hubId)
+                        ? handoff(handoff, result.execId(), result.status(), result.output(), result.error())
+                        : error("子代理任务已不在当前作用域");
+            } catch (TimeoutException timeout) {
+                deliverWhenReady(handoff, batchId, execution);
+                return handoff(handoff, execution.id(), "running", null, null);
+            } catch (InterruptedException interrupted) {
+                deliverWhenReady(handoff, batchId, execution);
+                Thread.currentThread().interrupt();
+                return error("当前等待已取消");
+            } catch (ExecutionException failure) {
+                finishScoped(handoff, batchId, execution.id(), null, false);
+                return error("子代理未产出结论");
+            }
+        } catch (IllegalArgumentException denied) {
+            return error(denied.getMessage());
+        } finally {
+            if (runId == null) {
+                closeRun(batchId);
+            }
+        }
+    }
+
+    private record ScopedExecution(long id, CompletableFuture<AgentRunner.Outcome> outcome) {}
+
+    private ScopedExecution startScoped(ScopedSubagentRun.Handoff handoff, String batchId, long parentTaskId) {
+        AtomicInteger left = pending.get(batchId);
+        if (left == null) {
+            throw new IllegalArgumentException("委派批次已关闭");
+        }
+        long execId;
+        synchronized (left) {
+            if (store.executionCount(batchId) >= MAX_PER_BATCH) {
+                throw new IllegalArgumentException("本批委派已达上限（" + MAX_PER_BATCH + " 个）");
+            }
+            execId = scopedRun.register(handoff, batchId, parentTaskId);
+            if (execId <= 0) {
+                throw new IllegalArgumentException("未能登记子代理任务");
+            }
+            if (!scope.visible(execId, handoff.session().id())) {
+                store.failExec(execId, "委派作用域或来源已失效");
+                throw new IllegalArgumentException("委派作用域或来源已失效");
+            }
+            left.incrementAndGet();
+            scopedBatches.add(batchId);
+        }
+        markRunning(handoff.session().id(), execId);
+        return new ScopedExecution(execId, CompletableFuture.supplyAsync(() -> {
+            try {
+                return scopedRun.run(handoff, batchId, execId);
+            } catch (RuntimeException error) {
+                String reason = switch (error) {
+                    case ResponseStatusException response -> response.getReason();
+                    case IllegalArgumentException invalid -> invalid.getMessage();
+                    default -> "子代理执行失败";
+                };
+                log.warn("子代理执行 {} 未完成：{}", execId, error.getClass().getSimpleName());
+                store.failExec(execId, reason);
+                return new AgentRunner.Outcome(execId, "failed", null, reason);
+            }
+        }, POOL));
+    }
+
+    private void deliverWhenReady(ScopedSubagentRun.Handoff handoff, String batchId, ScopedExecution execution) {
+        batchHub.put(batchId, handoff.session().id());
+        execution.outcome().whenCompleteAsync((result, failure) ->
+                finishScoped(handoff, batchId, execution.id(), result, true), POOL);
+    }
+
+    private void finishScoped(ScopedSubagentRun.Handoff handoff, String batchId, long execId,
+                              AgentRunner.Outcome outcome, boolean background) {
+        String hubId = handoff.session().id();
+        unmarkRunning(hubId, execId);
+        try {
+            if (outcome == null) {
+                store.failExec(execId, "子代理未产出结论");
+            } else if (background && scope.visible(execId, hubId)) {
+                publisher.publishEvent(new SubagentReportEvent(hubId, handoff.title(), execId, outcome.status(),
+                        outcome.output(), outcome.error(), true));
+            }
+        } finally {
+            pending.get(batchId).decrementAndGet();
+            settle(batchId);
+        }
+    }
+
+    private String handoff(ScopedSubagentRun.Handoff task, long id, String status, String output, String failure) {
+        ObjectNode result = om.createObjectNode().put("id", id).put("status", status).put("title", task.title());
+        result.putObject("report").put("tool", ReadSubagentRunTool.NAME).put("id", id);
+        ArrayNode refs = result.putArray("source_refs");
+        task.references().forEach(refs::add);
+        if ("running".equals(status)) {
+            result.put("summary", "已受理，完成后回报当前会话");
+        } else if ("done".equals(status)) {
+            result.put("summary", bounded(output, HANDOFF_SUMMARY));
+        } else {
+            result.put("summary", bounded(failure, HANDOFF_SUMMARY));
+        }
+        return result.toString();
+    }
+
     /**
      * 重跑一条任务（页面上的「重跑」）：按它留下的 payload（原始工具调用参数）重新派一次子代理。
      *
@@ -352,7 +510,7 @@ public class SubagentService implements SubagentTool {
      *
      * @return 新一次执行的 id；任务不存在 / 不是子代理 / 没有可重跑的输入时返回 -1
      */
-    public long rerunTask(long taskId) {
+    public long rerunTask(String agentId, long taskId, String actorId) {
         TaskStore.TaskRow task = tasks.task(taskId).orElse(null);
         if (task == null || !TaskStore.KIND_SUBAGENT.equals(task.kind()) || task.payload() == null) {
             return -1;
@@ -366,9 +524,42 @@ public class SubagentService implements SubagentTool {
         if (args.path("instruction").asText("").trim().isEmpty()) {
             return -1;
         }
+        if (scope.scoped(taskId)) {
+            return Objects.equals(task.agentId(), agentId) ? rerunScoped(task, args, actorId) : -1;
+        }
         String batchId = openRun(task.agentId(), "chat");
         closeRequested.add(batchId);
         return spawn(args, task.agentId(), batchId, task.sessionId(), taskId);
+    }
+
+    /** The Agent management view retains its own audit archive even after model access is revoked. */
+    public boolean auditVisibleTo(String agentId, long execId) {
+        return !scope.scoped(execId) || tasks.task(execId).map(task -> Objects.equals(task.agentId(), agentId))
+                .orElse(false);
+    }
+
+    private long rerunScoped(TaskStore.TaskRow task, JsonNode args, String actorId) {
+        if (!scope.visible(task.id(), task.sessionId())) {
+            return -1;
+        }
+        var session = hubSessions.findById(task.sessionId()).orElse(null);
+        var binding = args.path(SubagentScope.CAPTURE);
+        var current = memScope(task.agentId(), task.sessionId());
+        var parent = MemoryExec.chat(task.agentId(), binding.path("project_id").asText(null), task.sessionId(),
+                binding.path("parent_task_id").asLong(), binding.path("turn_id").asText(), current.identityOrInferred());
+        try {
+            var handoff = scopedRun.capture(args, session, parent, actorId, task.title(), names(args.path("tools")));
+            String batchId = openRun(task.agentId(), "chat");
+            try {
+                ScopedExecution execution = startScoped(handoff, batchId, task.id());
+                deliverWhenReady(handoff, batchId, execution);
+                return execution.id();
+            } finally {
+                closeRun(batchId);
+            }
+        } catch (IllegalArgumentException unavailable) {
+            return -1;
+        }
     }
 
     /**
@@ -481,7 +672,12 @@ public class SubagentService implements SubagentTool {
         ordered.sort(null);
         StringBuilder items = new StringBuilder();
         int shown = 0;
+        var current = MemoryScopeCtx.get();
         for (Long id : ordered) {
+            if (scope.scoped(id) && (current == null || !Objects.equals(hubId, current.sessionId())
+                    || !scope.visible(id, hubId, current.agentOrBuiltin(), current.projectId()))) {
+                continue;
+            }
             ExecStore.ExecRow row = store.exec(id).orElse(null);
             if (row == null) {
                 continue;
@@ -536,18 +732,21 @@ public class SubagentService implements SubagentTool {
         if (hubId == null || hubId.isBlank()) {
             return;
         }
-        running.computeIfAbsent(hubId, k -> ConcurrentHashMap.newKeySet()).add(execId);
+        running.compute(hubId, (key, ids) -> {
+            Set<Long> active = ids == null ? ConcurrentHashMap.newKeySet() : ids;
+            active.add(execId);
+            return active;
+        });
     }
 
     private void unmarkRunning(String hubId, long execId) {
-        Set<Long> ids = hubId == null ? null : running.get(hubId);
-        if (ids == null) {
+        if (hubId == null) {
             return;
         }
-        ids.remove(execId);
-        if (ids.isEmpty()) {
-            running.remove(hubId, ids);
-        }
+        running.computeIfPresent(hubId, (key, ids) -> {
+            ids.remove(execId);
+            return ids.isEmpty() ? null : ids;
+        });
     }
 
     /**
@@ -587,10 +786,21 @@ public class SubagentService implements SubagentTool {
     // ---------- 翻过程 ----------
 
     /** 按执行 id 取回任意一次执行（子代理 / 任务计划 / 心跳主会话）的完整过程 */
-    private String replayTool(JsonNode args) {
+    private String replayTool(JsonNode args, String agentId, String sessionId) {
         long id = args.path("id").asLong(0);
+        if (scope.scoped(id)) {
+            var current = MemoryScopeCtx.get();
+            return current != null && Objects.equals(sessionId, current.sessionId())
+                    && Objects.equals(agentId, current.agentOrBuiltin())
+                    && scope.visible(id, sessionId, current.agentOrBuiltin(), current.projectId())
+                    ? error("报告可在原会话或任务记录查看；模型回读需要启用单聊临时上下文")
+                    : "找不到执行 id=" + id + " 的记录。";
+        }
+        if (!scope.visibleLegacy(id, sessionId, agentId)) {
+            return "找不到执行 id=" + id + " 的记录。";
+        }
         ExecStore.ExecRow row = store.exec(id).orElse(null);
-        if (row == null) {
+        if (row == null || ExecStore.KIND_AGENT_MESSAGE.equals(row.kind())) {
             return "找不到执行 id=" + id + " 的记录。";
         }
         StringBuilder sb = new StringBuilder();
@@ -612,6 +822,43 @@ public class SubagentService implements SubagentTool {
         }
         sb.append("结论：\n").append(text(row.output()));
         return sb.toString();
+    }
+
+    private String readScoped(JsonNode args, MemoryExec current) {
+        JsonNode rawId = args.path("id");
+        JsonNode rawOffset = args.path("offset");
+        JsonNode rawLength = args.path("length");
+        long id = rawId.asLong(0);
+        int offset = rawOffset.asInt(0);
+        int length = rawLength.asInt(1600);
+        if (!rawId.isIntegralNumber() || !rawId.canConvertToLong() || id <= 0
+                || !validPageNumber(rawOffset) || !validPageNumber(rawLength)
+                || offset < 0 || length <= 0 || length > 4000) {
+            return error("执行 id 或分页参数无效");
+        }
+        var report = scope.report(id, current.sessionId(), current.agentOrBuiltin(), current.projectId()).orElse(null);
+        if (report == null) {
+            return error("找不到可读取的执行记录");
+        }
+        String content = report.content();
+        int total = content.codePointCount(0, content.length());
+        int from = Math.min(offset, total);
+        int until = from + Math.min(length, total - from);
+        String page = content.substring(content.offsetByCodePoints(0, from), content.offsetByCodePoints(0, until));
+        ObjectNode result = om.createObjectNode().put("id", id).put("status", report.status())
+                .put("offset", from).put("content", page);
+        if (until < total) {
+            result.put("next_offset", until);
+        }
+        return result.toString();
+    }
+
+    private static boolean validPageNumber(JsonNode value) {
+        return value.isMissingNode() || value.isIntegralNumber() && value.canConvertToInt();
+    }
+
+    private String error(String message) {
+        return om.createObjectNode().put("error", message).toString();
     }
 
     // ---------- 助手 ----------
@@ -650,10 +897,25 @@ public class SubagentService implements SubagentTool {
 
     private JsonNode readTree(String json) {
         try {
-            return om.readTree(json == null || json.isBlank() ? "{}" : json);
+            JsonNode parsed = om.readTree(json == null || json.isBlank() ? "{}" : json);
+            return parsed == null ? om.createObjectNode() : parsed;
         } catch (Exception e) {
             return om.createObjectNode();
         }
+    }
+
+    private JsonNode toolArgs(JsonNode call) {
+        JsonNode args = readTree(call.path("function").path("arguments").asText(""));
+        if (args instanceof ObjectNode object) {
+            object.remove(SubagentScope.CAPTURE);
+        }
+        return args;
+    }
+
+    private static String bounded(String value, int limit) {
+        String text = text(value).strip();
+        int end = text.offsetByCodePoints(0, Math.min(limit, text.codePointCount(0, text.length())));
+        return end < text.length() ? text.substring(0, end) + "…" : text;
     }
 
     private static String clip(String s) {

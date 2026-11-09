@@ -28,6 +28,7 @@ public class SessionEventBus {
     /** 一次会话事件：kind=delivered（有新消息投递，如子代理回报）| answered（生成答完）| todo（待办清单更新） */
     public static final String KIND_DELIVERED = "delivered";
     public static final String KIND_ANSWERED = "answered";
+    public static final String KIND_AGENT_MESSAGE_SENT = "agent_message_sent";
     /** 个人待办清单（write_todos）更新：前端据此即时刷新会话页的 TODO 卡片 */
     public static final String KIND_TODO = "todo";
     /** 会话标题被自动生成：前端据此即时更新列表 / 会话头的标题 */

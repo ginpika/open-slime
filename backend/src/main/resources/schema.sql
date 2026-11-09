@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS hub_session (
   unread            INTEGER NOT NULL DEFAULT 0, -- 子代理投递过新消息且用户未查看（1=未读）；打开会话即清零
   member_ids        TEXT,                    -- 圆桌会话的成员名册（agent.id 的 JSON 数组；NULL=全体名册）；首页会话为 NULL
   memory_off        INTEGER NOT NULL DEFAULT 0, -- 临时会话：1=本次不进记忆（memory_event 写入与提炼均跳过）；「…」菜单开关
+  context_scope_revision INTEGER,             -- 单聊续接授权代号，改绑或回退时递增，NULL 等同 0
+  context_stage     TEXT,                    -- 单聊阶段与 Epoch 的引用元数据（JSON）
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER
 );
@@ -431,12 +433,13 @@ CREATE INDEX IF NOT EXISTS idx_task_origin ON task(origin);
 --   kind=text —— 结论文本（content 存正文；执行引擎产出结论时自动落一条）
 --   kind=file —— 生成的文件（ref 存路径；由后续的文件能力域自己补）
 --   kind=ref  —— 外部引用（ref 存 chunk id / 地址；检索片段引用等）
+--   kind=tool_result —— 单聊上下文试点保存的裁剪工具结果（content 存原始文本）
 -- 为 STEP 5 的工作台铺路：产物面板按任务列出它产出的东西。
 CREATE TABLE IF NOT EXISTS task_artifact (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    INTEGER NOT NULL REFERENCES task(id),
   exec_id    INTEGER,                       -- 由哪次执行产出（task.id；可回看过程）
-  kind       TEXT NOT NULL,                 -- text | file | ref
+  kind       TEXT NOT NULL,                 -- text | file | ref | tool_result
   name       TEXT,                          -- 展示名（结论标题 / 文件名 / 片段标题）
   content    TEXT,                          -- 文本产物正文（kind=text）
   ref        TEXT,                          -- 引用（kind=file：路径；kind=ref：id / 地址）
@@ -786,7 +789,7 @@ CREATE TABLE IF NOT EXISTS memory_cursor (
 );
 
 -- ---------------------------------------------------------------------------
--- memory-v6 · 记忆运行时（见 docs/memory-v6.md）
+-- memory-v6 · 记忆运行时（见 docs/memory/memory-v6.md）
 -- ---------------------------------------------------------------------------
 
 -- 写入审计（memory_revision，memory-v6 §6.1）：每次提交留一条，可回放、可追责、可 purge 溯源。
@@ -1014,6 +1017,28 @@ CREATE TABLE IF NOT EXISTS chat_todo (
 -- 索引只按 (session_id, seq) 建：owner 是后加的列（老库靠 SchemaColumnPatches 补），
 -- 若在这里引用它，老库执行建索引语句会因「表在但列不在」直接报错、拖垮整个 schema 初始化
 CREATE INDEX IF NOT EXISTS idx_chat_todo_session ON chat_todo(session_id, seq);
+
+-- 单聊待办审批的安全点和回执。operation_id 沿用被暂停的 task.id。
+CREATE TABLE IF NOT EXISTS chat_todo_approval (
+  operation_id       INTEGER PRIMARY KEY REFERENCES task(id) ON DELETE CASCADE,
+  session_id         TEXT NOT NULL REFERENCES hub_session(id) ON DELETE CASCADE,
+  turn_id            INTEGER NOT NULL UNIQUE,
+  trigger_message_id INTEGER NOT NULL,
+  reply_message_id   INTEGER NOT NULL,
+  actor_id           TEXT NOT NULL,
+  agent_id           TEXT NOT NULL,
+  project_id         TEXT,
+  scope_revision     INTEGER NOT NULL,
+  todo_id            INTEGER NOT NULL,
+  todo_updated_at    INTEGER NOT NULL,
+  content            TEXT NOT NULL,
+  note               TEXT,
+  status             TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'stale')),
+  decision           TEXT CHECK (decision IN ('approve', 'reject')),
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_chat_todo_approval_session ON chat_todo_approval(session_id, status, scope_revision);
 
 -- ---------------------------------------------------------------------------
 -- 子代理共享黑板（scratchpad，STEP 4）：本会话历次子代理的发现，按时间累积。

@@ -39,6 +39,8 @@ public enum RuntimeEventType {
     TASK_SUBMITTED(85),
     TASK_REVISED(85),
     ISSUE_RESOLVED(85),
+    /** 用户在单聊中确认或拒绝一项待办结算。 */
+    TODO_APPROVAL_DECIDED(20),
     /** 一次工具调用开始（副作用生命周期的起点） */
     TOOL_STARTED(40),
     /** 一次工具调用正常结束 */

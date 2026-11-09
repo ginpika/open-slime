@@ -18,8 +18,25 @@ import java.util.List;
  * @param trigger   触发（头）
  * @param reply     Agent 的输出；尚未产出时为 null（未配到回答的用户 Turn、或该触发源暂无 reaction）
  * @param inFlight  是否尚未落定（在途生成中的那条尾巴）；回放只带上它的问题，不带半截回答
+ * @param interjections 同一轮内追加的用户消息和阶段回复
  */
-public record Turn(String sessionId, TurnTrigger trigger, Reply reply, boolean inFlight) {
+public record Turn(String sessionId, TurnTrigger trigger, Reply reply, boolean inFlight,
+                   List<Interjection> interjections) {
+
+    public Turn {
+        interjections = List.copyOf(interjections);
+    }
+
+    public Turn(String sessionId, TurnTrigger trigger, Reply reply, boolean inFlight) {
+        this(sessionId, trigger, reply, inFlight, List.of());
+    }
+
+    /** A user correction or interim reply within this turn, in message order. */
+    public record Interjection(String role, String content, Long messageId) {
+        public Interjection(String role, String content) {
+            this(role, content, null);
+        }
+    }
 
     /**
      * Agent 对这一 Turn 的输出。

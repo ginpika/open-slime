@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { loginUrlOf, logout, me, type SsoUser } from './api/client'
 import { isDesktopShell, backToLauncher, openDesktopHome } from './api/desktop'
 import AgentHome from './pages/agent/AgentHome'
+import AgentConversation from './pages/agent/AgentConversation'
 import Dashboard from './pages/Dashboard'
 import Knowledge from './pages/Knowledge'
 import Economy from './pages/Economy'
@@ -15,8 +16,9 @@ import Import from './pages/Import'
 import Snapshots from './pages/Snapshots'
 import Analyze from './pages/Analyze'
 import MultiAgent from './pages/MultiAgent'
+import SystemPanel from './pages/SystemPanel'
 import MemoryPanel from './pages/MemoryPanel'
-import AgentDetail from './pages/AgentDetail'
+import AgentDetail from './pages/agent/AgentDetail'
 import Roundtable from './pages/Roundtable'
 import Workspace from './pages/Workspace'
 import Coding from './pages/Coding'
@@ -33,6 +35,7 @@ import { activePathOf } from './shell/nav'
 import { isKnownRoute, routeFromHash } from './shell/routes'
 import { btnOutline } from './components/ui'
 import ChatNotifier from './components/ChatNotifier'
+import SlimePage from './components/SlimePage'
 
 function useHashRoute(): string {
   const [route, setRoute] = useState(() => routeFromHash(window.location.hash))
@@ -260,7 +263,6 @@ function App() {
   /* 每页包一层 data-page（语义锚点），内容由 PageSlot 决定：原生页面或注册表中的渲染版本 */
   const page = (
     <>
-      {route === '/knowledge' && <div data-page="knowledge"><Knowledge /></div>}
       {route === '/economy' && <div data-page="economy"><Economy /></div>}
       {route === '/economy/research' && <EconomyResearch />}
       {route === '/economy/database' && <EconomyDatabase />}
@@ -301,33 +303,9 @@ function App() {
           <PageSlot route="analyze" props={{}} fallback={<Analyze />} />
         </div>
       )}
-      {route === '/subconscious' && (
-        <div data-page="subconscious">
-          {/* 潜意识已并入「智能体」页：这条路由把统一页直接打开在「系统」tab 上 */}
-          <PageSlot
-            route="subconscious"
-            props={{}}
-            fallback={<MultiAgent initialTab="system" />}
-          />
-        </div>
-      )}
-      {route === '/multi-agent' && (
-        <div data-page="multi-agent">
-          <PageSlot route="multi-agent" props={{}} fallback={<MultiAgent />} />
-        </div>
-      )}
       {route === '/memory' && (
         <div data-page="memory">
           <PageSlot route="memory" props={{}} fallback={<MemoryPanel />} />
-        </div>
-      )}
-      {agentMatch && (
-        <div data-page="agent">
-          <PageSlot
-            route="agent"
-            props={{ id: decodeURIComponent(agentMatch[1]) }}
-            fallback={<AgentDetail key={agentMatch[1]} peerId={decodeURIComponent(agentMatch[1])} />}
-          />
         </div>
       )}
       {['/collaboration', '/roundtable', '/workflow'].includes(route) && (
@@ -400,10 +378,62 @@ function App() {
       />
     ) : null
 
-  /* 对话首页与 Dashboard 不再套带侧栏的 AppShell：窗口本身只留 Agent / 收纳页。
-     其余页面仍走原有外壳，路由与链接保持不变。 */
-  if (route === '/' || route === '/dashboard') {
-    const standalone = route === '/' ? <AgentHome connErr={connErr} userSlot={renderUser({ placement: 'up', withName: false })} /> : <Dashboard />
+  /* Dashboard 及其独立页面与对话首页共用无侧栏窗口。 */
+  let standalone: ReactNode = null
+  switch (route) {
+    case '/':
+      standalone = <AgentHome connErr={connErr} userSlot={renderUser({ placement: 'up', withName: false })} />
+      break
+    case '/dashboard':
+      standalone = <Dashboard />
+      break
+    case '/knowledge':
+      /* 与首页 / Dashboard 一致：不套外壳顶栏与页脚，只保留极简页头 */
+      standalone = (
+        <SlimePage title="知识库" backHref="#/dashboard" backLabel="返回 Dashboard">
+          <div data-page="knowledge"><Knowledge /></div>
+        </SlimePage>
+      )
+      break
+    case '/agent-conversation':
+      standalone = <AgentConversation />
+      break
+    case '/multi-agent':
+      standalone = (
+        <SlimePage key={route} title="智能体" backHref="#/dashboard" backLabel="返回 Dashboard">
+          <div data-page="multi-agent">
+            <PageSlot route="multi-agent" props={{}} fallback={<MultiAgent />} />
+          </div>
+        </SlimePage>
+      )
+      break
+    case '/system':
+      standalone = (
+        <SlimePage key={route} title="系统" backHref="#/dashboard" backLabel="返回 Dashboard">
+          <div data-page="system">
+            {/* 沿用原系统视图的页面覆盖键。 */}
+            <PageSlot route="subconscious" props={{}} fallback={<SystemPanel />} />
+          </div>
+        </SlimePage>
+      )
+      break
+  }
+
+  /* 智能体详情与成员名册一致：独立页面、极简页头，不再套外壳导航与页脚 */
+  if (agentMatch && !standalone) {
+    const peerId = decodeURIComponent(agentMatch[1])
+    standalone = (
+      <SlimePage
+        title={peerId === 'new' ? '新建成员' : '智能体'}
+        backHref="#/multi-agent"
+        backLabel="返回成员列表"
+      >
+        <PageSlot route="agent" props={{ id: peerId }} fallback={<AgentDetail key={peerId} peerId={peerId} />} />
+      </SlimePage>
+    )
+  }
+
+  if (standalone) {
     return (
       <>
         {desktop ? (

@@ -21,9 +21,8 @@ public class ReadSubagentRunTool implements AiTool {
 
     @Override
     public String description() {
-        return "按执行 id 取回某一次执行的完整过程（当时组装出的上下文、思维链、每一次工具调用与结果）。"
-                + "子代理、任务计划、心跳主会话的执行都能按 id 翻——"
-                + "只在需要核对细节、怀疑结论不实或想了解它查了哪里时调用；"
+        return "按执行 id 读取当前作用域内的执行报告。单聊临时上下文使用 offset 和 length 分页回读结论原文，"
+                + "响应包含 next_offset 时可继续。报告是待核对的证据。其他执行面沿用各自的回读权限。"
                 + "id 来自 " + DelegateSubagentTool.NAME + " 或 " + DelegatePlanTool.NAME + " 的返回。";
     }
 
@@ -42,9 +41,12 @@ public class ReadSubagentRunTool implements AiTool {
     public ObjectNode parameters(ObjectMapper om) {
         ObjectNode params = om.createObjectNode();
         params.put("type", "object");
-        params.putObject("properties").putObject("id")
+        ObjectNode properties = params.putObject("properties");
+        properties.putObject("id")
                 .put("type", "integer")
                 .put("description", "执行的 id（派活返回中给出的 id）");
+        properties.putObject("offset").put("type", "integer").put("minimum", 0);
+        properties.putObject("length").put("type", "integer").put("minimum", 1).put("maximum", 4000);
         params.putArray("required").add("id");
         return params;
     }

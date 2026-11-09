@@ -30,41 +30,48 @@ public class ChatLiveStore {
         boolean onEvent(String name, Object payload);
     }
 
-    /** 一次在途生成的可续传状态 */
-    private static final class Run {
-        final String sessionId;
-        final StringBuilder content = new StringBuilder();
-        final StringBuilder reasoning = new StringBuilder();
-        final List<ChatDtos.TraceSegment> trace = new ArrayList<>();
+    /** 一次在途生成的可续传状态。写入端持有此实例，收尾时可区分同一会话后续启动的生成。 */
+    public static final class Run {
+        private final String sessionId;
+        private final StringBuilder content = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
+        private final List<ChatDtos.TraceSegment> trace = new ArrayList<>();
+        private final List<ChatDtos.SteerMessage> steers = new ArrayList<>();
+        private final List<ChatDtos.InterimReply> interims = new ArrayList<>();
         /** 当前订阅者（SSE 消费者），按订阅先后保序 */
-        final Set<LiveListener> listeners = new LinkedHashSet<>();
-        long userMessageId;
-        String userText;
-        int round;
-        boolean running = true;
-        String error;
+        private final Set<LiveListener> listeners = new LinkedHashSet<>();
+        private final long userMessageId;
+        private final String userText;
+        private int round;
+        private int reasoningBeforeRound;
+        private volatile boolean running = true;
+        private String error;
 
-        Run(String sessionId) {
+        private Run(String sessionId, long userMessageId, String userText) {
             this.sessionId = sessionId;
+            this.userMessageId = userMessageId;
+            this.userText = userText;
+        }
+    }
+
+    public void delta(String sessionId, String reasoning, String content) {
+        Run run = runs.get(sessionId);
+        if (run != null) {
+            delta(run, reasoning, content);
         }
     }
 
     private final Map<String, Run> runs = new ConcurrentHashMap<>();
 
     /** 一次生成开始（user 消息已落库）：登记该会话的在途状态 */
-    public void start(String sessionId, long userMessageId, String userText) {
-        Run run = new Run(sessionId);
-        run.userMessageId = userMessageId;
-        run.userText = userText;
+    public Run start(String sessionId, long userMessageId, String userText) {
+        Run run = new Run(sessionId, userMessageId, userText);
         runs.put(sessionId, run);
+        return run;
     }
 
     /** 模型产出的增量片段：reasoning（思维链）/ content（正文）各自可能为 null */
-    public void delta(String sessionId, String reasoning, String content) {
-        Run run = runs.get(sessionId);
-        if (run == null) {
-            return;
-        }
+    public void delta(Run run, String reasoning, String content) {
         synchronized (run) {
             if (reasoning != null) {
                 run.reasoning.append(reasoning);
@@ -80,13 +87,10 @@ public class ChatLiveStore {
 
     /** 进入第 round 轮补全：>0 为工具轮之后的新一轮，正文从头开始（最终答复以末轮为准）；
      *  思维链跨轮保留（与前端、与落库规则一致） */
-    public void round(String sessionId, int round) {
-        Run run = runs.get(sessionId);
-        if (run == null) {
-            return;
-        }
+    public void round(Run run, int round) {
         synchronized (run) {
             run.round = round;
+            run.reasoningBeforeRound = run.reasoning.length();
             if (round > 0) {
                 run.content.setLength(0);
             }
@@ -95,11 +99,7 @@ public class ChatLiveStore {
     }
 
     /** 模型发起一次工具调用：落为一段 tool 分段 */
-    public void tool(String sessionId, String name, String args) {
-        Run run = runs.get(sessionId);
-        if (run == null) {
-            return;
-        }
+    public void tool(Run run, String name, String args) {
         synchronized (run) {
             run.trace.add(new ChatDtos.TraceSegment(ChatTrace.SEG_TOOL, null, name, args, run.round));
             broadcast(run, "tool", Map.of("name", name == null ? "" : name,
@@ -107,36 +107,59 @@ public class ChatLiveStore {
         }
     }
 
+    public void steer(Run run, ChatDtos.SteerMessage message) {
+        synchronized (run) {
+            run.steers.add(message);
+            run.content.setLength(0);
+            broadcast(run, "steer", message);
+        }
+    }
+
+    public void interim(Run run, ChatDtos.InterimReply reply) {
+        synchronized (run) {
+            run.interims.add(reply);
+            broadcast(run, "interim", reply);
+        }
+    }
+
+    /** 只撤销本次补全中未采纳的输出。已经执行的工具记录仍然可见。 */
+    public ChatDtos.OutputReset reset(Run run, int round) {
+        synchronized (run) {
+            run.content.setLength(0);
+            run.reasoning.setLength(run.reasoningBeforeRound);
+            run.trace.removeIf(segment -> ChatTrace.SEG_REASONING.equals(segment.type())
+                    && Integer.valueOf(round).equals(segment.round()));
+            var reset = new ChatDtos.OutputReset(run.reasoning.toString(), List.copyOf(run.trace));
+            broadcast(run, "reset", reset);
+            return reset;
+        }
+    }
+
     /** 生成收尾（正常完成、或用户停止后部分回答已落库）：落定最终正文并广播整份快照，随后移除在途状态。
      *  finalContent 为 null 表示以此刻已产出的部分为准（停止时正文可能没有、也可能只有半截） */
-    public void finish(String sessionId, String finalContent) {
-        Run run = runs.get(sessionId);
-        if (run == null) {
-            return;
-        }
+    public ChatDtos.LiveRun finish(Run run, String finalContent) {
+        ChatDtos.LiveRun snapshot;
         synchronized (run) {
             if (finalContent != null) {
                 run.content.setLength(0);
                 run.content.append(finalContent);
             }
             run.running = false;
-            broadcast(run, "done", snapshotOf(run));
+            snapshot = snapshotOf(run);
+            broadcast(run, "done", snapshot);
         }
-        runs.remove(sessionId);
+        runs.remove(run.sessionId, run);
+        return snapshot;
     }
 
     /** 生成失败：落定 running=false 与原因后广播（前端保留已产出的半截输出，便于回退重发），随后移除 */
-    public void fail(String sessionId, String error) {
-        Run run = runs.get(sessionId);
-        if (run == null) {
-            return;
-        }
+    public void fail(Run run, String error) {
         synchronized (run) {
             run.running = false;
             run.error = error;
             broadcast(run, "error", snapshotOf(run));
         }
-        runs.remove(sessionId);
+        runs.remove(run.sessionId, run);
     }
 
     /**
@@ -191,7 +214,8 @@ public class ChatLiveStore {
     private static void appendReasoning(Run run, String delta) {
         int last = run.trace.size() - 1;
         ChatDtos.TraceSegment prev = last < 0 ? null : run.trace.get(last);
-        if (prev != null && ChatTrace.SEG_REASONING.equals(prev.type())) {
+        if (prev != null && ChatTrace.SEG_REASONING.equals(prev.type())
+                && Integer.valueOf(run.round).equals(prev.round())) {
             run.trace.set(last, new ChatDtos.TraceSegment(ChatTrace.SEG_REASONING,
                     nullToEmpty(prev.text()) + delta, null, null, prev.round()));
             return;
@@ -202,11 +226,13 @@ public class ChatLiveStore {
 
     private static ChatDtos.LiveRun snapshotOf(Run run) {
         return new ChatDtos.LiveRun(run.sessionId, run.running, run.userText, run.userMessageId,
-                run.content.toString(), run.reasoning.toString(), List.copyOf(run.trace), run.error);
+                run.content.toString(), run.reasoning.toString(), List.copyOf(run.trace), run.error,
+                List.copyOf(run.steers), List.copyOf(run.interims), run.round);
     }
 
     private static ChatDtos.LiveRun notRunning(String sessionId) {
-        return new ChatDtos.LiveRun(sessionId, false, null, null, "", "", List.of(), null);
+        return new ChatDtos.LiveRun(sessionId, false, null, null, "", "", List.of(), null,
+                List.of(), List.of(), 0);
     }
 
     private static String nullToEmpty(String s) {

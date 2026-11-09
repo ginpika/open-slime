@@ -101,6 +101,19 @@ public class TurnStore {
                 TurnStore::map, sessionId);
     }
 
+    public void deleteBySession(String sessionId) {
+        jdbc.update("DELETE FROM chat_turn WHERE session_id = ?", sessionId);
+    }
+
+    /** 回退后 Turn 行仍可留痕，只在原提问还存在时接受其后台回报。 */
+    public boolean triggerPresent(String sessionId, String turnId) {
+        return Boolean.TRUE.equals(jdbc.query("""
+                SELECT 1 FROM chat_turn t JOIN chat_message m
+                  ON m.id = t.trigger_message_id AND m.session_id = t.session_id
+                WHERE t.session_id = ? AND t.id = ?
+                """, rs -> { return rs.next(); }, sessionId, turnId));
+    }
+
     private static TurnRow map(ResultSet rs, int rowNum) throws SQLException {
         return new TurnRow(
                 rs.getLong("id"),

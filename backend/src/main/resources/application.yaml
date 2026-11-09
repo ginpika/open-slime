@@ -85,6 +85,9 @@ minis:
   context:                                            # 上下文平面（STEP 2）：主动注入 + 贴临界裁历史
     inject-knowledge: ${CONTEXT_INJECT_KNOWLEDGE:false}  # 每轮按用户输入先召回知识库注入 system（默认关）
     inject-memory: ${CONTEXT_INJECT_MEMORY:true}         # 每轮按用户输入先召回相关记忆条目注入 system（默认开）
+    ephemeral-chat: ${CONTEXT_EPHEMERAL_CHAT:false}     # P1 单聊试点：按完整请求预算选取上下文
+    stage-continuation: ${CONTEXT_STAGE_CONTINUATION:false} # P3 单聊试点：阶段续接与历史水位
+    todo-approvals: ${CONTEXT_TODO_APPROVALS:false} # P4 单聊试点：确认后完成待办
     compress-history: ${CONTEXT_COMPRESS_HISTORY:true}   # 逼近窗口时才降级：先丢最早的轮次，仍超再截断
     reserve-output-tokens: ${CONTEXT_RESERVE_OUTPUT_TOKENS:8192} # 给模型输出留的 token（输入输出共用窗口）
     compress-keep-turns: ${CONTEXT_COMPRESS_KEEP_TURNS:2} # 降级时至少保留最近几轮原文

@@ -1,5 +1,6 @@
 package cc.ginpika.minis.agent.chat.store;
 
+import cc.ginpika.minis.ai.core.BuiltinAgents;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -8,6 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * hub_session（AI 会话）。M0 单用户中枢：不落 owner 列；多租户化时再按用户分表/加列。
@@ -31,6 +33,12 @@ public class HubSessionStore {
             "id, title, mode, model_id, prompt_id, agent_id, project_id, show_cot, context_trace, "
                     + "max_rounds, show_rounds, unread, created_at, updated_at";
 
+    private static final String APPROVALS_TO_RETIRE = """
+            session_id = ? AND status = 'pending'
+              AND (? = 1 OR scope_revision <> (SELECT COALESCE(context_scope_revision, 0)
+                  FROM hub_session WHERE id = chat_todo_approval.session_id))
+            """;
+
     private final JdbcTemplate jdbc;
 
     public HubSessionStore(JdbcTemplate jdbc) {
@@ -51,9 +59,31 @@ public class HubSessionStore {
     }
 
     /** 绑定 / 解绑会话所属项目 */
+    @Transactional
     public int setProject(String hubId, String projectId) {
-        return jdbc.update("UPDATE hub_session SET project_id = ?, updated_at = ? WHERE id = ?",
-                projectId, System.currentTimeMillis(), hubId);
+        int updated = jdbc.update("""
+                UPDATE hub_session SET project_id = ?, updated_at = ?,
+                    context_scope_revision = CASE WHEN NULLIF(project_id, '') IS NOT NULLIF(?, '')
+                        THEN COALESCE(context_scope_revision, 0) + 1 ELSE context_scope_revision END,
+                    context_stage = CASE WHEN NULLIF(project_id, '') IS NULLIF(?, '') THEN context_stage END
+                WHERE id = ?
+                """, projectId, System.currentTimeMillis(), projectId, projectId, hubId);
+        if (updated > 0) {
+            retireTodoApprovals(hubId, false);
+        }
+        return updated;
+    }
+
+    /** 回退后的执行不能继续使用回退前的续接作用域。 */
+    @Transactional
+    public void invalidateContextStage(String hubId) {
+        int updated = jdbc.update("""
+                UPDATE hub_session SET context_scope_revision = COALESCE(context_scope_revision, 0) + 1,
+                    context_stage = NULL WHERE id = ? AND mode = 'ai'
+                """, hubId);
+        if (updated > 0) {
+            retireTodoApprovals(hubId, false);
+        }
     }
 
     /** 有新消息时刷新 updated_at，并按需回填标题（首条消息截断做标题） */
@@ -64,6 +94,7 @@ public class HubSessionStore {
     }
 
     /** 更新会话配置（「…」菜单选择）：仅更新非 null 项，未传的保持原值 */
+    @Transactional
     public void updateConfig(String hubId, String modelId, String promptId, String agentId, Boolean showCot,
                              Boolean contextTrace, Integer maxRounds, Boolean showRounds) {
         List<String> sets = new ArrayList<>();
@@ -78,8 +109,19 @@ public class HubSessionStore {
         }
         if (agentId != null) {
             /* 空串 = 清除，回到内置 Agent（与 model_id/prompt_id 的「空=回退默认」同口径，落 NULL 更干净） */
+            String newAgent = agentId.isBlank() ? null : agentId;
             sets.add("agent_id = ?");
-            args.add(agentId.isBlank() ? null : agentId);
+            args.add(newAgent);
+            String owner = BuiltinAgents.CORE.equals(newAgent) ? null : newAgent;
+            sets.add("""
+                    context_scope_revision = CASE WHEN NULLIF(NULLIF(agent_id, ''), ?) IS NOT ?
+                        THEN COALESCE(context_scope_revision, 0) + 1 ELSE context_scope_revision END
+                    """);
+            args.add(BuiltinAgents.CORE);
+            args.add(owner);
+            sets.add("context_stage = CASE WHEN NULLIF(NULLIF(agent_id, ''), ?) IS ? THEN context_stage END");
+            args.add(BuiltinAgents.CORE);
+            args.add(owner);
         }
         if (showCot != null) {
             sets.add("show_cot = ?");
@@ -101,8 +143,11 @@ public class HubSessionStore {
             return;
         }
         args.add(hubId);
-        jdbc.update("UPDATE hub_session SET " + String.join(", ", sets) + " WHERE id = ?",
+        int updated = jdbc.update("UPDATE hub_session SET " + String.join(", ", sets) + " WHERE id = ?",
                 args.toArray());
+        if (agentId != null && updated > 0) {
+            retireTodoApprovals(hubId, false);
+        }
     }
 
     public Optional<HubRow> findById(String hubId) {
@@ -130,8 +175,27 @@ public class HubSessionStore {
     }
 
     /** 删除会话行；返回受影响行数（0 = 不存在）。消息正本须由调用方先行清理 */
+    @Transactional
     public int delete(String hubId) {
+        retireTodoApprovals(hubId, true);
         return jdbc.update("DELETE FROM hub_session WHERE id = ?", hubId);
+    }
+
+    /** Keep approvals from an earlier scope terminal even if the session is later rebound to the same owner. */
+    private void retireTodoApprovals(String hubId, boolean deleting) {
+        int all = deleting ? 1 : 0;
+        long now = System.currentTimeMillis();
+        jdbc.update("""
+                UPDATE task SET status = 'cancelled', updated_at = ?
+                WHERE session_id = ? AND kind = 'session' AND status = 'suspended'
+                  AND id IN (SELECT operation_id FROM chat_todo_approval WHERE
+                """ + APPROVALS_TO_RETIRE + ")", now, hubId, hubId, all);
+        if (deleting) {
+            jdbc.update("DELETE FROM chat_todo_approval WHERE session_id = ?", hubId);
+        } else {
+            jdbc.update("UPDATE chat_todo_approval SET status = 'stale', decision = NULL, decided_at = ? WHERE "
+                    + APPROVALS_TO_RETIRE, now, hubId, all);
+        }
     }
 
     /** 按标题查会话（同名可能有多条，取最近更新的一条） */

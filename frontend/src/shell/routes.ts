@@ -1,12 +1,18 @@
 import { ECONOMY_NAV, KNOWLEDGE_NAV, NAV } from './nav'
 
-const hiddenRoutes = new Set(['/search', '/subconscious', '/roundtable', '/workflow', '/dashboard'])
+const hiddenRoutes = new Set(['/search', '/subconscious', '/roundtable', '/workflow', '/dashboard', '/agent-conversation'])
+
+export function agentConversationHref(sessionId: string, messageId: number, origin = window.location.hash): string {
+  const params = new URLSearchParams({ session: sessionId, message: String(messageId), from: origin })
+  return `#/agent-conversation?${params}`
+}
 
 export function routeFromHash(hash: string): string {
-  const path = hash.replace(/^#/, '').split('?')[0]
-  if (!path) return '/'
+  const raw = hash.replace(/^#/, '').split('?')[0]
+  const path = raw.startsWith('/') ? raw : `/${raw}`
+  if (path === '/subconscious') return '/system'
   if(path==='/economy/market'||path==='/economy/stock')return '/economy/research'
-  return path.startsWith('/') ? path : `/${path}`
+  return path
 }
 
 /** 功能页即使收进起始页，原有直达链接也仍是合法路由。 */

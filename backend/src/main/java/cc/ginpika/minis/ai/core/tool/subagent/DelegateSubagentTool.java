@@ -36,7 +36,7 @@ public class DelegateSubagentTool implements AiTool {
     public String description() {
         return "委派一个独立上下文的临时协作者，适合多步检索、候选比较、长文档提炼和独立证据核查。"
                 + "它看不到当前对话：交代目标、范围、已知事实和预期证据，只取回结论与执行 id。"
-                + "对话默认 background=true，后台执行后回报本会话；当前决策依赖调查结果时用 background=false，直接返回结论继续判断。"
+                + "对话默认 background=true，后台执行后回报本会话；当前决策依赖调查结果时用 background=false，优先等待结论，超时后由后台回报。"
                 + "心跳中始终同步取回结论。同一条消息可派多个独立问题；简单工作直接完成，不机械委派。"
                 + "协作项目中只读调查，代码实施交 coding_task 独立副本，不能借子代理绕过派工、独立检查或扩大计划。"
                 + "需要长期反复运行的职责才使用任务计划（" + CreatePlanTool.NAME + "）。";
@@ -71,10 +71,12 @@ public class DelegateSubagentTool implements AiTool {
                         + "所以该给的前提、该要的产出都要写全");
         props.putObject("name").put("type", "string")
                 .put("description", "给它起个短名（展示用，便于在运行记录里指认）；不填则从交代里自动截取");
+        AiTool.putStringArraySchema(props, "source_refs", "启用单聊临时上下文时可授权至多 6 个当前会话资料引用，"
+                + "例如 message:12、message:12:tool:0 或 artifact:34。只提供任务所需的引用");
         AiTool.putStringArraySchema(props, "tools",
                 "允许它调用的工具名；不填 = 只读检索（search_vector_chunks / search_graph_entities / "
                         + "query_entity_relations / query_entity_path / explore_subgraph / "
-                        + "search_documents_by_title / read_document）。要它写知识库才需要显式点名写库工具");
+                        + "search_documents_by_title / read_document）。单聊临时上下文委派只授权只读资料工具");
         params.putArray("required").add("instruction");
         return params;
     }

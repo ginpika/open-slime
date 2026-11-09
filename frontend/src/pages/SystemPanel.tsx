@@ -5,8 +5,7 @@
  * 开发者选项提示词（文档→图谱流水线）。每位 Agent 自己的后台（心跳 / 常驻职责 / 子代理 / RAG / 任务）
  * 在 {@link AgentBackground}，不在本页。
  *
- * <p>观测台复用旧 dashboard 的观感：心跳状态行 + 最近事件长条（条内内联本批执行，点开看详情）；
- * 详情浮窗与格式化零件复用 {@link AgentBackground} 导出的共用组件。
+ * 观测台的执行详情与格式化复用 {@link AgentBackground}。
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -16,15 +15,13 @@ import {
   systemStream,
   systemTools,
   type ExecView,
-  type HeartbeatState,
   type PulseView,
   type ToolInfoView,
 } from '../api/client'
 import Toast from '../components/Toast'
-import { usePageKit } from '../kit'
-import { fmtDay, fmtDur, ResultDetail, StatusDot, textPreview, ViewTab } from './AgentBackground'
-import MemoryPanel from './MemoryPanel'
+import { fmtDay, fmtDur, ResultDetail, StatusDot, textPreview } from './AgentBackground'
 import PromptsPanel from './PromptsPanel'
+import './systemPanel.css'
 
 /** 心跳重连间隔（后端单条流有最长保持时长，断开属正常） */
 const RECONNECT_MS = 1500
@@ -47,20 +44,25 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-/** 心跳状态点：执行中=脉冲；待命=实心点缀；停摆=中性 */
-function BeatDot({ state }: { state: HeartbeatState }) {
-  const tone = state.running
-    ? 'animate-pulse bg-accent'
-    : state.enabled
-      ? 'bg-accent'
-      : 'bg-fg/30'
-  return <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} />
+const STATUS_LABELS: Record<string, string> = {
+  done: '已完成',
+  failed: '失败',
+  interrupted: '已中断',
+  running: '执行中',
+}
+
+function RunStatus({ status }: { status: string }) {
+  return (
+    <span className="sys-status">
+      <StatusDot status={status} />
+      {STATUS_LABELS[status] ?? status}
+    </span>
+  )
 }
 
 /* ---------------- 观测台 ---------------- */
 
 function DashboardTab() {
-  const kit = usePageKit()
   const [pulse, setPulse] = useState<PulseView | null>(null)
   const [live, setLive] = useState(false)
   const [detail, setDetail] = useState<ExecView | null>(null)
@@ -118,98 +120,89 @@ function DashboardTab() {
     heartbeats.find((h) => h.agentId === agentId)?.name ?? agentId
 
   return (
-    <div className="flex flex-col gap-3.5">
-      {/* 心跳：每位 Agent 的状态（名字 / 开关 / 节拍 / 最近敲响 / 是否在跑） */}
-      <kit.Panel
-        title="心跳"
-        meta={
-          <kit.Badge tone={live ? 'ok' : 'warn'}>
-            {live ? 'STREAM LIVE' : 'RECONNECTING'}
-          </kit.Badge>
-        }
-      >
+    <div className="sys-sections">
+      <section aria-labelledby="sys-heartbeat-heading">
+        <header className="sys-section-head">
+          <h2 id="sys-heartbeat-heading">心跳</h2>
+          <span className="sys-status" role="status">
+            <span className={`sys-dot${live ? ' is-active' : ''}`} aria-hidden="true" />
+            {live ? '实时更新' : pulse ? '正在重连' : '正在连接'}
+          </span>
+        </header>
         {heartbeats.length === 0 ? (
-          <kit.Empty>还没有启用心跳的智能体 —— 到某位成员的「后台 · 心跳」里打开常驻心跳。</kit.Empty>
+          <p className="sys-empty">
+            {pulse ? '暂无心跳记录。可在成员的「后台」中启用心跳。' : '正在加载心跳…'}
+          </p>
         ) : (
-          <div className="flex flex-col">
+          <ul className="sys-list" role="list">
             {heartbeats.map((h) => (
-              <kit.Row key={h.agentId} className="flex-wrap gap-x-3 gap-y-1">
-                <BeatDot state={h} />
-                <span className="truncate text-sm font-medium text-fg">{h.name}</span>
-                <span className="mono shrink-0 text-2xs text-dim">{h.agentId}</span>
-                <span className="mono text-2xs text-dim">
-                  节拍 {h.tickMs}ms
-                  <span className="mx-1.5">·</span>最近敲响 {fmtDay(h.lastBeatAt)}
-                </span>
-                <span
-                  className={`mono ml-auto shrink-0 text-2xs ${h.running ? 'text-accent' : 'text-dim'}`}
-                >
-                  {h.running ? '执行中' : h.enabled ? '待命' : '已停摆'}
-                </span>
-              </kit.Row>
+              <li key={h.agentId} className="sys-entry">
+                <div className="sys-entry-head">
+                  <strong>{h.name}</strong>
+                  <span className="sys-status">
+                    <span className={`sys-dot${h.running || h.enabled ? ' is-active' : ''}`} aria-hidden="true" />
+                    {h.running ? '执行中' : h.enabled ? '待命' : '已停用'}
+                  </span>
+                </div>
+                <p className="sys-meta">
+                  <code>{h.agentId}</code>
+                  <span>节拍 {h.tickMs} ms</span>
+                  <span>最近敲响 {fmtDay(h.lastBeatAt)}</span>
+                </p>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </kit.Panel>
+      </section>
 
-      {/* 最近事件：每批一条长条，条内内联本批的各次执行（标注归属 Agent） */}
-      <kit.Panel title="最近事件" meta={runs.length > 0 ? `LAST ${runs.length} BATCHES` : undefined}>
+      <section aria-labelledby="sys-recent-heading">
+        <header className="sys-section-head">
+          <h2 id="sys-recent-heading">最近事件</h2>
+          {runs.length > 0 && <span className="sys-label">{runs.length} 批</span>}
+        </header>
         {runs.length === 0 ? (
-          <kit.Empty>还没有跑过一轮心跳</kit.Empty>
+          <p className="sys-empty">{pulse ? '暂无执行记录。' : '正在加载最近事件…'}</p>
         ) : (
-          <div className="flex flex-col gap-2">
+          <ul className="sys-list" role="list">
             {runs.map(({ run, execs }) => (
-              <article
-                key={run.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 border border-line px-3.5 py-3 transition hover:border-line-strong hover:bg-accent-soft"
-              >
-                <span className="flex shrink-0 items-center gap-2">
-                  <StatusDot status={run.status} />
-                  <kit.Badge>{nameOf(run.agentId)}</kit.Badge>
-                  <span className="mono border border-line px-1.5 py-0.5 text-2xs font-bold text-fg">
-                    #{run.beat}
-                  </span>
-                  <span className="mono text-2xs text-dim">
-                    {run.trigger === 'manual' ? '手动' : run.trigger === 'chat' ? '对话委托' : '心跳'}
-                    <span className="mx-1.5">·</span>
-                    {fmtDay(run.startedAt)}
-                    <span className="mx-1.5">·</span>
-                    {fmtDur(run.startedAt, run.finishedAt)}
-                    <span className="mx-1.5">·</span>
-                    {run.agentCount} 次执行
-                    {run.note ? ` · ${run.note}` : ''}
-                  </span>
-                </span>
+              <li key={run.id} className="sys-entry">
+                <div className="sys-entry-head">
+                  <strong>{nameOf(run.agentId)} <span className="sys-meta">#{run.beat}</span></strong>
+                  <RunStatus status={run.status} />
+                </div>
+                <p className="sys-meta">
+                  <span>{run.trigger === 'manual' ? '手动' : run.trigger === 'chat' ? '对话委托' : '心跳'}</span>
+                  <span>{fmtDay(run.startedAt)}</span>
+                  <span>{fmtDur(run.startedAt, run.finishedAt)}</span>
+                  <span>{run.agentCount} 次执行</span>
+                </p>
+                {run.note && <p className="sys-meta">{run.note}</p>}
 
                 {execs.length === 0 ? (
-                  <span className="text-2xs text-dim">本批没有执行产出</span>
+                  <p className="sys-meta">本批没有执行产出</p>
                 ) : (
-                  <div className="flex flex-1 flex-wrap items-center gap-1.5">
+                  <div className="sys-execs">
                     {execs.map((r) => (
                       <button
                         key={r.id}
                         type="button"
                         onClick={() => setDetail(r)}
                         title={textPreview(r.error ?? r.output, 300) || '（无结论）'}
-                        className="flex max-w-full items-center gap-2 border border-line px-2.5 py-1.5 text-left transition hover:border-line-strong hover:bg-accent-soft"
+                        className="sys-exec"
                       >
-                        <StatusDot status={r.status} />
-                        <span className="max-w-[180px] truncate text-xs font-medium text-fg">
-                          {r.title ?? '（未知）'}
-                        </span>
-                        <span className="mono shrink-0 text-2xs text-dim">
-                          {fmtDur(r.startedAt, r.finishedAt)}
-                        </span>
-                        {r.edits.length > 0 && <kit.Badge>写库 {r.edits.length}</kit.Badge>}
+                        <span>{r.title ?? '（未知）'}</span>
+                        <RunStatus status={r.status} />
+                        <span className="sys-meta">{fmtDur(r.startedAt, r.finishedAt)}</span>
+                        {r.edits.length > 0 && <span className="sys-label">写库 {r.edits.length}</span>}
                       </button>
                     ))}
                   </div>
                 )}
-              </article>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </kit.Panel>
+      </section>
 
       {detail && <ResultDetail detail={detail} onClose={() => setDetail(null)} />}
 
@@ -235,7 +228,6 @@ const TOOL_SURFACE_LABELS: Record<string, string> = {
  * 不用卡片、不折叠，所有文字都在页面上，可以直接 Ctrl+F 搜。
  */
 function ToolsTab() {
-  const kit = usePageKit()
   const [tools, setTools] = useState<ToolInfoView[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -246,105 +238,94 @@ function ToolsTab() {
   }, [])
 
   if (error) {
-    return <p className="text-sm text-hint">{error}</p>
+    return <p className="sys-error" role="alert">{error}</p>
   }
   if (!tools) {
-    return <p className="text-sm text-hint">载入工具词典…</p>
+    return <p className="sys-empty" role="status">正在加载工具…</p>
   }
 
   return (
-    <article className="flex max-w-[760px] flex-col gap-7 text-sm leading-relaxed text-muted">
-      <header className="flex flex-col gap-1.5">
-        <h2 className="ui-heading text-sm">工具</h2>
-        <p>
-          工具是大模型能亲手做的事，每个工具是一份写死的编程契约：叫什么、干什么、参数怎么给、
-          可出现在哪些工具面。一次调用里模型能看见哪些工具，由「工具面」决定——同一个工具可落在多个面上。
-          新增一个工具就是新增一个工具类，这份清单自动跟着变。
-        </p>
+    <section aria-labelledby="sys-tools-heading">
+      <header className="sys-section-head">
+        <h2 id="sys-tools-heading">工具清单</h2>
+        <span className="sys-label">{tools.length} 个</span>
       </header>
-
-      <section className="flex flex-col">
-        <h3 className="ui-heading text-sm">
-          全部工具
-          <span className="mono ml-2 text-2xs font-normal text-faint">共 {tools.length} 个</span>
-        </h3>
-        <div className="mt-1 flex flex-col divide-y divide-line">
+      {tools.length === 0 ? (
+        <p className="sys-empty">暂无可用工具。</p>
+      ) : (
+        <ul className="sys-list" role="list">
           {tools.map((t) => {
             const required = t.parameters.required ?? []
             const props = Object.entries(t.parameters.properties ?? {})
             return (
-              <div key={t.name} className="flex flex-col gap-1.5 py-3.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <p className="font-mono text-sm font-semibold text-fg">{t.name}</p>
+              <li key={t.name} className="sys-entry">
+                <h3><code>{t.name}</code></h3>
+                <div className="sys-labels">
                   {t.surfaces.map((s) => (
-                    <kit.Badge key={s}>{TOOL_SURFACE_LABELS[s] ?? s}</kit.Badge>
+                    <span key={s} className="sys-label">{TOOL_SURFACE_LABELS[s] ?? s}</span>
                   ))}
-                  {t.writes && <kit.Badge tone="accent">写库</kit.Badge>}
-                  {t.parallelizable && <kit.Badge tone="ok">可并行</kit.Badge>}
-                  {!t.agentsMayCall && <kit.Badge tone="warn">子代理不可调</kit.Badge>}
+                  {t.writes && <span className="sys-label">写库</span>}
+                  {t.parallelizable && <span className="sys-label">可并行</span>}
+                  {!t.agentsMayCall && <span className="sys-label">子代理不可调</span>}
                 </div>
-                <p>{t.description || '—'}</p>
-                <p className="text-hint">参数：{props.length ? '' : '无'}</p>
-                {props.length > 0 && (
-                  <div className="flex flex-col gap-0.5">
+                {t.description && <p className="sys-description">{t.description}</p>}
+                {props.length > 0 ? (
+                  <dl className="sys-parameters" aria-label="参数">
                     {props.map(([name, p]) => (
-                      <p key={name} className="text-hint">
-                        <span className="font-mono text-muted">{name}</span>
-                        {required.includes(name) && <span className="ml-1">（必填）</span>}
-                        {p.type ? ` · ${p.type}` : ''}
-                        {p.description ? ` — ${p.description}` : ''}
-                      </p>
+                      <div key={name}>
+                        <dt><code>{name}</code>{required.includes(name) && '（必填）'}</dt>
+                        <dd>{[p.type, p.description].filter(Boolean).join(' · ') || '—'}</dd>
+                      </div>
                     ))}
-                  </div>
+                  </dl>
+                ) : (
+                  <p className="sys-meta">无参数</p>
                 )}
-              </div>
+              </li>
             )
           })}
-        </div>
-      </section>
-    </article>
+        </ul>
+      )}
+    </section>
   )
 }
 
 /* ---------------- 页面 ---------------- */
 
-type SysView = 'dashboard' | 'tools' | 'memory' | 'dev'
-
-const SYS_TABS: { key: SysView; label: string }[] = [
+const SYS_TABS = [
   { key: 'dashboard', label: '观测台' },
   { key: 'tools', label: '工具' },
-  { key: 'memory', label: '记忆' },
   { key: 'dev', label: '开发者选项' },
-]
+] as const
+
+type SysView = (typeof SYS_TABS)[number]['key']
 
 /** 全局系统页：观测台 / 工具 / 开发者选项，内部标签切换。 */
 export default function SystemPanel() {
   const [view, setView] = useState<SysView>('dashboard')
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex w-fit shrink-0 flex-wrap border border-line-strong">
+    <div className="sys-panel">
+      <div className="sys-tabs" role="group" aria-label="系统视图">
         {SYS_TABS.map((t) => (
-          <ViewTab key={t.key} active={view === t.key} onClick={() => setView(t.key)}>
+          <button
+            key={t.key}
+            id={`sys-tab-${t.key}`}
+            type="button"
+            aria-pressed={view === t.key}
+            aria-controls="sys-content"
+            onClick={() => setView(t.key)}
+          >
             {t.label}
-          </ViewTab>
+          </button>
         ))}
       </div>
 
-      {view === 'dashboard' && <DashboardTab />}
-      {view === 'tools' && <ToolsTab />}
-      {view === 'memory' && <MemoryPanel />}
-      {view === 'dev' && (
-        <div className="flex flex-col gap-4">
-          <div className="min-w-0">
-            <h2 className="ui-heading text-md">开发者选项</h2>
-            <p className="mt-1 max-w-[760px] text-xs leading-relaxed text-muted">
-              开发者选项：文档→图谱流水线上的自动环节所用的提示词。
-            </p>
-          </div>
-          <PromptsPanel />
-        </div>
-      )}
+      <section id="sys-content" aria-labelledby={`sys-tab-${view}`}>
+        {view === 'dashboard' && <DashboardTab />}
+        {view === 'tools' && <ToolsTab />}
+        {view === 'dev' && <div className="sys-dev"><PromptsPanel /></div>}
+      </section>
     </div>
   )
 }

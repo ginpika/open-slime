@@ -23,6 +23,13 @@ public class MemoryIngestStore {
     @Transactional
     public String enqueue(MemoryExec exec,String text,String refs,boolean explicit,long idleMs) {
         if(!cc.ginpika.minis.ai.memory.MemoryResetBoundary.read(jdbc).allows(refs)) return "";
+        for (String ref : MemoryEvidence.references(refs)) {
+            if (Boolean.TRUE.equals(jdbc.query("""
+                    SELECT 1 FROM memory_retracted_source WHERE ref = ?
+                    """, rs -> { return rs.next(); }, ref))) {
+                return "";
+            }
+        }
         String group=MemoryGraphStore.digest(MemoryGraphStore.encode(Arrays.asList(exec.userId(),exec.agentOrBuiltin(),exec.projectId(),exec.sessionId(),exec.identityOrInferred())));
         String source="ingest:"+MemoryGraphStore.digest(group+MemoryEvidence.references(refs).stream().sorted().toList()+text);
         String episode=graph.episode(source,text,exec,System.currentTimeMillis());

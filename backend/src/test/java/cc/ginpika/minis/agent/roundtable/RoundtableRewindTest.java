@@ -137,7 +137,8 @@ class RoundtableRewindTest {
         var row = mock(cc.ginpika.minis.agent.chat.store.HubSessionStore.HubRow.class);
         when(row.mode()).thenReturn("multi-agent");
         when(sessions.findById("session")).thenReturn(java.util.Optional.of(row));
-        var service = new cc.ginpika.minis.agent.chat.ChatSessionService(sessions, null, null, null, null, null, null, null, null);
+        var service = new cc.ginpika.minis.agent.chat.ChatSessionService(
+                sessions, null, null, null, null, null, null, null, null, null);
         assertEquals(409, assertThrows(ResponseStatusException.class, () -> service.rewind("session", 1L, null)).getStatusCode().value());
     }
 

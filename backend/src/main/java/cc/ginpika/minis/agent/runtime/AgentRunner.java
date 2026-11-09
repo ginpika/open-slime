@@ -10,6 +10,7 @@ import cc.ginpika.minis.ai.core.tool.ToolResult;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
 import cc.ginpika.minis.ai.memory.MemoryIngest;
 import cc.ginpika.minis.ai.memory.MemoryWriter;
+import cc.ginpika.minis.ai.runtime.ModelLoop;
 import cc.ginpika.minis.config.ModelTarget;
 import cc.ginpika.minis.config.SettingsService;
 import cc.ginpika.minis.stats.TokenUsageService;
@@ -115,15 +116,24 @@ public class AgentRunner {
 
     /** 跑一次已登记的执行（execId 由 {@link #openExec} 给出）：多轮工具往返 → 落结论与过程 */
     public Outcome run(Request req, long execId) {
+        return runScopedToTask(req, execId, null);
+    }
+
+    /** A scoped delegation supplies its own request budget and retains its output as a task artifact. */
+    public Outcome runDelegated(Request req, long execId, ModelLoop.RequestPreparation preparation) {
+        return runScopedToTask(req, execId, java.util.Objects.requireNonNull(preparation));
+    }
+
+    private Outcome runScopedToTask(Request req, long execId, ModelLoop.RequestPreparation preparation) {
         var parent = cc.ginpika.minis.ai.core.MemoryScopeCtx.get();
-        if (parent == null) { return runScoped(req, execId); }
+        if (parent == null) { return runScoped(req, execId, preparation); }
         var scope = new cc.ginpika.minis.ai.core.MemoryExec(parent.userId(), parent.agentId(),
                 parent.projectId(), parent.sessionId(), execId, parent.surface(), false,
                 "task:" + execId, parent.identityOrInferred());
-        return cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope, () -> runScoped(req, execId));
+        return cc.ginpika.minis.ai.core.MemoryScopeCtx.run(scope, () -> runScoped(req, execId, preparation));
     }
 
-    private Outcome runScoped(Request req, long execId) {
+    private Outcome runScoped(Request req, long execId, ModelLoop.RequestPreparation preparation) {
         ModelTarget target = settings.resolveChatModel(req.modelId());
         if (!target.configured()) {
             execs.finishExec(execId, "failed", null, null, null, "LLM 未配置");
@@ -163,7 +173,7 @@ public class AgentRunner {
                         return req.dispatch().parallelizable(name);
                     }
                 },
-                listener, state));
+                listener, state, null, preparation));
 
         if (result.end() != AgentRuntime.End.ANSWERED) {
             execs.finishExec(execId, "failed", state.reasoning(),
@@ -172,10 +182,13 @@ public class AgentRunner {
             return new Outcome(execId, "failed", null, "未产出结论");
         }
         String output = result.content();
+        artifact(execId, req.title(), output);
         execs.finishExec(execId, "done", state.reasoning(),
                 ChatTraceCodec.writeTrace(om, state.trace()),
                 ChatTraceCodec.writeRounds(om, state.toolRounds()), null);
-        artifact(execId, req.title(), output);
+        if (preparation != null) {
+            return new Outcome(execId, "done", output, null);
+        }
         memory.onExecDone(execId, req.kind(), req.title(), output);
         /* memory-v6 §7.3：事件之外再提炼一次条目——子代理 / 心跳 / 职责的结论因此能进长期记忆
            （作用域由执行入口圈定；没有作用域则自动跳过，见 MemoryIngest#tapExec） */

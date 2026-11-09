@@ -1,5 +1,7 @@
 package cc.ginpika.minis.agent.chat;
 
+import java.util.List;
+
 /**
  * 一批子代理全部跑完（该批收批）时发出的事件。
  *
@@ -10,7 +12,11 @@ package cc.ginpika.minis.agent.chat;
  *
  * @param hubId 结论投回的会话
  * @param runId 该批的批次 id（{@code heartbeat_run.id}）：总结方据此取回这一批各次执行的成败，好如实交代谁失败
- * @param count 这一批真正跑起来的子代理数（直接写进总结指令，让模型知道要覆盖几件）
+ * @param execIds 这一批真正跑起来的子代理执行 id
+ * @param contextScoped 该批次使用单聊作用域试点
  */
-public record SubagentBatchDoneEvent(String hubId, String runId, int count) {
+public record SubagentBatchDoneEvent(String hubId, String runId, List<Long> execIds, boolean contextScoped) {
+    public SubagentBatchDoneEvent(String hubId, String runId, List<Long> execIds) {
+        this(hubId, runId, execIds, false);
+    }
 }

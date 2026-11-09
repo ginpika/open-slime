@@ -1,6 +1,7 @@
 package cc.ginpika.minis.agent.context;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -34,5 +35,22 @@ public interface ContextProvider {
     /** 插在 system 之后的消息；返回空列表表示本源不贡献消息（默认无） */
     default List<JsonNode> messages(ContextRequest req) {
         return List.of();
+    }
+
+    /** Compatibility path for providers whose original system suffix may contain required constraints. */
+    default List<ContextFragment> fragments(ContextRequest req) {
+        List<ContextFragment> fragments = new ArrayList<>();
+        String source = getClass().getSimpleName();
+        String suffix = systemSuffix(req);
+        if (suffix != null && !suffix.isBlank()) {
+            fragments.add(ContextFragment.system(ContextFragment.Layer.TASK, source,
+                    ContextFragment.Trust.INSTRUCTION, suffix));
+        }
+        List<JsonNode> messages = messages(req);
+        if (!messages.isEmpty()) {
+            fragments.add(new ContextFragment(ContextFragment.Layer.WORK, source,
+                    ContextFragment.Trust.DATA, List.of(), messages));
+        }
+        return fragments;
     }
 }

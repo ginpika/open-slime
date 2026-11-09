@@ -76,6 +76,22 @@ public class TaskStore {
                 Long.class, sessionId, fromTime);
     }
 
+    /** Rewind discards delegated sources owned by the same session and rooted in its removed turns. */
+    public List<Long> idsWithDelegates(String sessionId, List<Long> taskIds) {
+        if (taskIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.queryForList("""
+                WITH RECURSIVE discarded(id) AS (
+                    SELECT value FROM json_each(?)
+                    UNION
+                    SELECT child.id FROM task child JOIN discarded parent ON child.parent_id = parent.id
+                    WHERE child.session_id = ? AND child.kind = ?
+                )
+                SELECT id FROM discarded ORDER BY id
+                """, Long.class, taskIds.toString(), sessionId, KIND_SUBAGENT);
+    }
+
     /**
      * 建一条任务（pending），返回任务 id。
      *
@@ -154,7 +170,22 @@ public class TaskStore {
 
     /** 执行来源 → 任务种类：心跳主会话也是「编制」跑出来的一次，故与计划同属 plan */
     private static String taskKindOf(String origin) {
+        if (ExecStore.KIND_AGENT_MESSAGE.equals(origin)) {
+            return ExecStore.KIND_AGENT_MESSAGE;
+        }
         return ExecStore.KIND_AGENT.equals(origin) ? KIND_SUBAGENT : KIND_PLAN;
+    }
+
+    /** Initial assembly may follow task registration when request material depends on the execution identity. */
+    public void recordExecContext(long id, String context) {
+        jdbc.update("UPDATE task SET context = ? WHERE id = ? AND status = 'running'", context, id);
+    }
+
+    /** 根据来源会话与原始请求标识匹配已经受理的执行。 */
+    public Optional<Long> executionId(String origin, String sessionId, String payload) {
+        return jdbc.query("SELECT id FROM task WHERE session_id = ? AND origin = ? AND payload = ? "
+                        + "ORDER BY id DESC LIMIT 1", (rs, n) -> rs.getLong(1), sessionId, origin, payload)
+                .stream().findFirst();
     }
 
     /** 任务收尾：跑出结论是 done，没跑出（含抛错）是 failed */

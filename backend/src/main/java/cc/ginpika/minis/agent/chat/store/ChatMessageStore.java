@@ -17,6 +17,12 @@ public class ChatMessageStore {
 
     /** 消息形态：子代理结论气泡（前端只渲染标题+摘要，点开看全文；元信息见 message.meta） */
     public static final String KIND_SUBAGENT = "subagent";
+    public static final String KIND_SUBAGENT_BATCH = "subagent_batch";
+    public static final String KIND_AGENT_MESSAGE = "agent_message";
+    public static final String KIND_AGENT_MESSAGE_SENT = "agent_message_sent";
+    public static final String KIND_STEER = "steer";
+    public static final String KIND_STEER_REPLY = "steer_reply";
+    public static final String STEER_TURN_PREFIX = "chat-turn:";
 
     public record MessageRow(Long id, String sessionId, String role, String content, String reasoning,
                              String trace, String toolRounds, String kind, String meta,
@@ -27,6 +33,9 @@ public class ChatMessageStore {
     public record RecentRow(String sessionTitle, String content, long createdAt) {
     }
 
+    public record SubagentReportRow(long id, String meta, boolean retracted) {
+    }
+
     private final JdbcTemplate jdbc;
 
     public ChatMessageStore(JdbcTemplate jdbc) {
@@ -35,7 +44,7 @@ public class ChatMessageStore {
 
     /** 落一条消息，返回自增 id（回退某条提问时前端要用它定位删除区间）；
      *  reasoning（思维链纯文本）/trace（思考分段 JSON）/toolRounds（工具轮原生消息 JSON）
-     *  仅 assistant 有；kind/meta（消息形态与元信息）仅子代理结论气泡有，普通对话传 null */
+     *  仅 assistant 有；kind/meta 标识子代理投递或同轮补充消息。流式对话也可用 meta 关联同一轮的首尾。 */
     public long insert(String sessionId, String role, String content, String reasoning, String trace,
                        String toolRounds, String kind, String meta) {
         GeneratedKeyHolder key = new GeneratedKeyHolder();
@@ -64,6 +73,21 @@ public class ChatMessageStore {
                 "SELECT id, session_id, role, content, reasoning, trace, tool_rounds, kind, meta, "
                         + "created_at FROM chat_message WHERE session_id = ? ORDER BY id",
                 ChatMessageStore::map, sessionId);
+    }
+
+    /** 批次合成只读取已投递报告的元信息。 */
+    public SubagentReportRow subagentReport(String sessionId, long execId) {
+        List<SubagentReportRow> rows = jdbc.query("""
+                SELECT id, meta, EXISTS (
+                    SELECT 1 FROM memory_retracted_source r WHERE r.ref = 'chat_message:' || m.id
+                ) AS retracted
+                FROM chat_message m WHERE session_id = ? AND kind = ?
+                    AND json_extract(CASE WHEN json_valid(meta) THEN meta END, '$.execId') = ?
+                ORDER BY id DESC LIMIT 1
+                """, (rs, n) -> new SubagentReportRow(rs.getLong("id"), rs.getString("meta"),
+                        rs.getBoolean("retracted")),
+                sessionId, KIND_SUBAGENT, execId);
+        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     /** 首页侧栏预览：只读取首页可见会话的最后一条正文，不加载转录，也不改未读状态。 */
@@ -111,6 +135,7 @@ public class ChatMessageStore {
     /**
      * 把 fromSession 中 id ≤ upToId 的消息整行复制进 toSession（「分支」用）：
      * 正文 / 思维链 / 分段 / 工具往返 / 形态元信息 / 执行留痕一并照搬，时间戳原样。
+     * Agent 消息发送标签只属于发出它的会话。
      * 按 id 升序插入，新行的自增 id 随之保持同一先后（读侧按 id 排序即得原顺序）。
      *
      * @return 复制的行数
@@ -122,8 +147,9 @@ public class ChatMessageStore {
                         + "created_at) "
                         + "SELECT ?, role, content, reasoning, trace, tool_rounds, kind, meta, "
                         + "topic_id, peer_id, peer_name, context, event_seq, event_kind, created_at "
-                        + "FROM chat_message WHERE session_id = ? AND id <= ? ORDER BY id",
-                toSession, fromSession, upToId);
+                        + "FROM chat_message WHERE session_id = ? AND id <= ? "
+                        + "AND (kind IS NULL OR kind <> ?) AND (event_kind IS NULL OR event_kind <> ?) ORDER BY id",
+                toSession, fromSession, upToId, KIND_AGENT_MESSAGE_SENT, KIND_AGENT_MESSAGE_SENT);
     }
 
     /** 删除 fromId（含）及其后的消息：会话回退到这条之前，返回删除行数 */

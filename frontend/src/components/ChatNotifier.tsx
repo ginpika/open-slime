@@ -164,8 +164,7 @@ export default function ChatNotifier() {
   useEffect(
     () =>
       subscribeSessionEvents((e) => {
-        /* todo（个人待办清单更新）由会话页的 TODO 卡片自行消费，不弹通知气泡 */
-        if (e.kind === 'todo') return
+        if (e.kind !== 'delivered' && e.kind !== 'answered') return
         if (e.sessionId === getActiveChatSession()) return
         pushNotice(e.sessionId, e.kind, e.title || '未命名会话')
       }),

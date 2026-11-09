@@ -5,6 +5,9 @@
  */
 
 import { AppIcon } from '../components/AppIcon'
+import AgentMessageReceipt from '../components/AgentMessageReceipt'
+import { AGENT_MESSAGE_SENT } from '../components/settledChat'
+import { subscribeSessionEvents } from '../components/sessionEvents'
 import {
   memo,
   useCallback,
@@ -512,12 +515,16 @@ function RoundtableBoard({
     }
     const visible = () => { if (!document.hidden) void refresh() }
     const reconnect = () => { void refresh() }
+    const unsubscribe = subscribeSessionEvents(event => {
+      if (event.kind === AGENT_MESSAGE_SENT && event.sessionId === sessionId) void refresh()
+    })
     timer = setTimeout(refresh, 3000)
     window.addEventListener('online', reconnect)
     window.addEventListener('focus', visible)
     document.addEventListener('visibilitychange', visible)
     return () => {
       alive = false; clearTimeout(timer)
+      unsubscribe()
       window.removeEventListener('online', reconnect)
       window.removeEventListener('focus', visible)
       document.removeEventListener('visibilitychange', visible)
@@ -807,7 +814,7 @@ function RoundtableBoard({
   const feedItems = useMemo<FeedItem[]>(() => {
     const items: FeedItem[] = []
     const issueByMessage = new Map(taskIssues.map(i => [i.messageId, i]))
-    const source = reading && hideCot && !allowContext ? readingMessages(messages, new Set(['issue_open', 'issue_resolved', 'task_context', 'issue_context', 'runtime_paused', 'ask_user'])) : messages
+    const source = reading && hideCot && !allowContext ? readingMessages(messages, new Set(['issue_open', 'issue_resolved', 'task_context', 'issue_context', 'runtime_paused', 'ask_user', AGENT_MESSAGE_SENT])) : messages
     for (const m of source) {
       const issue = !location.issueId ? issueByMessage.get(m.id) : undefined
       if (issue) { items.push({ key: 'issue:' + issue.id, kind: 'issue', issue }); continue }
@@ -2005,6 +2012,9 @@ const MessageItem = memo(function MessageItem({
   onRewind: (m: MaMessage) => void
   rewindDisabled: boolean
 }) {
+  if (msg.kind === AGENT_MESSAGE_SENT) {
+    return <AgentMessageReceipt sessionId={msg.sessionId} content={msg.content} peers={peerById} />
+  }
   if (msg.role === 'event') {
     return (
       <EventLine

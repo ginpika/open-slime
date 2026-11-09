@@ -3,6 +3,7 @@ package cc.ginpika.minis.agent.runtime;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -36,6 +37,9 @@ public class TodoStore {
     public record TodoItem(int seq, String content, String status, String note) {
     }
 
+    /** A proposed completion refers to a specific version of one checklist row. */
+    public record CompletionTarget(long id, long updatedAt, String content) {}
+
     private final JdbcTemplate jdbc;
 
     public TodoStore(JdbcTemplate jdbc) {
@@ -66,6 +70,31 @@ public class TodoStore {
     public List<TodoItem> list(String sessionId, String owner) {
         return jdbc.query("SELECT seq, content, status, note FROM chat_todo "
                 + "WHERE session_id = ? AND owner IS ? ORDER BY seq", TodoStore::map, sessionId, owner);
+    }
+
+    public Optional<CompletionTarget> pendingAt(String sessionId, String owner, int item) {
+        return jdbc.query("""
+                SELECT id, updated_at, content FROM (
+                    SELECT id, updated_at, content, status FROM chat_todo
+                    WHERE session_id = ? AND owner = ? ORDER BY seq, id LIMIT 1 OFFSET ?
+                ) WHERE status = 'pending'
+                """, (rs, n) -> new CompletionTarget(rs.getLong("id"), rs.getLong("updated_at"), rs.getString("content")),
+                sessionId, owner, item - 1).stream().findFirst();
+    }
+
+    private static final String PENDING_TARGET = """
+            WHERE session_id = ? AND owner = ? AND id = ? AND updated_at = ? AND content = ? AND status = 'pending'
+            """;
+
+    public boolean matchesPending(String sessionId, String owner, CompletionTarget target) {
+        return Boolean.TRUE.equals(jdbc.query("SELECT 1 FROM chat_todo " + PENDING_TARGET,
+                rs -> { return rs.next(); }, sessionId, owner, target.id(), target.updatedAt(), target.content()));
+    }
+
+    public boolean completePending(String sessionId, String owner, CompletionTarget target, String note, long now) {
+        return jdbc.update("""
+                UPDATE chat_todo SET status = 'done', note = COALESCE(?, note), updated_at = MAX(updated_at + 1, ?)
+                """ + PENDING_TARGET, note, now, sessionId, owner, target.id(), target.updatedAt(), target.content()) == 1;
     }
 
     /** 删除会话时清掉它名下所有 Agent 的清单（会话没了，清单不该留成孤儿行） */

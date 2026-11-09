@@ -3,10 +3,11 @@ import { ModelBrandIcon } from '../components/ModelBrandIcon'
 import SpeechButton from '../components/SpeechButton'
 import ChatMarkdown from '../components/ChatMarkdown'
 import UserQuestionCard from '../components/UserQuestionCard'
-import { questionContent, userQuestion } from '../components/userQuestion'
+import ChatTodoApprovalCard, { useChatTodoApprovals } from '../components/ChatTodoApprovalCard'
+import { questionTurn } from '../components/userQuestion'
 import ConversationBrowser from '../components/ConversationBrowser'
 import { OrbitalSeal } from '../shell/AstrolabeShell'
-import { backfillSettledReply } from '../components/settledChat'
+import { backfillSettledReply, isBackgroundReply, mergeLiveChat } from '../components/settledChat'
 import { getTtsSettings } from '../api/client'
 import {
   forwardRef,
@@ -43,6 +44,8 @@ import {
   sessionRawContext,
   sessionTodos,
   updateSessionConfig,
+  type ChatTodoApproval,
+  type ChatTodoDecision,
   type MaPeer,
   type Project,
   type PromptsView,
@@ -109,36 +112,14 @@ function toChatMsgs(rows: SessionMessage[]): ChatMsg[] {
   }))
 }
 
-/** 运行时快照 → 尾部两条消息（本次提问 + 回答）；running 决定正文按纯文本还是 markdown 渲染 */
-function livePair(live: LiveChat): ChatMsg[] {
-  return [
-    { role: 'user', content: live.userText, id: live.userMessageId ?? undefined },
-    {
-      role: 'assistant',
-      content: live.content,
-      reasoning: live.reasoning || undefined,
-      trace: live.trace.length > 0 ? live.trace : undefined,
-      streaming: live.running,
-    },
-  ]
-}
-
-/** 生成中重进会话时历史里已带上本次提问：尾部若有它，替运行时快照去掉这条重复（只影响展示副本） */
-function dropTrailingDupUser(history: ChatMsg[], live: LiveChat): ChatMsg[] {
-  const last = history[history.length - 1]
-  if (!last || last.role !== 'user') return history
-  const same =
-    live.userMessageId !== null ? last.id === live.userMessageId : last.content === live.userText
-  return same ? history.slice(0, -1) : history
-}
-
 /** 生成落定后把运行时快照并回消息列表：此后以列表（含最终答复）为准。
  *  失败且一个字都没产出时丢掉空回答，只留提问（便于回退重发），与逐 token 时代的收尾一致 */
 function commitLive(history: ChatMsg[], live: LiveChat): ChatMsg[] {
-  const pair = livePair(live).filter(
-    (m) => m.role === 'user' || !!m.content || !!m.reasoning || !!m.trace?.length,
-  )
-  return [...dropTrailingDupUser(history, live), ...pair]
+  const merged = mergeLiveChat(history, live)
+  const reply = merged.at(-1)
+  return merged !== history && reply && !reply.content && !reply.reasoning && !reply.trace?.length
+    ? merged.slice(0, -1)
+    : merged
 }
 
 /** 上下文上限默认值（token 数）：所选模型未配置上下文窗口时兜底（与后端 LlmProps 默认一致） */
@@ -435,6 +416,9 @@ const AssistantRow = memo(function AssistantRow({
   speechEnabled,
   canAnswer,
   onAnswer,
+  approvals,
+  approvalBusy,
+  onApprovalDecision,
 }: {
   msg: ChatMsg
   showCot: boolean
@@ -446,21 +430,29 @@ const AssistantRow = memo(function AssistantRow({
   speechEnabled: boolean
   canAnswer: boolean
   onAnswer: (text: string) => Promise<void>
+  approvals?: ChatTodoApproval[]
+  approvalBusy: boolean
+  onApprovalDecision: (operationId: number, decision: ChatTodoDecision) => Promise<void>
 }) {
-  const question = userQuestion(msg)
+  const turn = questionTurn(msg)
   return (
     <div className="group break-words border-l border-line pl-4 text-md leading-relaxed text-fg [content-visibility:auto] [contain-intrinsic-size:auto_300px]">
       {/* 正在流式生成的这条默认展开跟随输出；历史回放的默认收起 */}
       {showCot && <TraceBlocks msg={msg} live={!!msg.streaming} showRounds={showRounds} />}
-      {question ? <>
-        <UserQuestionCard key={JSON.stringify(question)} question={question} active={canAnswer} onAnswer={onAnswer} />
-        <ChatMarkdown content={msg.content.slice(questionContent(question).length)} />
+      {turn ? <>
+        {turn.before && <ChatMarkdown content={turn.before} />}
+        <UserQuestionCard key={JSON.stringify(turn.question)} question={turn.question} active={canAnswer} onAnswer={onAnswer} />
+        {turn.after && <ChatMarkdown content={turn.after} />}
       </> : msg.streaming ? (
         /* 流式生成中按纯文本渲染：逐 token 期间不解析 markdown，结束后再切正式渲染 */
         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
       ) : (
         <ChatMarkdown content={msg.content} />
       )}
+      {approvals?.map(approval => (
+        <ChatTodoApprovalCard key={approval.operationId} approval={approval} busy={approvalBusy}
+          onDecision={onApprovalDecision} />
+      ))}
       {/* 回复下方的一排操作按钮（悬停浮现，与提问气泡的「回退」同一套克制手感）：
           目前只有「分支」——以到这里为止的内容新建一个副本会话 */}
       {canBranch && (
@@ -684,14 +676,15 @@ export default function Home({ connErr }: Props) {
      它跨页面挂载存活，所以离开会话/切到别的页再回来，仍能续看推理进度、续点「停止」 */
   const live = useLiveChat(sessionId)
   const busy = live?.running === true
+  const { byReply: approvalsByReply, decide: decideTodoApproval, refresh: refreshTodoApprovals } = useChatTodoApprovals(sessionId)
 
-  /** 消息列表的展示副本：历史 + 本次生成中的两条（提问 + 流式回答）。
+  /** 消息列表的展示副本：历史 + 本次生成的提问、补充消息和流式回答。
    *  生成落定后由下面的效应并回 msgs 并清掉快照，此后以 msgs 为准 */
   const view = useMemo<ChatMsg[]>(
-    () => (live ? [...dropTrailingDupUser(msgs, live), ...livePair(live)] : msgs),
+    () => (live ? mergeLiveChat(msgs, live) : msgs),
     [msgs, live],
   )
-  const lastConversationIndex = view.findLastIndex(message => message.kind !== 'subagent')
+  const lastConversationIndex = view.findLastIndex(message => !isBackgroundReply(message))
 
   /** 正在弹窗查看完整结论的子代理气泡（null=未打开）：气泡只显示标题+摘要，全文在这里看 */
   const [reportView, setReportView] = useState<ChatMsg | null>(null)
@@ -724,6 +717,13 @@ export default function Home({ connErr }: Props) {
   const [projectSaving, setProjectSaving] = useState(false)
   const activeSessionRef = useRef(sessionId)
   useEffect(() => { activeSessionRef.current = sessionId }, [sessionId])
+  const onApprovalDecision = useCallback(async (operationId: number, decision: ChatTodoDecision) => {
+    await decideTodoApproval(operationId, decision)
+    if (sessionId === null) return
+    void sessionTodos(sessionId).then(rows => {
+      if (activeSessionRef.current === sessionId) setTodos(rows)
+    }).catch(() => { /* 会话事件或下一轮结束时再刷新。 */ })
+  }, [decideTodoApproval, sessionId])
   /** 输入框左侧「…」菜单：向上弹出，切换模型 / 提示词 / CoT 显示 */
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -967,14 +967,19 @@ export default function Home({ connErr }: Props) {
   /* 生成中 write_todos 一落库，后端即推 kind=todo：这条订阅不受 busy 限制，够即时把卡片刷成最新 */
   useEffect(() => {
     if (sessionId === null) return
-    return subscribeSessionEvents((e) => {
+    let alive = true
+    const unsubscribe = subscribeSessionEvents((e) => {
       if (e.sessionId !== sessionId || e.kind !== 'todo') return
       void sessionTodos(sessionId)
-        .then(setTodos)
+        .then(rows => { if (alive) setTodos(rows) })
         .catch(() => {
           /* 静默：下一轮事件或生成结束时兜底 */
         })
     })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
   }, [sessionId])
 
   /* 对话页滚轮只作用于消息列表：内容不足一屏或已到边界时不再外溢回搜索页 */
@@ -1164,6 +1169,7 @@ export default function Home({ connErr }: Props) {
         showCot: cfg.showCot ?? null,
         showRounds: cfg.showRounds ?? null,
       })
+      if (cfg.agentId != null) refreshTodoApprovals(sid)
     } catch (e) {
       const msg = errorText(e)
       if (msg !== null) setToast(`会话设置保存失败：${msg}`)
@@ -1358,6 +1364,7 @@ export default function Home({ connErr }: Props) {
       ? await organizeSessionProject(sessionId, choice)
       : await createProject({ name: choice.name, kind: choice.kind, note: choice.note })
     setProjectId(p.id)
+    if (sessionId) refreshTodoApprovals(sessionId)
     setProjects(await listProjects().then(list => list.filter(item => item.status === 'active')))
     await refreshSessions()
     setToast(`已绑定项目「${p.name}」，可在新会话中继续`)
@@ -1367,7 +1374,10 @@ export default function Home({ connErr }: Props) {
     if (busy || projectSaving) return
     setProjectSaving(true)
     try {
-      if (sessionId) await bindSessionProject(sessionId, next || null)
+      if (sessionId) {
+        await bindSessionProject(sessionId, next || null)
+        refreshTodoApprovals(sessionId)
+      }
       setProjectId(next)
       await refreshSessions()
     } catch (e) {
@@ -1448,6 +1458,7 @@ export default function Home({ connErr }: Props) {
       try {
         /* 有落库 id 用 id 定位；发送失败没拿到 id 时后端按 keep（保留前 index 条）兜底 */
         await rewindSession(sessionId, { messageId: target.id ?? null, keep: index })
+        refreshTodoApprovals(sessionId)
       } catch (e) {
         const msg = errorText(e)
         if (msg !== null) setToast(`回退失败：${msg}`)
@@ -1827,6 +1838,9 @@ export default function Home({ connErr }: Props) {
                     speechEnabled={speechEnabled}
                     canAnswer={!busy && !live?.error && i === lastConversationIndex}
                     onAnswer={send}
+                    approvals={m.id == null ? undefined : approvalsByReply.get(m.id)}
+                    approvalBusy={busy || projectSaving}
+                    onApprovalDecision={onApprovalDecision}
                   />
                 ),
               )}

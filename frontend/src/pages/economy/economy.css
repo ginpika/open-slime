@@ -137,6 +137,26 @@
 .eco-record-heading { margin:1.25rem 0; }
 .eco-record-heading h3 { font-size:1.5rem; margin:.5rem 0; overflow-wrap:anywhere; }
 .eco-database-empty { min-height:16rem; }
+/* 经济起始页骨架：原先借自 knowledge.css，知识起始页改版后在此独立维护。 */
+.economy-start { width:100%; max-width:62rem; margin:0 auto; padding:clamp(2rem,5vw,4.5rem) clamp(0rem,2vw,1.5rem) 3rem; color:var(--c-fg); }
+.economy-start .knowledge-start__intro { margin-bottom:3rem; }
+.economy-start .knowledge-start__eyebrow { display:inline-flex; align-items:center; gap:.625rem; font-size:.875rem; line-height:1.5; }
+.economy-start .knowledge-start__eyebrow svg { width:1.25rem; height:1.25rem; }
+.economy-start .knowledge-start__intro h1 { margin:1rem 0 .75rem; font-size:2rem; line-height:1.25; }
+.economy-start .knowledge-start__intro p { max-width:36rem; color:var(--c-fg-2); font-size:1rem; line-height:1.625; }
+.economy-start .knowledge-start__section + .knowledge-start__section { margin-top:2.5rem; }
+.economy-start .knowledge-start__heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:.5rem 1rem; margin-bottom:1rem; }
+.economy-start .knowledge-start__heading h2 { font-size:1.25rem; line-height:1.5; }
+.economy-start .knowledge-start__heading p { color:var(--c-fg-2); font-size:.875rem; line-height:1.5; }
+.economy-start .knowledge-start__actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+.economy-start .knowledge-entry { display:flex; min-width:0; flex-direction:column; align-items:flex-start; padding:1.5rem; border:1px solid var(--c-line-strong); border-radius:var(--ui-r-lg); background:var(--ui-card-fill,var(--c-bg)); color:var(--c-fg); text-decoration:none; overflow-wrap:anywhere; transition:border-color .15s,background-color .15s; }
+.economy-start .knowledge-entry:hover { border-color:var(--c-fg); background:var(--c-surface-container-low,var(--c-bg)); }
+.economy-start .knowledge-entry:focus-visible { outline:2px solid var(--c-fg); outline-offset:4px; }
+.economy-start .knowledge-entry__icon { display:flex; flex-shrink:0; align-items:center; justify-content:center; width:2.75rem; height:2.75rem; border:1px solid var(--c-line); border-radius:var(--ui-r-md); background:var(--c-surface-container-low,var(--c-bg)); }
+.economy-start .knowledge-entry__icon svg { width:1.375rem; height:1.375rem; }
+.economy-start .knowledge-entry h3 { margin-top:1.25rem; font-size:1.125rem; line-height:1.5; }
+.economy-start .knowledge-entry p { margin-top:.5rem; color:var(--c-fg-2); font-size:.875rem; line-height:1.625; }
+.economy-start .knowledge-entry__open { display:flex; justify-content:space-between; width:100%; margin-top:auto; padding-top:1.75rem; font-size:.875rem; line-height:1.5; }
 .economy-start__flow { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; margin:0 0 2.5rem; padding:1.25rem 0; border-block:1px solid var(--c-line); list-style:none; }
 .economy-start__flow li { display:flex; align-items:center; gap:.75rem; }
 .economy-start__flow li > span { display:grid; place-items:center; flex-shrink:0; width:1.75rem; height:1.75rem; border:1px solid var(--c-line-strong); border-radius:50%; font-size:.75rem; }
@@ -154,6 +174,12 @@
 }
 @media(max-width:48rem) {
   .eco-select-menu [role=option],.eco-select-menu input,.eco-select-menu [role=status] { font-size:1rem; }
+  .economy-start { padding:2rem 1rem; }
+  .economy-start .knowledge-start__intro { margin-bottom:2rem; }
+  .economy-start .knowledge-start__actions { grid-template-columns:1fr; }
+  .economy-start .knowledge-start__heading p,
+  .economy-start .knowledge-entry p,
+  .economy-start .knowledge-entry__open { font-size:1rem; }
   .economy-start__flow { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .economy-start__flow p,.economy-start__note { font-size:1rem; }
   .eco-page { padding:.75rem; }

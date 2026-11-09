@@ -1,0 +1,53 @@
+.sl-page {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.df__view .sl-page { height: 100%; }
+
+.sl-page__header {
+  display: grid;
+  flex: none;
+  grid-template-columns: minmax(2.25rem, 1fr) minmax(0, auto) minmax(2.25rem, 1fr);
+  align-items: center;
+  gap: .75rem;
+  min-height: 68px;
+  padding: .75rem clamp(1rem, 3vw, 1.875rem);
+}
+
+.sl-page__header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.sl-page__back,
+.sl-page__header .sl-appearance {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border-radius: 7px;
+  color: var(--sl-muted);
+}
+
+.sl-page__back { justify-self: start; }
+.sl-page__back:hover { background: var(--sl-hover); color: var(--sl-fg); }
+.sl-page__header .sl-appearance { justify-self: end; }
+.sl-page__header .sl-appearance:hover { color: var(--sl-fg); }
+.sl-page__header .sl-appearance > span { display: none; }
+
+.sl-page__main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+}

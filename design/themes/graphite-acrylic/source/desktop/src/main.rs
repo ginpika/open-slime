@@ -1276,7 +1276,7 @@ struct SsoSessionUser {
 
 /// 登录 hostid：弹出一个专用窗口，只用来在 hostid 上完成登录（拿到 SSO 会话 cookie）。
 ///
-/// <p>按 docs/hositd-sso-integration-rust.md：客户端把浏览器重定向到 hostid 的登录页
+/// <p>按 docs/integrations/hositd-sso-integration-rust.md：客户端把浏览器重定向到 hostid 的登录页
 /// `{hostid}/sso/login?redirect=xxx`；这里 redirect 指回 hostid 根，登录成功后 hostid 会把
 /// 窗口送回该地址。窗口里注入一段脚本，届时调 `/api/sso/session` 取回用户，
 /// 经同源路径 {@value #SSO_DONE_PATH} 回传给壳（on_navigation 拦截），随即将用户写入配置并关窗。

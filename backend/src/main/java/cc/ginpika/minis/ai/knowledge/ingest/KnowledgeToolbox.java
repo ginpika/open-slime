@@ -3,6 +3,7 @@ package cc.ginpika.minis.ai.knowledge.ingest;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolResult;
 import cc.ginpika.minis.ai.core.tool.NowTool;
+import cc.ginpika.minis.ai.core.tool.RollDiceTool;
 import cc.ginpika.minis.ai.core.util.LlmJson;
 import cc.ginpika.minis.ai.core.tool.doc.SearchVectorChunksTool;
 import cc.ginpika.minis.ai.core.tool.doc.SearchWebTool;
@@ -208,6 +209,7 @@ public class KnowledgeToolbox {
             case ForgetMemoryTool.NAME -> forgetMemoryTool(args);
             case BackfillMemoryVectorsTool.NAME -> backfillMemoryVectorsTool(args);
             case NowTool.NAME -> nowText();
+            case RollDiceTool.NAME -> RollDiceTool.roll(args);
             default -> "未知工具: " + name;
         };
         /* 三路召回（向量 / 图 / 时序事件）的工具调用留一行：查询与回给模型的原始数据原样记下 */

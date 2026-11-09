@@ -25,8 +25,11 @@ import cc.ginpika.minis.ai.core.prompt.dto.PromptDtos;
 import cc.ginpika.minis.ai.core.tool.AiTool;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
+import cc.ginpika.minis.web.sso.SsoInterceptor;
+import cc.ginpika.minis.web.sso.SsoUser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -378,7 +381,8 @@ public class AgentController {
     public List<HeartbeatDtos.ExecView> runExecs(@PathVariable String agentId,
                                                  @PathVariable String id) {
         requirePeer(agentId);
-        return execs.execsByRun(id).stream().map(r -> toExec(r, false, null)).toList();
+        return execs.execsByRun(id).stream().filter(r -> subagent.auditVisibleTo(agentId, r.id()))
+                .map(r -> toExec(r, false, null)).toList();
     }
 
     /** 某一次执行的完整过程：组装出的上下文、思维链、过程分段、写库清单 */
@@ -386,6 +390,7 @@ public class AgentController {
     public HeartbeatDtos.ExecView exec(@PathVariable String agentId, @PathVariable long id) {
         requirePeer(agentId);
         ExecStore.ExecRow row = execs.exec(id)
+                .filter(r -> subagent.auditVisibleTo(agentId, r.id()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "执行记录不存在: " + id));
         return toExecWithEdits(row);
@@ -408,9 +413,10 @@ public class AgentController {
     /** 重跑一条子代理任务（按它留下的 payload 重新派一次），新任务挂为原任务的子任务 */
     @PostMapping("/{agentId}/tasks/{id}/run")
     public HeartbeatDtos.TaskRunView rerunTask(@PathVariable String agentId,
-                                               @PathVariable long id) {
+                                               @PathVariable long id, HttpServletRequest request) {
         requirePeer(agentId);
-        long execId = subagent.rerunTask(id);
+        String actorId = request.getAttribute(SsoInterceptor.ATTR) instanceof SsoUser user ? user.getId() : null;
+        long execId = subagent.rerunTask(agentId, id, actorId);
         if (execId <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "该任务不可重跑: id=" + id);
         }

@@ -18,8 +18,10 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 /**
  * 记忆 M1（向量轴 + 融合读侧）的回归冒烟（内存 SQLite，不起 Spring 上下文）：
@@ -33,7 +35,7 @@ class MemoryRecallTest {
     private static final String STUB_MODEL = "stub-model";
 
     /**
-     * 一次测试的全部件：内存库两张表 + 可翻转行为的 EmbeddingClient 桩
+     * 一次测试的全部件：内存库 + 可翻转行为的 EmbeddingClient 桩
      * （覆写 configured/model/embed，绕开真实配置；embedCalls 供幂等断言）。
      */
     private static final class Fixture {
@@ -48,25 +50,8 @@ class MemoryRecallTest {
         Fixture() {
             SingleConnectionDataSource ds =
                     new SingleConnectionDataSource("jdbc:sqlite::memory:", true);
+            new ResourceDatabasePopulator(new ClassPathResource("schema.sql")).execute(ds);
             jdbc = new JdbcTemplate(ds);
-            jdbc.execute("""
-                    CREATE TABLE memory_event(agent_id TEXT, project_id TEXT, session_id TEXT, task_id INTEGER, identity TEXT,
-                      id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      event_key TEXT NOT NULL UNIQUE,
-                      kind TEXT NOT NULL,
-                      actor TEXT NOT NULL,
-                      title TEXT,
-                      payload TEXT,
-                      ref_type TEXT NOT NULL,
-                      ref_id INTEGER NOT NULL,
-                      created_at INTEGER NOT NULL)""");
-            jdbc.execute("""
-                    CREATE TABLE memory_event_embedding(
-                      event_id INTEGER PRIMARY KEY,
-                      model TEXT NOT NULL,
-                      dim INTEGER NOT NULL,
-                      vec BLOB NOT NULL,
-                      updated_at INTEGER NOT NULL)""");
             events = new MemoryEventStore(jdbc);
             vectors = new MemoryEventEmbeddingStore(jdbc);
         }

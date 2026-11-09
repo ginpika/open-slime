@@ -86,6 +86,15 @@ class ChatUserInputTest {
         assertTrue(rounds.getValue().contains("waiting_for_user"));
         assertTrue(rounds.getValue().contains("question-1"));
     }
+    @Test void narrationBeforeQuestionIsKeptInThePersistedReply() {
+        var narrated = questionCall(args);
+        narrated.put("content", "先说结论：我建议先做界面。");
+        responses(narrated);
+        var reply = runner().chat("s", "帮我做一个功能", null, null);
+        assertEquals("先说结论：我建议先做界面。\n\n" + RequestUserInputTool.content(RequestUserInputTool.read(om, args)),
+                reply.message());
+        assertEquals(1, requests.size());
+    }
     @Test void invalidQuestionReturnsToolErrorAndAllowsCorrection() {
         responses(questionCall("{\"question\":\"？\",\"options\":[]}"), questionCall(args));
         assertTrue(runner().chat("s", "帮我做一个功能", null, null).message().contains("界面"));

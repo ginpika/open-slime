@@ -25,7 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class MemoryEventStore {
     public boolean sourceAllowed(String refType,long refId) {
-        return cc.ginpika.minis.ai.memory.MemoryResetBoundary.read(jdbc).allows("[\""+refType+":"+refId+"\"]");
+        String ref = refType + ":" + refId;
+        return cc.ginpika.minis.ai.memory.MemoryResetBoundary.read(jdbc).allows("[\"" + ref + "\"]")
+                && Boolean.TRUE.equals(jdbc.query("""
+                    SELECT NOT EXISTS(SELECT 1 FROM memory_retracted_source WHERE ref = ?)
+                    """, rs -> rs.next() && rs.getBoolean(1), ref));
     }
 
     /** 一条记忆事件：kind/actor 见 schema.sql 注释，ref 指回正本行 */

@@ -2,6 +2,16 @@ package cc.ginpika.minis.agent.chat;
 
 /** 流式阶段回调（按发生顺序调用）；默认空实现，调用方只覆写关心的阶段 */
 public interface ChatStream {
+    /** The homepage's live transport accepts more user messages before the turn finishes. */
+    default boolean steerable() {
+        return false;
+    }
+
+    /** 发起这条流的已认证用户，用来校验补充消息的发起方。 */
+    default String actorId() {
+        return null;
+    }
+
     /** user 消息已落库：sessionId=实际会话，messageId=该条提问的行 id */
     default void meta(String sessionId, long messageId) {
     }
@@ -16,6 +26,18 @@ public interface ChatStream {
 
     /** 模型请求调用工具：name=工具名，args=调用参数（JSON 字符串） */
     default void tool(String name, String args) {
+    }
+
+    /** 已保存到本轮的补充用户消息。 */
+    default void steer(long messageId, String input) {
+    }
+
+    /** 执行仍在进行时已落库的阶段回复。 */
+    default void interim(long messageId, String content) {
+    }
+
+    /** 丢弃指定模型轮次中已推送的临时正文和思考，保留先前的工作记录。 */
+    default void reset(int round) {
     }
 
     /**

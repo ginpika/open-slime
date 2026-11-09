@@ -59,7 +59,7 @@ class ChatRewindMemoryTest {
                     vectors, new UserProfileService(candidates, revocations, items, vectors), revocations, retractions);
             ingest = new MemoryIngest(new MemoryProps(), extractor,new cc.ginpika.minis.ai.memory.store.MemoryIngestStore(jdbc,new cc.ginpika.minis.ai.memory.graph.MemoryGraphStore(jdbc)));
             service = transactional(new ChatSessionService(sessions, messages, live, mock(TodoService.class),
-                    new ObjectMapper(), turns, ingest, retractions, new TaskCheckpointService(tasks)));
+                    new ObjectMapper(), turns, ingest, retractions, new TaskCheckpointService(tasks), tasks));
         }
 
         @SuppressWarnings("unchecked")
@@ -158,6 +158,40 @@ class ChatRewindMemoryTest {
             assertTrue(f.extractor.extractConversationAsync(f.scope("s", f.task(resent)), "丢弃的习惯", false, f.refs(resent)).get(5, TimeUnit.SECONDS));
             assertEquals(1, f.items.visible(f.scope("s", null), null, 100).size());
             assertEquals(0, f.jdbc.queryForObject("SELECT COUNT(*) FROM memory_revocation", Integer.class));
+        }
+    }
+
+    @Test void rewindRetractsDelegatedTaskSourcesAndFencesQueuedOrLateMemory() throws Exception {
+        try (var f = new Fixture()) {
+            long kept = f.pair("s", "保留轮次");
+            long removed = f.pair("s", "撤回轮次");
+            long keepChild = f.tasks.insert(TaskStore.KIND_SUBAGENT, f.task(kept), "保留", "s", "builtin", null);
+            long child = f.tasks.insert(TaskStore.KIND_SUBAGENT, f.task(removed), "撤回", "s", "builtin", null);
+            long grandchild = f.tasks.insert(TaskStore.KIND_SUBAGENT, child, "继续调查", "s", "builtin", null);
+            f.tasks.addArtifact(child, child, TaskStore.ART_TEXT, "报告", "完整报告", null);
+            String childRef = MemoryEvidence.ref("task", child, "完整报告");
+            String grandchildRef = MemoryEvidence.ref("task", grandchild, "调查详情");
+            long derived = f.item("s", "由子报告派生", childRef);
+            var jobs = new MemoryIngestStore(f.jdbc, new cc.ginpika.minis.ai.memory.graph.MemoryGraphStore(f.jdbc));
+            var childScope = MemoryExec.background(MemorySurface.SUBAGENT, "builtin", null, "s",
+                    grandchild, "task:" + grandchild, MemoryIdentity.REAL);
+            String group = jobs.enqueue(childScope, "调查详情", grandchildRef, false, 0);
+
+            f.service.rewind("s", removed, null);
+
+            assertEquals("完整报告", f.tasks.artifactsOf(child).getFirst().content());
+            assertEquals("revoked", f.items.findById(derived).orElseThrow().status());
+            assertFalse(f.retractions.current(childRef));
+            assertFalse(f.retractions.current(grandchildRef));
+            assertTrue(f.retractions.current(MemoryEvidence.ref("task", keepChild, null)));
+            assertFalse(f.events.sourceAllowed(MemoryWriter.REF_TASK, grandchild));
+            assertEquals("retracted", f.jdbc.queryForObject(
+                    "SELECT state FROM graph_ingest_job WHERE group_key=?", String.class, group));
+            assertTrue(jobs.claim(group, 2).isEmpty());
+            assertEquals("", jobs.enqueue(childScope, "晚到结果", grandchildRef, false, 0));
+            assertFalse(f.extractor.extractConversationAsync(childScope, "晚到结果", false, grandchildRef)
+                    .get(5, TimeUnit.SECONDS));
+            verifyNoInteractions(f.client);
         }
     }
 

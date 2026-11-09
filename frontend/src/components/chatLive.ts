@@ -4,8 +4,12 @@ import {
   loginUrlOf,
   sessionLive,
   sessionLiveStream,
+  steerChat,
   stopChat as apiStopChat,
+  type ChatStreamReset,
+  type InterimReply,
   type LiveRun,
+  type SteerMessage,
   type SubagentBrief,
   type TraceSegment,
   type ReasoningEffort,
@@ -41,12 +45,15 @@ export type LiveChat = {
   /** 本次提问的原文与落库行 id（id 供「回退到这条提问之前」定位删除区间） */
   userText: string
   userMessageId: number | null
+  steers: SteerMessage[]
+  interims: InterimReply[]
   /** 正在生成的回答正文 / 思维链 / 结构化分段 */
   content: string
   reasoning: string
   trace: TraceSegment[]
   /** 是否仍在生成 */
   running: boolean
+  stopping?: boolean
   /** 生成失败的原因（null=没失败）：失败时半截输出要贴回会话，别让用户白等一场 */
   error: string | null
 }
@@ -67,15 +74,30 @@ function subscribe(l: () => void): () => void {
   }
 }
 
-/** 会话 id → 该会话进行中生成的 AbortController（「停止」用） */
-const aborters = new Map<string, AbortController>()
+/** 会话 id → 已打开的原始流请求 */
+const starts = new Set<string>()
 
 /** 就地把某会话的快照换成 updater 的返回值（快照已被清掉则忽略） */
 function patch(sessionId: string, updater: (cur: LiveChat) => LiveChat): void {
   const cur = live.get(sessionId)
   if (!cur) return
-  live.set(sessionId, updater(cur))
+  const next = updater(cur)
+  if (next === cur) return
+  live.set(sessionId, next)
   emit()
+}
+
+function appendSteer(cur: LiveChat, message: SteerMessage): LiveChat {
+  if (cur.steers.some(steer => steer.messageId === message.messageId)) return cur
+  return { ...cur, steers: [...cur.steers, message], content: '' }
+}
+
+/** POST 和流事件都会确认已落库的消息，用行 id 合并，避免重复显示。 */
+export async function steerActiveChat(sessionId: string, messageId: number, input: string): Promise<void> {
+  const accepted = await steerChat(sessionId, messageId, input)
+  patch(sessionId, cur => cur.userMessageId === messageId
+    ? appendSteer(cur, { messageId: accepted.messageId, input })
+    : cur)
 }
 
 /** 读某会话当前的生成快照（没有则 null） */
@@ -131,7 +153,7 @@ export function useLiveChat(sessionId: string | null): LiveChat | null {
  *  round=该段所属轮次（0 基） */
 function appendReasoning(trace: TraceSegment[], delta: string, round: number): TraceSegment[] {
   const last = trace[trace.length - 1]
-  if (last && last.type === 'reasoning') {
+  if (last && last.type === 'reasoning' && last.round === round) {
     const next = trace.slice()
     next[next.length - 1] = { ...last, text: (last.text ?? '') + delta }
     return next
@@ -140,6 +162,79 @@ function appendReasoning(trace: TraceSegment[], delta: string, round: number): T
     ...trace,
     { type: 'reasoning', text: delta.replace(/^\n*---\n+/, ''), name: null, args: null, round },
   ]
+}
+
+/** 原始流和续传流共用同一套增量、轮次和撤回规则。 */
+function createStreamBuffer(sessionId: string) {
+  let content = ''
+  let reasoning = ''
+  let resetContent = false
+  let round = 0
+  let frame = 0
+
+  const discard = () => {
+    if (frame) cancelAnimationFrame(frame)
+    frame = 0
+    content = ''
+    reasoning = ''
+    resetContent = false
+  }
+  const flush = () => {
+    frame = 0
+    if (!content && !reasoning && !resetContent) return
+    patch(sessionId, cur => ({
+      ...cur,
+      content: (resetContent ? '' : cur.content) + content,
+      reasoning: cur.reasoning + reasoning,
+      trace: reasoning ? appendReasoning(cur.trace, reasoning, round) : cur.trace,
+    }))
+    discard()
+  }
+  const flushNow = () => {
+    if (frame) cancelAnimationFrame(frame)
+    flush()
+  }
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(flush)
+  }
+
+  return {
+    discard,
+    flushNow,
+    restoreRound: (current: number) => { round = current },
+    handlers: {
+      onRound(next: number) {
+        flushNow()
+        round = next
+        resetContent = next > 0
+        if (resetContent) schedule()
+      },
+      onDelta(delta: { reasoning?: string; content?: string }) {
+        reasoning += delta.reasoning ?? ''
+        content += delta.content ?? ''
+        schedule()
+      },
+      onTool(tool: { name: string; args: string; round?: number }) {
+        flushNow()
+        patch(sessionId, cur => ({
+          ...cur,
+          trace: [...cur.trace, { type: 'tool', text: null, name: tool.name, args: tool.args, round: tool.round ?? round }],
+        }))
+      },
+      onSteer(message: SteerMessage) {
+        flushNow()
+        patch(sessionId, cur => ({ ...appendSteer(cur, message), content: '' }))
+      },
+      onInterim(message: InterimReply) {
+        patch(sessionId, cur => cur.interims.some(reply => reply.messageId === message.messageId)
+          ? cur : { ...cur, interims: [...cur.interims, message] })
+      },
+      onReset(reset: ChatStreamReset) {
+        discard()
+        patch(sessionId, cur => ({ ...cur, reasoning: reset.reasoning, trace: reset.trace, content: '' }))
+      },
+    },
+  }
 }
 
 export type StartArgs = {
@@ -157,13 +252,14 @@ export type StartArgs = {
  * 同一会话已有生成在跑时直接忽略（不并发）。
  */
 export function startChat(o: StartArgs): void {
-  if (aborters.has(o.sessionId)) return
-  const ac = new AbortController()
-  aborters.set(o.sessionId, ac)
+  if (starts.has(o.sessionId)) return
+  starts.add(o.sessionId)
   live.set(o.sessionId, {
     sessionId: o.sessionId,
     userText: o.text,
     userMessageId: null,
+    steers: [],
+    interims: [],
     content: '',
     reasoning: '',
     trace: [],
@@ -172,43 +268,7 @@ export function startChat(o: StartArgs): void {
   })
   emit()
 
-  /* 流式增量攒批：token 回调频率远高于帧率，一帧（rAF）提交一次，避免逐 token 重渲染整份消息列表 */
-  const buf = { content: '', reasoning: '', reset: false }
-  /* 当前轮次（0 基，与后端 round 对齐）：onRound 到达时更新，之后产出的思考/工具分段都归这一轮 */
-  let curRound = 0
-  let raf = 0
-
-  const flush = () => {
-    raf = 0
-    if (!buf.content && !buf.reasoning && !buf.reset) return
-    const delta = { content: buf.content, reasoning: buf.reasoning, reset: buf.reset }
-    buf.content = ''
-    buf.reasoning = ''
-    buf.reset = false
-    patch(o.sessionId, (cur) => {
-      /* 新一轮正文从头开始（最终答复以末轮为准）；思维链跨轮累加保留 */
-      const base = delta.reset ? { ...cur, content: '' } : cur
-      let reasoning = base.reasoning
-      let trace = base.trace
-      if (delta.reasoning) {
-        reasoning += delta.reasoning
-        trace = appendReasoning(trace, delta.reasoning, curRound)
-      }
-      return { ...base, reasoning, trace, content: base.content + delta.content }
-    })
-  }
-  /** 立刻提交在途增量（低频道事件与收尾前调用，保证先后顺序） */
-  const flushNow = () => {
-    if (raf) {
-      cancelAnimationFrame(raf)
-      raf = 0
-    }
-    flush()
-  }
-  const schedule = () => {
-    if (!raf) raf = requestAnimationFrame(flush)
-  }
-
+  const buffer = createStreamBuffer(o.sessionId)
   void (async () => {
     try {
       const reply = await chatStream(
@@ -217,77 +277,49 @@ export function startChat(o: StartArgs): void {
         o.modelId,
         o.promptId,
         {
+          ...buffer.handlers,
           /* user 消息已落库：回填其行 id，供「回退到这条提问之前」定位删除区间 */
           onMeta: (meta) => patch(o.sessionId, (cur) => ({ ...cur, userMessageId: meta.messageId })),
-          /* 工具轮之后的新一轮：正文从头开始；思维链跨轮累加保留，分段展示按 trace 另起一段 */
-          onRound: (round) => {
-            if (round > 0) {
-              flushNow()
-              buf.reset = true
-              schedule()
-            }
-            curRound = round
-          },
-          onReasoning: (delta) => {
-            buf.reasoning += delta
-            schedule()
-          },
-          onContent: (delta) => {
-            buf.content += delta
-            schedule()
-          },
-          /* 模型发起一次工具调用：先提交在途增量，保证该分段排在已产生的思考之后 */
-          onTool: (tool) => {
-            flushNow()
-            patch(o.sessionId, (cur) => ({
-              ...cur,
-              trace: [
-                ...cur.trace,
-                { type: 'tool', text: null, name: tool.name, args: tool.args, round: curRound },
-              ],
-            }))
-          },
+          onReasoning: reasoning => buffer.handlers.onDelta({ reasoning }),
+          onContent: content => buffer.handlers.onDelta({ content }),
         },
-        ac.signal,
+        undefined,
         o.reasoningEffort,
       )
       /* 用落库正本覆盖流式累积（与历史回放一致），并结束流式态 */
-      flushNow()
+      buffer.flushNow()
       patch(o.sessionId, (cur) => ({ ...cur, running: false, content: reply.message }))
       emitSettled(o.sessionId)
       o.onSettled?.(o.sessionId)
     } catch (e) {
       /* 丢弃在途增量，避免收尾后仍有残留帧触发渲染 */
-      if (raf) {
-        cancelAnimationFrame(raf)
-        raf = 0
+      buffer.discard()
+      const loginUrl = loginUrlOf(e)
+      if (loginUrl) {
+        window.location.assign(loginUrl)
+        return
       }
-      if (e instanceof DOMException && e.name === 'AbortError') {
-        /* 用户点「停止」：不算失败。后端已把部分回答落库，只落下 running 即可 */
-        patch(o.sessionId, (cur) => ({ ...cur, running: false }))
-      } else {
-        const loginUrl = loginUrlOf(e)
-        if (loginUrl) {
-          window.location.assign(loginUrl)
-          return
-        }
-        const msg = e instanceof Error ? e.message : String(e)
-        /* 失败：保留提问与已产出的半截输出（供回退重发），只落下 running 并记下原因；
-           原因由会话页统一提示（见 Home 的 error 效应），本地发起与刷新后重挂两条路径共用 */
-        patch(o.sessionId, (cur) => ({ ...cur, running: false, error: msg }))
-      }
+      const msg = e instanceof Error ? e.message : String(e)
+      /* 失败：保留提问与已产出的半截输出（供回退重发），只落下 running 并记下原因。 */
+      patch(o.sessionId, (cur) => ({ ...cur, running: false, error: msg }))
       o.onSettled?.(o.sessionId)
     } finally {
-      aborters.delete(o.sessionId)
+      starts.delete(o.sessionId)
     }
   })()
 }
 
-/** 停止该会话进行中的生成：先通知后端该响应不再需要（已产出部分照常落库），再中断本地流读取。
- *  重挂过来的续传流不中断——要收后端推来的收尾快照才能把状态落定 */
+/** Stop the turn and keep listening until its final transcript is available. */
 export function stopChat(sessionId: string): void {
-  void apiStopChat(sessionId).catch(() => {})
-  aborters.get(sessionId)?.abort()
+  const current = live.get(sessionId)
+  if (!current?.running || current.stopping || current.userMessageId == null) return
+  const messageId = current.userMessageId
+  patch(sessionId, cur => ({ ...cur, stopping: true }))
+  const restore = () => patch(sessionId, cur => cur.userMessageId === messageId
+    ? { ...cur, stopping: false } : cur)
+  void apiStopChat(sessionId, messageId).then(({ stopped }) => {
+    if (!stopped) restore()
+  }, restore)
 }
 
 /* ---------------- 断点续传：重挂到后端仍在跑的生成 ---------------- */
@@ -301,6 +333,8 @@ function fromSnapshot(snap: LiveRun): LiveChat {
     sessionId: snap.sessionId,
     userText: snap.userText ?? '',
     userMessageId: snap.userMessageId,
+    steers: snap.steers ?? [],
+    interims: snap.interims ?? [],
     content: snap.content ?? '',
     reasoning: snap.reasoning ?? '',
     trace: snap.trace ?? [],
@@ -353,44 +387,13 @@ function finishLocally(sessionId: string): void {
 
 /** 订阅一次续传流；返回 true=收到收尾事件（done/error，进度已落定），false=流被掐断，需要重挂 */
 async function resumeStream(sessionId: string, signal: AbortSignal): Promise<boolean> {
-  /* 与本地生成同一套攒批规则：token 回调频率远高于帧率，一帧（rAF）只提交一次 */
-  const buf = { content: '', reasoning: '', reset: false }
-  let curRound = 0
-  let raf = 0
-  const flush = () => {
-    raf = 0
-    if (!buf.content && !buf.reasoning && !buf.reset) return
-    const delta = { content: buf.content, reasoning: buf.reasoning, reset: buf.reset }
-    buf.content = ''
-    buf.reasoning = ''
-    buf.reset = false
-    patch(sessionId, (cur) => {
-      const base = delta.reset ? { ...cur, content: '' } : cur
-      let reasoning = base.reasoning
-      let trace = base.trace
-      if (delta.reasoning) {
-        reasoning += delta.reasoning
-        trace = appendReasoning(trace, delta.reasoning, curRound)
-      }
-      return { ...base, reasoning, trace, content: base.content + delta.content }
-    })
-  }
-  const flushNow = () => {
-    if (raf) {
-      cancelAnimationFrame(raf)
-      raf = 0
-    }
-    flush()
-  }
-  const schedule = () => {
-    if (!raf) raf = requestAnimationFrame(flush)
-  }
-
+  const buffer = createStreamBuffer(sessionId)
   let terminated = false
   try {
     await sessionLiveStream(
       sessionId,
       {
+        ...buffer.handlers,
         /* 快照是全量：直接覆盖本地进度（重新挂上时也靠它补齐断线期间的部分）。
            订阅时这次生成刚好收尾的话，后端只会推一份 running=false 的空快照——那不是进度，别覆盖 */
         onSnapshot: (run) => {
@@ -398,36 +401,15 @@ async function resumeStream(sessionId: string, signal: AbortSignal): Promise<boo
             finishLocally(sessionId)
             return
           }
+          buffer.restoreRound(run.round ?? run.trace?.at(-1)?.round ?? 0)
           live.set(sessionId, fromSnapshot(run))
           emit()
-        },
-        onRound: (round) => {
-          if (round > 0) {
-            flushNow()
-            buf.reset = true
-            schedule()
-          }
-          curRound = round
-        },
-        onDelta: (d) => {
-          if (d.reasoning) buf.reasoning += d.reasoning
-          if (d.content) buf.content += d.content
-          schedule()
-        },
-        onTool: (tool) => {
-          flushNow()
-          patch(sessionId, (cur) => ({
-            ...cur,
-            trace: [
-              ...cur.trace,
-              { type: 'tool', text: null, name: tool.name, args: tool.args, round: tool.round },
-            ],
-          }))
         },
         /* 收尾：后端的快照已是最终态（running=false，正文为落库正本），直接覆盖即可。
            正常答完才通知「已应答」；失败另有提示，不当成应答去弹气泡 */
         onTerminal: (run, failed) => {
           terminated = true
+          buffer.discard()
           live.set(sessionId, fromSnapshot(run))
           emit()
           if (!failed) emitSettled(sessionId)
@@ -438,10 +420,7 @@ async function resumeStream(sessionId: string, signal: AbortSignal): Promise<boo
   } catch {
     /* 断线（超时 / 网络）：把已拿到的进度留在仓里，交给外层重挂；真断了也还有会话历史兜底 */
   } finally {
-    if (raf) {
-      cancelAnimationFrame(raf)
-      raf = 0
-    }
+    buffer.discard()
   }
   return terminated
 }

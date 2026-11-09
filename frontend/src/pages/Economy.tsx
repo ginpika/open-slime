@@ -1,10 +1,9 @@
 import { ECONOMY_NAV } from '../shell/nav'
 import { AppIcon } from '../components/AppIcon'
-import './knowledge.css'
 import './economy/economy.css'
 
 export default function Economy() {
-  return <section className="knowledge-start economy-start" aria-labelledby="economy-title">
+  return <section className="economy-start" aria-labelledby="economy-title">
     <header className="knowledge-start__intro">
       <span className="knowledge-start__eyebrow"><AppIcon name="economy" />经济 / ECONOMY</span>
       <h1 className="ui-heading" id="economy-title">三张图，一份隔夜策略报告</h1>

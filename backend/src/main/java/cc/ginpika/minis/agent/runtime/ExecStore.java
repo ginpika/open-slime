@@ -41,6 +41,8 @@ public class ExecStore {
     public static final String KIND_PLAN = "plan";
     /** 执行种类：子代理（匿名 worker） */
     public static final String KIND_AGENT = "agent";
+    /** 执行种类：实名成员接收的委派消息 */
+    public static final String KIND_AGENT_MESSAGE = "agent_message";
 
     public record RunRow(String id, String agentId, long beat, String trigger, String status,
                          int agentCount, String note, long startedAt, Long finishedAt) {
@@ -51,6 +53,11 @@ public class ExecStore {
                           String status, String context, String output, String reasoning,
                           String trace, String toolRounds, String error, long startedAt,
                           Long finishedAt) {
+    }
+
+    public record AgentMessageExchange(long id, String senderId, String recipientId, String message,
+                                       String status, String output, String error, long createdAt,
+                                       long updatedAt, Long finishedAt) {
     }
 
     public record EditRow(long id, long execId, String tool, String args, String summary,
@@ -157,6 +164,13 @@ public class ExecStore {
                 status, reasoning, trace, toolRounds, error, now, now, id);
     }
 
+    /** An exception after one or more recorded rounds must not clear the durable progress. */
+    public void failExec(long id, String error) {
+        long now = System.currentTimeMillis();
+        jdbc.update("UPDATE task SET status = 'failed', error = ?, finished_at = ?, updated_at = ? "
+                + "WHERE id = ? AND status = 'running'", error, now, now, id);
+    }
+
     /**
      * 启动恢复：把上次进程遗留的在途<b>批次</b>（{@code heartbeat_run} 的 running）置为 interrupted，
      * 并补上 finished_at——否则页面上会留下一批永远「进行中」的幻影。
@@ -177,10 +191,51 @@ public class ExecStore {
                 ExecStore::mapExec, runId);
     }
 
+    public int executionCount(String runId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM task WHERE run_id = ?", Integer.class, runId);
+        return count == null ? 0 : count;
+    }
+
     public Optional<ExecRow> exec(long id) {
         return jdbc.query("SELECT " + EXEC_COLUMNS + " FROM task WHERE id = ? AND " + EXEC_ONLY,
                         ExecStore::mapExec, id)
                 .stream().findFirst();
+    }
+
+    /** Only expose messages between the two participants in the anchor's surviving source session. */
+    public List<AgentMessageExchange> agentMessageExchanges(String sessionId, long anchorId) {
+        return jdbc.query("""
+                WITH requests AS (
+                    SELECT task.id, task.session_id, task.agent_id AS recipient_id, task.status,
+                           task.error, task.created_at, task.updated_at, task.finished_at,
+                           CASE WHEN json_valid(task.payload) THEN task.payload ELSE '{}' END AS request
+                    FROM task JOIN hub_session s ON s.id = task.session_id
+                    WHERE task.session_id = ? AND task.origin = ?
+                ), exchanges AS (
+                    SELECT requests.*, json_extract(request, '$.sender_id') AS sender_id,
+                           json_extract(request, '$.message') AS message
+                    FROM requests
+                    WHERE json_type(request, '$.sender_id') = 'text'
+                      AND json_type(request, '$.message') = 'text'
+                      AND (COALESCE(json_extract(request, '$.turn_key'), '') NOT LIKE 'turn:%' OR EXISTS (
+                          SELECT 1 FROM chat_turn t JOIN chat_message m
+                            ON m.id = t.trigger_message_id AND m.session_id = t.session_id
+                          WHERE t.session_id = requests.session_id
+                            AND 'turn:' || t.id = json_extract(request, '$.turn_key')
+                      ))
+                )
+                SELECT e.id, e.sender_id, e.recipient_id, e.message, e.status, e.error,
+                       e.created_at, e.updated_at, e.finished_at,
+                       (SELECT content FROM task_artifact a WHERE a.task_id = e.id AND a.kind = 'text'
+                        ORDER BY a.id DESC LIMIT 1) AS output
+                FROM exchanges e JOIN exchanges anchor ON anchor.id = ?
+                WHERE (e.sender_id = anchor.sender_id AND e.recipient_id = anchor.recipient_id)
+                   OR (e.sender_id = anchor.recipient_id AND e.recipient_id = anchor.sender_id)
+                ORDER BY e.id
+                """, (rs, n) -> new AgentMessageExchange(rs.getLong("id"), rs.getString("sender_id"),
+                rs.getString("recipient_id"), rs.getString("message"), rs.getString("status"),
+                rs.getString("output"), rs.getString("error"), rs.getLong("created_at"),
+                rs.getLong("updated_at"), nullableLong(rs, "finished_at")), sessionId, KIND_AGENT_MESSAGE, anchorId);
     }
 
     /** 某计划最近若干次被执行（前端在计划卡片上回放历史） */
@@ -325,7 +380,12 @@ public class ExecStore {
                 rs.getString("plan_id"), rs.getString("title"), rs.getString("status"),
                 rs.getString("context"), rs.getString("output"), rs.getString("reasoning"),
                 rs.getString("trace"), rs.getString("tool_rounds"), rs.getString("error"),
-                rs.getLong("started_at"), (Long) rs.getObject("finished_at"));
+                rs.getLong("started_at"), nullableLong(rs, "finished_at"));
+    }
+
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        Number value = (Number) rs.getObject(column);
+        return value == null ? null : value.longValue();
     }
 
     private static UsageRow mapUsage(ResultSet rs, int rowNum) throws SQLException {

@@ -9,6 +9,7 @@ import cc.ginpika.minis.agent.context.ChatProtocol;
 import cc.ginpika.minis.agent.member.AgentDirectory;
 import cc.ginpika.minis.agent.chat.turn.TurnStore;
 import cc.ginpika.minis.agent.runtime.TaskCheckpointService;
+import cc.ginpika.minis.agent.runtime.TaskStore;
 import cc.ginpika.minis.ai.memory.MemoryIngest;
 import cc.ginpika.minis.ai.memory.store.MemoryRetractionStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,6 +22,7 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -58,6 +60,7 @@ public class ChatSessionService {
     private final MemoryIngest memoryIngest;
     private final MemoryRetractionStore memoryRetractions;
     private final TaskCheckpointService checkpoints;
+    private final TaskStore tasks;
     private ProjectWorkflowService projectWorkflows;
     private cc.ginpika.minis.project.ProjectProgressStore projectProgress;
     @org.springframework.beans.factory.annotation.Autowired
@@ -68,7 +71,8 @@ public class ChatSessionService {
     public ChatSessionService(HubSessionStore sessions, ChatMessageStore messages,
                               ChatLiveStore live, TodoService todo, ObjectMapper om,
                               TurnStore turns, MemoryIngest memoryIngest,
-                              MemoryRetractionStore memoryRetractions, TaskCheckpointService checkpoints) {
+                              MemoryRetractionStore memoryRetractions, TaskCheckpointService checkpoints,
+                              TaskStore tasks) {
         this.sessions = sessions;
         this.messages = messages;
         this.live = live;
@@ -78,6 +82,7 @@ public class ChatSessionService {
         this.memoryIngest = memoryIngest;
         this.memoryRetractions = memoryRetractions;
         this.checkpoints = checkpoints;
+        this.tasks = tasks;
     }
 
     /** 会话列表（最近在前）：带「此刻是否在生成」标记 */
@@ -162,6 +167,7 @@ public class ChatSessionService {
     public ChatDtos.SessionDeleted delete(String hubId) {
         sessions.findById(hubId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
+        turns.deleteBySession(hubId);
         int removed = messages.deleteBySession(hubId);
         todo.clear(hubId);
         projectProgress.clear(hubId);
@@ -170,7 +176,7 @@ public class ChatSessionService {
         return new ChatDtos.SessionDeleted(hubId, removed);
     }
 
-    /** 历史：仅 user/assistant 行（system prompt 不入库、不回显）；assistant 带思维链与分段供回放；
+    /** 历史：user/assistant 行与 Agent 消息发送标签；assistant 带思维链与分段供回放；
      *  子代理结论气泡带 kind 与元信息（标题/摘要/状态/执行 id），content 仍是完整结论（点开看全文）。
      *  打开会话即清未读。 */
     public List<ChatDtos.MessageRow> messages(String hubId) {
@@ -178,7 +184,8 @@ public class ChatSessionService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在: " + hubId));
         sessions.clearUnread(hubId);
         return messages.listBySession(hubId).stream()
-                .filter(m -> "user".equals(m.role()) || "assistant".equals(m.role()))
+                .filter(m -> "user".equals(m.role()) || "assistant".equals(m.role())
+                        || ChatMessageStore.KIND_AGENT_MESSAGE_SENT.equals(m.kind()))
                 .map(m -> new ChatDtos.MessageRow(m.id(), m.role(), m.content(), m.reasoning(),
                         ChatTraceCodec.readTrace(om, m.trace()), m.kind(),
                         ChatProtocol.readSubagentBrief(om, m.kind(), m.meta()),
@@ -220,14 +227,19 @@ public class ChatSessionService {
         List<TurnStore.TurnRow> discardedTurns = turns.turns(hubId).stream()
                 .filter(t -> discardedIds.contains(t.triggerMessageId()) || discardedIds.contains(t.replyMessageId()))
                 .toList();
-        List<Long> taskIds = discardedTurns.stream()
+        List<Long> turnTasks = discardedTurns.stream()
                 .map(TurnStore.TurnRow::taskId)
                 .filter(Objects::nonNull).distinct().toList();
-        List<String> turnIds = discardedTurns.stream().map(t -> Long.toString(t.id())).toList();
+        List<Long> taskIds = tasks.idsWithDelegates(hubId, turnTasks);
+        Set<Long> directTaskIds = new HashSet<>(turnTasks);
+        List<String> turnIds = Stream.concat(
+                discardedTurns.stream().map(t -> Long.toString(t.id())),
+                taskIds.stream().filter(id -> !directTaskIds.contains(id)).map(id -> "task:" + id)).toList();
         memoryRetractions.retractChat(hubId, discarded, taskIds, turnIds,
                 target.createdAt() == null ? 0 : target.createdAt());
         taskIds.forEach(id -> checkpoints.save(id, null));
         int removed = messages.deleteFrom(hubId, target.id());
+        sessions.invalidateContextStage(hubId);
         // 数据库回退成功后再裁剪内存；写入前的来源校验同时挡住已经在提炼中的旧批次。
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(

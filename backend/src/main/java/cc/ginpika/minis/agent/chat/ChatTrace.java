@@ -12,6 +12,8 @@ public final class ChatTrace {
     public static final String SEG_REASONING = "reasoning";
     /** 分段类型：工具调用 */
     public static final String SEG_TOOL = "tool";
+    /** Place a durable interjection between completed tool exchanges when replaying the turn. */
+    public static final String INTERJECTION_MARKER = "_minis_interjection";
     /** 多段思考拼成 reasoning 纯文本列时的分隔线（Markdown 水平线）；分段展示走 trace */
     public static final String REASONING_SEPARATOR = "\n\n---\n\n";
 

@@ -26,6 +26,14 @@ public class TodoProvider implements ContextProvider {
     }
 
     @Override
+    public List<ContextFragment> fragments(ContextRequest req) {
+        String text = systemSuffix(req);
+        return text.isBlank() ? List.of()
+                : List.of(ContextFragment.system(ContextFragment.Layer.TASK, "todos",
+                        ContextFragment.Trust.AUTHORITATIVE_STATE, text));
+    }
+
+    @Override
     public String systemSuffix(ContextRequest req) {
         /* 待办清单随会话存档，只有前台会话这一路有（子代理 / 潜意识不共享它） */
         if (req.surface() != ContextRequest.Surface.CHAT) {

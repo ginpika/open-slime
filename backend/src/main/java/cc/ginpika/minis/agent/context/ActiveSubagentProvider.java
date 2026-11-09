@@ -1,6 +1,7 @@
 package cc.ginpika.minis.agent.context;
 
 import cc.ginpika.minis.agent.subagent.SubagentService;
+import java.util.List;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +19,14 @@ public class ActiveSubagentProvider implements ContextProvider {
 
     public ActiveSubagentProvider(SubagentService subagent) {
         this.subagent = subagent;
+    }
+
+    @Override
+    public List<ContextFragment> fragments(ContextRequest req) {
+        String text = systemSuffix(req);
+        return text == null || text.isBlank() ? List.of()
+                : List.of(ContextFragment.system(ContextFragment.Layer.WORK, "active_subagents",
+                        ContextFragment.Trust.AUTHORITATIVE_STATE, text));
     }
 
     @Override

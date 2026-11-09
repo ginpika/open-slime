@@ -191,14 +191,17 @@ public class MemoryExtractor {
 
     /** 真提炼：一次 LLM 往返 → 解析 → 按归属落条目 / 画像候选（+ 异步补向量） */
     private boolean extract(MemoryExec exec, List<ChatMessage> messages, boolean explicit, String refs, boolean distilling, long generation) {
+        String sources = exec.taskId() == null ? refs
+                : MemoryEvidence.merge(refs, MemoryEvidence.ref("task", exec.taskId(), null));
+        if (retractions.generation() != generation || !retractions.current(sources)) {
+            return false;
+        }
         ModelTarget target = target();
         if (!target.configured()) {
             return false;
         }
         String content = chat.chat(target, messages, SOURCE).content();
         List<Draft> drafts = parse(content);
-        String sources = exec.taskId() == null ? refs
-                : MemoryEvidence.merge(refs, MemoryEvidence.ref("task", exec.taskId(), null));
         return retractions.writeIfCurrent(generation, sources, () -> persist(exec, drafts, explicit, refs, distilling));
     }
 

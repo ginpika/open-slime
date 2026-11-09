@@ -1,10 +1,10 @@
 import {
-  Archive, ArchiveRestore, Trash2, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, Brain, ChartNoAxesCombined,
+  Archive, ArchiveRestore, Trash2, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, AudioLines, Bot, Brain, Camera, ChartNoAxesCombined,
   ChartNoAxesColumn, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert,
-  CircleCheck, Cloud, CodeXml, Copy, Crosshair, Download, Ellipsis, ExternalLink, File, FileText,
+  CircleCheck, Cloud, CodeXml, Copy, Cpu, Crosshair, Download, Ellipsis, ExternalLink, File, FileText,
   Folder, FolderOpen, GitBranch, GripVertical, House, Image, Info, Layers,
-  Lightbulb, Link, LoaderCircle, Maximize2, MessageCircle, Minimize2, Minus, Network, Palette, PanelBottom, PanelsTopLeft, Pencil, Plus,
-  RefreshCw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Square, Terminal, Clock3, Play, Pause,
+  Lightbulb, Link, LoaderCircle, Maximize2, MessageCircle, Mic, Minimize2, Minus, Monitor, Moon, Network, Palette, PanelBottom, PanelsTopLeft, Pencil, Plus,
+  RefreshCw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Square, Sun, Terminal, Clock3, Play, Pause,
   Undo2, Upload, UsersRound, Workflow, X, ZoomIn, ZoomOut,
   type LucideProps,
 } from 'lucide-react'
@@ -43,6 +43,7 @@ const ICONS = {
   external: ExternalLink,
   file: File,
   doc: FileText,
+  snapshot: Camera,
   folder: Folder,
   'folder-open': FolderOpen,
   branch: GitBranch,
@@ -59,12 +60,18 @@ const ICONS = {
   'exit-fullscreen': Minimize2,
   graph: Network,
   palette: Palette,
+  'appearance-system': Monitor,
+  'appearance-light': Sun,
+  'appearance-dark': Moon,
   edit: Pencil,
   plus: Plus,
   refresh: RefreshCw,
   search: Search,
   send: Send,
+  microphone: Mic,
+  dictation: AudioLines,
   settings: Settings,
+  system: Cpu,
   permissions: ShieldCheck,
   terminal: Terminal,
   'terminal-layout': PanelsTopLeft,
@@ -89,5 +96,5 @@ export type AppIconProps = Omit<LucideProps, 'children' | 'strokeWidth' | 'fill'
 /** 装饰图标由相邻文字或所属按钮提供可访问名称。 */
 export function AppIcon({ name, size = 16, ...props }: AppIconProps) {
   const Icon = ICONS[name]
-  return <Icon size={size} {...props} fill={name === 'stop' ? 'currentColor' : 'none'} strokeWidth={1.8} aria-hidden="true" focusable="false" />
+  return <Icon size={size} {...props} fill="none" strokeWidth={1.8} aria-hidden="true" focusable="false" />
 }

@@ -9,6 +9,8 @@
   line-height: 1.5;
   letter-spacing: 0;
   --sl-sidebar-width: 280px;
+  /* 底部输入框宽度；消息列不受它约束，宽屏下铺满可用区域 */
+  --sl-composer-width: 1120px;
   --sl-chat-header-height: 68px;
   --sl-composer-bg: #f1f2f3;
   --sl-composer-line: #d1d5d9;
@@ -115,7 +117,7 @@
 .is-welcome .sl-chat__composearea { margin-top: 0; }
 .df__view .is-welcome .sl-chat__scroll { margin-top: max(20px, calc((100dvh - 660px) * .4)); }
 
-.sl-chat__thread { width: 100%; max-width: 790px; margin: 0 auto; padding: 25px 34px 24px; }
+.sl-chat__thread { width: 100%; margin: 0 auto; padding: 25px 84px 24px; }
 .sl-chat__turn { margin: 0 0 30px; }
 .sl-chat__turn--user { display: flex; justify-content: flex-end; margin: 8px 0 30px; }
 .sl-chat__turn--assistant { display: flex; flex-direction: column; align-items: flex-start; }
@@ -137,7 +139,7 @@
 .sl-chat__jump { position: absolute; z-index: 5; right: 30px; bottom: 140px; display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--sl-line); border-radius: 20px; background: var(--sl-panel); color: var(--sl-fg-2); font-size: 12px; box-shadow: 0 3px 12px #0000000a; }
 .sl-chat__jump:hover { border-color: var(--sl-line-strong); }
 
-.sl-chat__composearea { flex: none; width: 100%; max-width: 800px; margin: 0 auto; padding: 8px 32px max(16px, env(safe-area-inset-bottom)); }
+.sl-chat__composearea { flex: none; width: 100%; max-width: var(--sl-composer-width); margin: 0 auto; padding: 8px 32px max(16px, env(safe-area-inset-bottom)); }
 .sl-chat__composer { display: flex; flex-direction: column; min-height: 98px; padding: 14px 8px 8px 12px; border: 1px solid var(--sl-composer-line); border-radius: 22px; background: var(--sl-composer-bg); transition: border-color 150ms ease; }
 .sl-chat__composer:focus-within { border-color: var(--sl-composer-focus); }
 .sl-chat__composer textarea { display: block; width: 100%; min-height: 40px; max-height: 180px; padding: 0; border: 0; border-radius: 0; outline: none !important; background: transparent; color: var(--sl-fg); font-size: 15px; line-height: 1.6; resize: none; }

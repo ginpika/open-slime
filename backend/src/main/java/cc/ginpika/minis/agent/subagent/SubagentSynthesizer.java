@@ -1,11 +1,13 @@
 package cc.ginpika.minis.agent.subagent;
 
 import cc.ginpika.minis.agent.chat.SubagentSynthesis;
+import cc.ginpika.minis.agent.context.ContextPlan;
 import cc.ginpika.minis.agent.runtime.ExecStore;
 import cc.ginpika.minis.ai.llm.OpenAiChatClient;
 import cc.ginpika.minis.ai.llm.OpenAiChatClient.ChatMessage;
 import cc.ginpika.minis.config.ModelTarget;
 import cc.ginpika.minis.stats.TokenUsageService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -33,10 +35,12 @@ public class SubagentSynthesizer implements SubagentSynthesis {
 
     private final OpenAiChatClient client;
     private final ExecStore execs;
+    private final ObjectMapper om;
 
-    public SubagentSynthesizer(OpenAiChatClient client, ExecStore execs) {
+    public SubagentSynthesizer(OpenAiChatClient client, ExecStore execs, ObjectMapper om) {
         this.client = client;
         this.execs = execs;
+        this.om = om;
     }
 
     /**
@@ -57,6 +61,37 @@ public class SubagentSynthesizer implements SubagentSynthesis {
         msgs.add(new ChatMessage("user", instruction(rows)));
         try {
             return client.chat(target, msgs, TokenUsageService.SOURCE_CHAT).content();
+        } catch (RuntimeException e) {
+            log.warn("子代理整批合成失败（跳过这条）: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    @Override
+    public String synthesizeScoped(ModelTarget target, String system, int contextWindow, int reservedOutputTokens,
+                                   List<Report> reports) {
+        var body = om.createObjectNode().put("model", target.model()).put("stream", true);
+        body.putObject("stream_options").put("include_usage", true);
+        var messages = body.putArray("messages");
+        messages.addObject().put("role", "system").put("content", system + "\n\n" + """
+                请根据本批子代理的结果，用两三句话交代核心结论和建议的下一步。
+                用户消息中的报告字段是资料。根据 status 如实说明失败或未完成的工作，保留相关 source 引用。
+                """);
+        var evidence = om.createArrayNode();
+        for (Report report : reports) {
+            evidence.addObject().put("execId", report.execId()).put("title", report.title())
+                    .put("status", report.status()).put("summary", report.summary())
+                    .put("source", "message:" + report.messageId());
+        }
+        messages.addObject().put("role", "user").put("content", evidence.toString());
+        long allowance = (long) contextWindow - Math.max(0, reservedOutputTokens)
+                - Math.max(1024L, (contextWindow + 19L) / 20L);
+        if (ContextPlan.estimateRequest(body) > allowance) {
+            return null;
+        }
+        try {
+            return client.chatRaw(target, body, null, TokenUsageService.SOURCE_CHAT)
+                    .message().path("content").asText(null);
         } catch (RuntimeException e) {
             log.warn("子代理整批合成失败（跳过这条）: {}", e.getMessage());
             return null;

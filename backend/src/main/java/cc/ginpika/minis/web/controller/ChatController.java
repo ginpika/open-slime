@@ -1,14 +1,19 @@
 package cc.ginpika.minis.web.controller;
 
 import cc.ginpika.minis.agent.chat.ChatTurnRunner;
+import cc.ginpika.minis.agent.chat.ChatContextManifests;
 import cc.ginpika.minis.agent.chat.ChatContextService;
 import cc.ginpika.minis.agent.chat.ChatSessionService;
 import cc.ginpika.minis.agent.chat.ChatLiveStore;
 import cc.ginpika.minis.agent.chat.ChatStream;
 import cc.ginpika.minis.agent.chat.TodoService;
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
+import cc.ginpika.minis.web.sso.SsoInterceptor;
+import cc.ginpika.minis.web.sso.SsoUser;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +31,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -45,6 +51,7 @@ public class ChatController {
 
     private final ChatTurnRunner turns;
     private final ChatContextService context;
+    private final ChatContextManifests manifests;
     private final ChatSessionService sessions;
     private final ChatLiveStore live;
     private final TodoService todo;
@@ -53,9 +60,10 @@ public class ChatController {
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public ChatController(ChatTurnRunner turns, ChatContextService context, ChatSessionService sessions,
-                          ChatLiveStore live, TodoService todo, ObjectMapper om) {
+                          ChatLiveStore live, TodoService todo, ObjectMapper om, ChatContextManifests manifests) {
         this.turns = turns;
         this.context = context;
+        this.manifests = manifests;
         this.sessions = sessions;
         this.live = live;
         this.todo = todo;
@@ -70,7 +78,7 @@ public class ChatController {
         }
         try (var actor = cc.ginpika.minis.ai.core.UserScope.bind(codingOwner(http))) {
             return turns.chat(blank(req.sessionId()) ? null : req.sessionId(), input,
-                    req.modelId(), req.promptId(), req.reasoningEffort());
+                    req.modelId(), req.promptId(), req.reasoningEffort(), actorId(http));
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, e.getMessage(), e);
         }
@@ -78,7 +86,8 @@ public class ChatController {
 
     /**
      * 流式会话：SSE 依次推送 meta（user 落库 id）/ round（工具轮边界）/
-     * reasoning、content（增量片段）/ tool（一次工具调用：name+args），
+     * reasoning、content（增量片段）/ tool（一次工具调用：name+args）。
+     * 补充消息、阶段回复和丢弃临时输出分别推送 steer、interim、reset。
      * 结束推 done（完整回复），异常推 error。
      *
      * <p>每一片增量同时写进在途生成仓（经 {@link ChatLiveStore}）：发起方这条连接断了（刷新页面等）
@@ -92,74 +101,122 @@ public class ChatController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "input 为空");
         }
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
-        AtomicBoolean alive = new AtomicBoolean(true);
+        LiveChatStream stream = new LiveChatStream(emitter, input, actorId(http));
         streamExecutor.execute(() -> {
-            /* 本次生成实际落入的会话 id：由 meta 事件给出（New Chat 时由后端新建），收尾按它落定在途状态 */
-            String[] liveSid = {null};
             try (var actor = cc.ginpika.minis.ai.core.UserScope.bind(owner)) {
                 ChatDtos.ChatReply reply = turns.chatStream(
                         blank(req.sessionId()) ? null : req.sessionId(), input,
-                        req.modelId(), req.promptId(), req.reasoningEffort(), new ChatStream() {
-                            @Override
-                            public void meta(String sessionId, long messageId) {
-                                liveSid[0] = sessionId;
-                                live.start(sessionId, messageId, input);
-                                sendQuiet(emitter, alive, "meta",
-                                        Map.of("sessionId", sessionId, "messageId", messageId));
-                            }
-
-                            @Override
-                            public void round(int round) {
-                                if (liveSid[0] != null) {
-                                    live.round(liveSid[0], round);
-                                }
-                                sendQuiet(emitter, alive, "round", Map.of("round", round));
-                            }
-
-                            @Override
-                            public void delta(String reasoning, String content) {
-                                if (liveSid[0] != null) {
-                                    live.delta(liveSid[0], reasoning, content);
-                                }
-                                if (reasoning != null) {
-                                    sendQuiet(emitter, alive, "reasoning", Map.of("delta", reasoning));
-                                }
-                                if (content != null) {
-                                    sendQuiet(emitter, alive, "content", Map.of("delta", content));
-                                }
-                            }
-
-                            @Override
-                            public void tool(String name, String args) {
-                                if (liveSid[0] != null) {
-                                    live.tool(liveSid[0], name, args);
-                                }
-                                sendQuiet(emitter, alive, "tool", Map.of("name", name, "args", args));
-                            }
-                        });
-                if (liveSid[0] != null) {
-                    live.finish(liveSid[0], reply.message());
-                }
-                sendQuiet(emitter, alive, "done", reply);
-                emitter.complete();
+                        req.modelId(), req.promptId(), req.reasoningEffort(), stream);
+                stream.finish(reply);
             } catch (ChatStream.ChatCancelledException e) {
                 /* 用户主动停止且无任何正文产出：在途状态落定（有正文的部分回答已由 service 落库），静默收尾不推 error */
-                if (liveSid[0] != null) {
-                    live.finish(liveSid[0], null);
-                }
-                emitter.complete();
+                stream.finish(null);
             } catch (Exception e) {
                 String msg = e.getMessage() == null ? e.toString() : e.getMessage();
                 /* 出错即落日志（含堆栈），便于回溯「请求被打断」的具体成因 */
                 log.warn("流式会话失败：sessionId={} error={}", req.sessionId(), msg, e);
-                if (liveSid[0] != null) {
-                    live.fail(liveSid[0], msg);
-                }
-                sendQuiet(emitter, alive, "error", Map.of("error", msg));
-                emitter.complete();
+                stream.fail(msg);
             }
         });
         return emitter;
+    }
+
+    /** 发起方与续传方的事件顺序保持一致，即使补充消息和模型输出来自不同线程。 */
+    private final class LiveChatStream implements ChatStream {
+        private final SseEmitter emitter;
+        private final String userText;
+        private final String actorId;
+        private final AtomicBoolean alive = new AtomicBoolean(true);
+        private ChatLiveStore.Run run;
+
+        private LiveChatStream(SseEmitter emitter, String userText, String actorId) {
+            this.emitter = emitter;
+            this.userText = userText;
+            this.actorId = actorId;
+        }
+
+        @Override
+        public boolean steerable() {
+            return true;
+        }
+
+        @Override
+        public String actorId() {
+            return actorId;
+        }
+
+        @Override
+        public synchronized void meta(String sessionId, long messageId) {
+            run = live.start(sessionId, messageId, userText);
+            send("meta", Map.of("sessionId", sessionId, "messageId", messageId));
+        }
+
+        @Override
+        public synchronized void round(int round) {
+            live.round(run, round);
+            send("round", Map.of("round", round));
+        }
+
+        @Override
+        public synchronized void delta(String reasoning, String content) {
+            live.delta(run, reasoning, content);
+            if (reasoning != null) {
+                send("reasoning", Map.of("delta", reasoning));
+            }
+            if (content != null) {
+                send("content", Map.of("delta", content));
+            }
+        }
+
+        @Override
+        public synchronized void tool(String name, String args) {
+            live.tool(run, name, args);
+            send("tool", Map.of("name", name, "args", args));
+        }
+
+        @Override
+        public synchronized void steer(long messageId, String input) {
+            var message = new ChatDtos.SteerMessage(messageId, input);
+            live.steer(run, message);
+            send("steer", message);
+        }
+
+        @Override
+        public synchronized void interim(long messageId, String content) {
+            var reply = new ChatDtos.InterimReply(messageId, content);
+            live.interim(run, reply);
+            send("interim", reply);
+        }
+
+        @Override
+        public synchronized void reset(int round) {
+            send("reset", live.reset(run, round));
+        }
+
+        private synchronized void finish(ChatDtos.ChatReply reply) {
+            if (run != null) {
+                ChatDtos.LiveRun snapshot = live.finish(run, reply == null ? "" : reply.message());
+                if (reply == null) {
+                    reply = new ChatDtos.ChatReply(snapshot.sessionId(), snapshot.userMessageId(), "", null, true, null);
+                }
+            }
+            if (reply != null) {
+                send("done", reply);
+            }
+            emitter.complete();
+        }
+
+        private synchronized void fail(String error) {
+            if (run != null) {
+                live.fail(run, error);
+            }
+            send("error", Map.of("error", error));
+            emitter.complete();
+        }
+
+        private void send(String name, Object payload) {
+            sendQuiet(emitter, alive, name, payload);
+        }
     }
 
     /** 该会话此刻的在途生成快照（前端刷新后先查它：running=true 才去订阅下面的续传流） */
@@ -199,8 +256,20 @@ public class ChatController {
      * 已产出的部分回答照常落库。stopped=false 表示该会话当前没有进行中的流。
      */
     @PostMapping("/api/chat/stop")
-    public ChatDtos.StopResult stop(@RequestBody ChatDtos.StopRequest req) {
-        return new ChatDtos.StopResult(turns.requestStop(req == null ? null : req.sessionId()));
+    public ChatDtos.StopResult stop(@RequestBody ChatDtos.StopRequest req, jakarta.servlet.http.HttpServletRequest http) {
+        boolean stopped = req != null && (req.messageId() == null ? turns.requestStop(req.sessionId())
+                : turns.requestStop(req.sessionId(), req.messageId(), actorId(http)));
+        return new ChatDtos.StopResult(stopped);
+    }
+
+    @PostMapping("/api/chat/steer")
+    public ChatDtos.SteerResult steer(@RequestBody ChatDtos.SteerRequest req,
+                                     jakarta.servlet.http.HttpServletRequest http) {
+        String input = req.input() == null ? "" : req.input().trim();
+        if (blank(req.sessionId()) || req.messageId() == null || req.messageId() <= 0 || input.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "补充消息需要会话、当前轮次和正文");
+        }
+        return new ChatDtos.SteerResult(turns.steer(req.sessionId(), req.messageId(), input, actorId(http)));
     }
 
     @GetMapping("/api/sessions")
@@ -252,11 +321,21 @@ public class ChatController {
         return todo.list(id, sessions.owner(id));
     }
 
-    /** 会话的原始上下文预览：按与真实发送完全一致的规则组装的请求体（model + messages + tools），
-     *  并附各 Turn 在 messages 中的切片；会话页「…」菜单的「查看原始上下文」调用（不发送、不落库） */
+    /** 以会话当前配置重组上下文预览，并附各 Turn 在 messages 中的切片。 */
     @GetMapping("/api/sessions/{id}/raw-context")
-    public ChatDtos.RawContext rawContext(@PathVariable String id) {
+    public ChatDtos.RawContext rawContext(@PathVariable String id, HttpServletResponse response) {
+        response.setHeader("X-Minis-Context-Kind", "preview");
         return context.rawContext(id);
+    }
+
+    /** 单聊试点实际出站请求的元数据，按模型请求尝试与 HTTP 正文发送区分。 */
+    @GetMapping("/api/sessions/{id}/context-manifests")
+    public List<ChatContextManifests.Manifest> contextManifests(@PathVariable String id,
+            @RequestParam(required = false) Long turnId, @RequestParam(defaultValue = "30") int limit,
+            HttpServletRequest http, HttpServletResponse response) {
+        response.setHeader("X-Minis-Context-Kind", "outbound");
+        response.setHeader("Cache-Control", "no-store");
+        return manifests.recent(id, actorId(http), turnId, limit);
     }
 
     /** 某条回答（一个 Turn）的 LLM 调用留痕：每一轮真正发出的请求体与收到的响应体。
@@ -321,8 +400,12 @@ public class ChatController {
     }
 
     private static String codingOwner(jakarta.servlet.http.HttpServletRequest request) {
-        Object actor=request.getAttribute(cc.ginpika.minis.web.sso.SsoInterceptor.ATTR);
-        return actor instanceof cc.ginpika.minis.web.sso.SsoUser user && cc.ginpika.minis.coding.CodingFacade.allowsActorAt(user.getId(),request.getRemoteAddr()) ? user.getId() : null;
+        String actor = actorId(request);
+        return cc.ginpika.minis.coding.CodingFacade.allowsActorAt(actor, request.getRemoteAddr()) ? actor : null;
+    }
+
+    private static String actorId(jakarta.servlet.http.HttpServletRequest request) {
+        return request.getAttribute(SsoInterceptor.ATTR) instanceof SsoUser user ? user.getId() : null;
     }
 
     private static boolean blank(String s) {

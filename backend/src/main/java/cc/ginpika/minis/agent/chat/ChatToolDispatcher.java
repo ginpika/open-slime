@@ -3,6 +3,7 @@ package cc.ginpika.minis.agent.chat;
 import cc.ginpika.minis.ai.knowledge.ingest.KnowledgeToolbox;
 import cc.ginpika.minis.ai.computer.terminal.TerminalService;
 import cc.ginpika.minis.agent.member.AgentDirectory;
+import cc.ginpika.minis.agent.peer.AgentMessageService;
 import cc.ginpika.minis.ai.core.AgentScope;
 import cc.ginpika.minis.ai.core.tool.ToolValidator;
 import cc.ginpika.minis.ai.core.tool.chat.RequestUserInputTool;
@@ -17,6 +18,7 @@ import cc.ginpika.minis.ai.core.tool.heartbeat.UpdatePlanTool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /** 单聊工具路由：先校验参数，再交给相应能力；授权仍由能力域负责。 */
@@ -32,6 +34,12 @@ public class ChatToolDispatcher {
     private final ProjectWorkflowService projectWorkflows;
     private cc.ginpika.minis.coding.CodingFacade coding;
     private cc.ginpika.minis.ai.computer.integration.ComputerTools computer;
+    private AgentMessageService agentMessages;
+
+    @Autowired
+    public void setAgentMessages(AgentMessageService agentMessages) {
+        this.agentMessages = agentMessages;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     public void setComputer(cc.ginpika.minis.ai.computer.integration.ComputerTools computer) { this.computer = computer; }
@@ -64,6 +72,10 @@ public class ChatToolDispatcher {
     }
 
     public String runTool(JsonNode call, String batchRunId, String hubId) {
+        return runTool(call, batchRunId, hubId, false, null);
+    }
+
+    String runTool(JsonNode call, String batchRunId, String hubId, boolean scoped, String actorId) {
         String name = call.path("function").path("name").asText("");
         /* 校验节点（STEP 4）：写入 / 执行类工具落地前过一道参数自检（只读放行），拒了不落执行 */
         String invalid = validator.validate(name,
@@ -113,11 +125,15 @@ public class ChatToolDispatcher {
         }
         /* 归属 Agent：首页对话 = 内置 Agent；圆桌那条流由 RoundtableChatService 在 AgentScope 里设好成员身份 */
         String agentId = AgentScope.get() == null ? AgentDirectory.BUILTIN_ID : AgentScope.get();
+        if (AgentMessageService.handles(name)) {
+            return agentMessages == null ? "Agent 消息服务未就绪" : agentMessages.runTool(agentId, call, hubId);
+        }
         if (PLAN_TOOLS.contains(name)) {
             return heartbeat.runTool(agentId, call);
         }
         if (SUBAGENT_TOOLS.contains(name)) {
-            return subagent.runChatTool(agentId, call, batchRunId, hubId);
+            return scoped ? subagent.runScopedChatTool(agentId, call, batchRunId, hubId, actorId)
+                    : subagent.runChatTool(agentId, call, batchRunId, hubId);
         }
         if (TerminalService.handles(name)) {
             return terminal.run(call, TerminalService.SOURCE_CHAT).content();

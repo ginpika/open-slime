@@ -216,11 +216,18 @@ export function chat(
  *  tool=模型发起一次工具调用（name=工具名，args=调用参数 JSON） */
 export type ChatStreamHandlers = {
   onMeta?: (meta: { sessionId: string; messageId: number }) => void
+  onSteer?: (message: SteerMessage) => void
+  onInterim?: (message: InterimReply) => void
+  onReset?: (reset: ChatStreamReset) => void
   onRound?: (round: number) => void
   onReasoning?: (delta: string) => void
   onContent?: (delta: string) => void
   onTool?: (tool: { name: string; args: string }) => void
 }
+
+export type SteerMessage = { messageId: number; input: string }
+export type InterimReply = { messageId: number; content: string }
+export type ChatStreamReset = { reasoning: string; trace: TraceSegment[] }
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -269,6 +276,12 @@ export async function chatStream(
     const payload = JSON.parse(data.join('\n')) as Record<string, unknown>
     if (name === 'meta') {
       handlers.onMeta?.(payload as unknown as { sessionId: string; messageId: number })
+    } else if (name === 'steer') {
+      handlers.onSteer?.(payload as unknown as SteerMessage)
+    } else if (name === 'interim') {
+      handlers.onInterim?.(payload as unknown as InterimReply)
+    } else if (name === 'reset') {
+      handlers.onReset?.(payload as unknown as ChatStreamReset)
     } else if (name === 'round') {
       handlers.onRound?.(payload.round as number)
     } else if (name === 'reasoning') {
@@ -307,12 +320,19 @@ export async function chatStream(
   return reply
 }
 
+export function steerChat(sessionId: string, messageId: number, input: string): Promise<{ messageId: number }> {
+  return requestJson('/api/chat/steer', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, messageId, input }),
+  })
+}
+
 /** 停止该会话进行中的流式生成（「停止」按钮）：通知后端当前等待的响应不再需要，
  *  已产出的部分回答照常落库。stopped=false 表示该会话当前没有在生成的流 */
-export function stopChat(sessionId: string): Promise<{ stopped: boolean }> {
+export function stopChat(sessionId: string, messageId?: number): Promise<{ stopped: boolean }> {
   return requestJson<{ stopped: boolean }>('/api/chat/stop', {
     method: 'POST',
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, messageId }),
   })
 }
 
@@ -338,6 +358,9 @@ export type LiveRun = {
   content: string
   reasoning: string
   trace: TraceSegment[]
+  steers?: SteerMessage[]
+  interims?: InterimReply[]
+  round?: number
   error: string | null
 }
 
@@ -351,6 +374,9 @@ export function sessionLive(id: string): Promise<LiveRun> {
  *  terminal=收尾（done / error，payload 同为快照且 running 已是 false） */
 export type LiveStreamHandlers = {
   onSnapshot?: (run: LiveRun) => void
+  onSteer?: (message: SteerMessage) => void
+  onInterim?: (message: InterimReply) => void
+  onReset?: (reset: ChatStreamReset) => void
   onRound?: (round: number) => void
   onDelta?: (delta: { reasoning: string; content: string }) => void
   onTool?: (tool: { name: string; args: string; round: number }) => void
@@ -391,6 +417,12 @@ export async function sessionLiveStream(
     const payload = JSON.parse(data.join('\n')) as Record<string, unknown>
     if (name === 'snapshot') {
       handlers.onSnapshot?.(payload as unknown as LiveRun)
+    } else if (name === 'steer') {
+      handlers.onSteer?.(payload as unknown as SteerMessage)
+    } else if (name === 'interim') {
+      handlers.onInterim?.(payload as unknown as InterimReply)
+    } else if (name === 'reset') {
+      handlers.onReset?.(payload as unknown as ChatStreamReset)
     } else if (name === 'round') {
       handlers.onRound?.(payload.round as number)
     } else if (name === 'delta') {
@@ -432,7 +464,7 @@ export type SessionEvent = {
   /** 事件游标（SSE id）：重连时作为 Last-Event-ID 带去，后端据此补推断线期间漏掉的 */
   id: number
   sessionId: string
-  kind: 'delivered' | 'answered' | 'todo'
+  kind: 'delivered' | 'answered' | 'todo' | 'title' | 'agent_message_sent'
   /** 该会话此刻是否未读（delivered 有意义：前端据此弹「有新消息」气泡） */
   unread: boolean
   /** 会话标题（便于通知直接显示，省一次列表请求） */
@@ -539,6 +571,31 @@ export function sessionMessages(id: string): Promise<SessionMessage[]> {
   return requestJson<SessionMessage[]>(`/api/sessions/${encodeURIComponent(id)}/messages`)
 }
 
+export type AgentConversationParticipant = { id: string; name: string; avatar?: string | null }
+
+export type AgentConversationMessage = {
+  id: string
+  executionId: number
+  fromAgentId: string
+  toAgentId: string
+  content: string
+  createdAt: number
+  kind: 'request' | 'reply' | 'failure'
+  status: string
+}
+
+export type AgentConversationTranscript = {
+  agentA: AgentConversationParticipant
+  agentB: AgentConversationParticipant
+  messages: AgentConversationMessage[]
+}
+
+export function agentConversation(sessionId: string, messageId: number, signal: AbortSignal): Promise<AgentConversationTranscript> {
+  return requestJson<AgentConversationTranscript>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/agent-messages/${messageId}/conversation`, { signal },
+  )
+}
+
 /** 个人待办清单的一项（plan-of-record）：status ∈ pending | in_progress | done | failed */
 export type SessionTodo = {
   seq: number
@@ -550,6 +607,28 @@ export type SessionTodo = {
 /** 某会话的个人待办清单（plan-of-record，由 write_todos 覆盖式写入）：会话页 TODO 卡片读当前进度 */
 export function sessionTodos(id: string): Promise<SessionTodo[]> {
   return requestJson<SessionTodo[]>(`/api/sessions/${encodeURIComponent(id)}/todos`)
+}
+
+export type ChatTodoApproval = {
+  operationId: number
+  replyMessageId: number
+  content: string
+  note: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'stale'
+  decidedAt: number | null
+}
+
+export type ChatTodoDecision = 'approve' | 'reject'
+
+export function sessionTodoApprovals(id: string): Promise<ChatTodoApproval[]> {
+  return requestJson<ChatTodoApproval[]>(`/api/sessions/${encodeURIComponent(id)}/todo-approvals`)
+}
+
+export function decideSessionTodoApproval(id: string, operationId: number, decision: ChatTodoDecision): Promise<ChatTodoApproval> {
+  return requestJson<ChatTodoApproval>(`/api/sessions/${encodeURIComponent(id)}/todo-approvals/${operationId}`, {
+    method: 'POST',
+    body: JSON.stringify({ decision }),
+  })
 }
 
 /** 请求体（与真实发送一致：model + messages + tools；stream 等由后端在出站前补上） */

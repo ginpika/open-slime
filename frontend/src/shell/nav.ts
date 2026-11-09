@@ -16,6 +16,7 @@ export type IconName =
   | 'home'
   | 'doc'
   | 'graph'
+  | 'snapshot'
   | 'import'
   | 'analyze'
   | 'agent'
@@ -23,6 +24,7 @@ export type IconName =
   | 'subcons'
   | 'workspace'
   | 'settings'
+  | 'system'
   | 'stats'
   | 'flow'
   | 'table'
@@ -33,7 +35,7 @@ export type IconName =
 /** 知识起始页的功能入口；保留原有路由与页面。 */
 export const KNOWLEDGE_NAV: (NavItem & { description: string })[] = [
   { path: '/articles', label: '文档', en: 'DOCS', icon: 'doc', group: '内容', description: '翻阅已保存的文档，回到原文继续阅读。' },
-  { path: '/snapshots', label: '网页快照', en: 'SNAPSHOTS', icon: 'doc', group: '内容', description: '浏览网页、保存快照，让有价值的内容随时可查。' },
+  { path: '/snapshots', label: '网页快照', en: 'SNAPSHOTS', icon: 'snapshot', group: '内容', description: '浏览网页、保存快照，让有价值的内容随时可查。' },
   { path: '/graph', label: '知识图谱', en: 'GRAPH', icon: 'graph', group: '内容', description: '从一个实体出发，探索知识之间的联系。' },
   { path: '/import', label: '文档导入', en: 'IMPORT', icon: 'import', group: '加工', description: '添加一份文档，为知识库积累新的资料。' },
   { path: '/analyze', label: '文档分析', en: 'ANALYZE', icon: 'analyze', group: '加工', description: '处理文档分块，提取并审核实体与关系。' },
@@ -47,6 +49,7 @@ export const NAV: NavItem[] = [
   { path: '/economy', label: '经济', en: 'ECONOMY', icon: 'economy', group: '工作' },
   { path: '/knowledge', label: '知识', en: 'KNOWLEDGE', icon: 'graph', group: '内容' },
   { path: '/multi-agent', label: '智能体', en: 'AGENTS', icon: 'agent', group: '智能' },
+  { path: '/system', label: '系统', en: 'SYSTEM', icon: 'system', group: '智能' },
   { path: '/memory', label: '记忆', en: 'MEMORY', icon: 'memory', group: '智能' },
   { path: '/workspace', label: '工作空间', en: 'WORKSPACE', icon: 'workspace', group: '管理' },
   { path: '/stats', label: '用量 & 统计', en: 'USAGE & STATS', icon: 'stats', group: '管理' },

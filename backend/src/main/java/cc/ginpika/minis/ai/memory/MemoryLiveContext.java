@@ -31,6 +31,7 @@ public class MemoryLiveContext {
     @org.springframework.beans.factory.annotation.Autowired
     public void setProps(cc.ginpika.minis.config.MemoryProps props) { this.props = props; }
     public static void capture(MemorySnapshot snapshot) { CAPTURED.set(snapshot); }
+    public static MemorySnapshot current() { return CURRENT.get(); }
     public static MemorySnapshot takeCaptured() {
         MemorySnapshot snapshot = CAPTURED.get(); CAPTURED.remove(); return snapshot;
     }

@@ -90,13 +90,13 @@ flowchart TD
 
 截图使用生产前端与拦截的测试 API，任务、模型及项目均为测试数据。
 
-![主子 Agent 独立执行过程](assets/ai-coding/composition-children-2026-10-15.png)
+![主子 Agent 独立执行过程](../assets/ai-coding/composition-children-2026-10-15.png)
 
-![编码 Agent 内部角色配置](assets/ai-coding/composition-role-settings-2026-10-15.png)
+![编码 Agent 内部角色配置](../assets/ai-coding/composition-role-settings-2026-10-15.png)
 
-![同一会话的历史轮次](assets/ai-coding/composition-session-2026-10-15.png)
+![同一会话的历史轮次](../assets/ai-coding/composition-session-2026-10-15.png)
 
-![移动端子任务过程](assets/ai-coding/composition-mobile-2026-10-15.png)
+![移动端子任务过程](../assets/ai-coding/composition-mobile-2026-10-15.png)
 
 ## 验证及范围
 

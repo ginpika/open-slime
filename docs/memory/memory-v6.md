@@ -2,8 +2,8 @@
 
 > **2026-10-20 实现更新**：长期记忆正本、图谱关系、来源证据、持久提炼和上下文预算以 [长期记忆图谱实现](long-term-memory-graph.md) 为准。`memory_item` 已迁为 `graph_claim`；下文关于受保护条目“豁免注入预算”的约定已由“独立长期保留、优先且有限注入”替代。其余审批、授权、会话隔离和工作状态契约继续适用。
 
-> **本文档地位**：Memory 体系的**唯一权威标准**。`docs/四层Memory架构.md` 是思想源（设计大纲），
-> `docs/memory-v5.md` 是数据地基，本文在其之上定义**运行标准**。凡冲突以本文为准。
+> **本文档地位**：Memory 体系的**唯一权威标准**。`docs/memory/四层Memory架构.md` 是思想源（设计大纲），
+> `docs/memory/memory-v5.md` 是数据地基，本文在其之上定义**运行标准**。凡冲突以本文为准。
 >
 > **文档纪律**：每条结论标 **【代码事实】/【设计决议】/【待验证】**。
 > 【代码事实】= 已在源码确认；【设计决议】= 本次确定、待实施；【待验证】= 需在副本库实测。
@@ -877,10 +877,10 @@ minis:
 
 ### 21.3 文档关系
 
-- `docs/四层Memory架构.md`：思想源（大纲），v6 逐条对齐其 §一–§十一。
-- `docs/memory-v5.md`：数据地基与既有决议；**文末状态行已过期**（写「未实施」，实际已实施大半），
+- `docs/memory/四层Memory架构.md`：思想源（大纲），v6 逐条对齐其 §一–§十一。
+- `docs/memory/memory-v5.md`：数据地基与既有决议；**文末状态行已过期**（写「未实施」，实际已实施大半），
   P6 更新为「已实施，由 v6 接管演进」。
-- `docs/memory-v6.md`（本文）：**唯一权威标准**。
+- `docs/memory/memory-v6.md`（本文）：**唯一权威标准**。
 
 ### 21.4 术语
 
@@ -908,7 +908,7 @@ minis:
 | **P3 · 工作集 + 按层预算 + 体检 + 前端** | ✅ 已实施 | ① **工作集**：`MemoryWorkStore`（`memory_work`）+ `WorkingSetService`（记录 / 读取 / 关闭 / **收尾蒸馏** / 检查点摘要）+ `note_working` 工具（临时结论进 L3 而非长期记忆）；快照同时呈现「记得什么」与「做到哪一步」；② **检查点接线**（修 D11）：轮末把工作集摘要写进 `task.memory_checkpoint`，`GET /api/memory/working-set/checkpoint` 可查；③ **按层预算与权重**：预算改 `shared/agent/task/publish/episode` 分桶，召回分值改 `余弦 × W_layer × W_domain × W_evidence`（修 D12）；④ **体检**：`MemoryHealthService` + `GET /api/memory/health`（污染 / 挤占 / 漂移 + 总评级）；⑤ **API**：`/working-set`（增删查关）、`items` 增 `layer/identity/sessionId` 过滤、`summary` 增 `workingOpen`；⑥ **前端**：记忆中心新增「泳道 / 工作集 / 体检」三页签 + identity 徽标 |
 | **P4 · 双时态 + 审计 + 遗忘 + 提升 + 前端** | ✅ 已实施 | ① **双时态点查**（T7）：`MemoryItemStore.asOf` / `history`（取代链旧→新）+ `MemoryEdgeStore.asOf` + `MemoryTemporalService` + `GET /api/memory/as-of`、`/items/{id}/history`；② **写入审计**（法四）：`MemoryRevisionStore` + `MemoryItemStore` 在 create/update/supersede/status/promote/delete 处落 revision（actor/turnId 取执行作用域）+ `GET /api/memory/revisions`；③ **显式遗忘**（§12.5）：`MemoryPurgeService`「先预览后执行」+ 墓碑防重建 + `/purge/preview`、`/purge`；④ **提升扫描**（§9.3）：`MemoryPromoter` 生成 L2→L4 候选（受 `promote.*` 配置，默认只产候选）+ `/promote/scan`；⑤ **顺手修一个真实缺陷**：`MemoryEdgeStore.nzEq` 用 NUL 当哨兵导致含该串的 SQL 无法解析（"加知识边"整条路走不通），改为空串哨兵；⑥ **前端**：记忆中心新增「时间轴（as-of + 取代链）」与「发布与收件箱（待接收 / 已发布 / 提升候选）」两页签 |
 | **P5 · 恢复 + 监控** | ✅ 已实施 | ① **工作状态恢复**（T9/T22 · 修 D11 的读取侧）：`WorkingSetRestorer` 把 `task.memory_checkpoint` 还原成工作集条目（幂等：同任务已有恢复项则跳过；空检查点给可读提示），`TaskRecovery` 启动时自动恢复 + `POST /api/memory/restore?taskId=` 手动恢复；② **运行指标**（§17.2）：`MemoryMetrics` 六个计数器（无作用域被拒 / 归属违例 / 乐观锁冲突 / 预算挤出 / 跨域被拦 / 快照覆盖率）+ `GET /api/memory/metrics`，并在体检页签展示；③ **T26 一致性断言**：`MemoryPolicyConsistencyTest` 用同一份数据比对 SQL 谓词与 Java 镜像的命中集合；④ **前端**：工作集页签加「恢复工作状态」按钮，体检页签加「运行指标」卡片 |
-| **P6 · 文档收尾** | ✅ 已实施 | ① `docs/memory-v5.md` 状态行更正（原文写「未实施」已过期，改为指向 v6 并标记为史料）；② 本文档补全 P0–P6 实施进度与验收口径 |
+| **P6 · 文档收尾** | ✅ 已实施 | ① `docs/memory/memory-v5.md` 状态行更正（原文写「未实施」已过期，改为指向 v6 并标记为史料）；② 本文档补全 P0–P6 实施进度与验收口径 |
 | **补充 · Agent 侧记忆写工具** | ✅ 已实施 | 除 `note_working`（L3）/ `publish_knowledge`（L4）外，新增 **`update_memory` / `forget_memory`**（§9.1）：只能改/忘**自己的 L2、当前项目、当前会话**的条目（`MemoryEditService.canEdit`），**画像与已发布 L4 一律拒**（I2）；按 `match` 定位命中多条**不猜**、回候选让模型重挑；更新走乐观锁（不覆盖）；遗忘 = 撤销 + 墓碑（不物删）。同时补上两个写工具漏声明的 `writes()+validate()`（此前被当成只读，会混进子代理默认工具集）。`pin_memory` 与提升仍留人工 |
 | **遗留（已登记）** | ⏳ | ① **P0 副本库迁移实测**（唯一未验收项）；② 心跳「绑定项目」——需要产品先定「心跳会话归属哪里」（当前心跳没有独立会话行，故未强行发明绑定）；③ `MemorySemanticConsolidator` 的 LLM 语义取代仍默认关（需真实模型往返，仅单测未覆盖） |
 

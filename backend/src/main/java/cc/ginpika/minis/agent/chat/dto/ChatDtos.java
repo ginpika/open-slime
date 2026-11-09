@@ -1,5 +1,6 @@
 package cc.ginpika.minis.agent.chat.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.List;
 
@@ -14,12 +15,33 @@ public final class ChatDtos {
         }
     }
 
-    /** POST /api/chat/stop body：sessionId=要停止生成的会话 */
-    public record StopRequest(String sessionId) {
+    /** messageId 可绑定到用户发起停止时看到的在途 turn。 */
+    public record StopRequest(String sessionId, Long messageId) {
+        public StopRequest(String sessionId) {
+            this(sessionId, null);
+        }
     }
 
     /** 停止结果：stopped=是否存在进行中的流式生成并被标记停止（false=该会话当前没有在生成的流） */
     public record StopResult(boolean stopped) {
+    }
+
+    /** messageId 定位到当前 turn 的第一条用户消息。 */
+    public record SteerRequest(String sessionId, Long messageId, String input) {
+    }
+
+    /** 已保存的补充消息 id。 */
+    public record SteerResult(long messageId) {
+    }
+
+    public record SteerMessage(long messageId, String input) {
+    }
+
+    public record InterimReply(long messageId, String content) {
+    }
+
+    /** 重置临时正文后仍应展示的思考和工具记录。 */
+    public record OutputReset(String reasoning, List<TraceSegment> trace) {
     }
 
     /**
@@ -34,7 +56,8 @@ public final class ChatDtos {
      *  content/reasoning/trace=已产出的正文 / 思维链 / 结构化分段；error=失败原因（null=没失败）。
      *  该会话没有在途生成时返回 running=false 的空快照 */
     public record LiveRun(String sessionId, boolean running, String userText, Long userMessageId,
-                          String content, String reasoning, List<TraceSegment> trace, String error) {
+                          String content, String reasoning, List<TraceSegment> trace, String error,
+                          List<SteerMessage> steers, List<InterimReply> interims, int round) {
     }
 
     /** 补全结果（sessionId=本条消息实际落入的会话；messageId=本次提问落库的行 id，供回退定位；
@@ -89,6 +112,7 @@ public final class ChatDtos {
     /** 子代理结论气泡的元信息（kind=subagent 时才有）：title=标题、summary=摘要
      *  （二者由模型把长报告压缩而来，失败时本地截取兜底）、status=done|failed、
      *  execId=执行 id（可在潜意识页按它回看检索过程） */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record SubagentBrief(String title, String summary, String status, Long execId) {
     }
 
@@ -130,7 +154,7 @@ public final class ChatDtos {
     public record TurnSpan(int from, int to, String source, Long replyMessageId) {
     }
 
-    /** 原始上下文预览：body=按与真实发送完全一致的规则组装的请求体（model + messages + tools）；
+    /** 原始上下文预览：body 为按当前会话配置组装的请求体（model + messages + tools）；
      *  turns=各 Turn 在 messages 中的切片（仅用于前端按 Turn 对齐、并回看某 Turn 的调用留痕，
      *  不属于请求体本身——复制 JSON 时只取 body） */
     public record RawContext(ObjectNode body, List<TurnSpan> turns) {

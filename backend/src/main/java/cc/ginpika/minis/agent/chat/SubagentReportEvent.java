@@ -11,5 +11,9 @@ package cc.ginpika.minis.agent.chat;
  * 「整批都跑完后让主模型补一条秘书式总结」是另一件事，见 {@link SubagentBatchDoneEvent}。
  */
 public record SubagentReportEvent(String hubId, String title, long execId, String status,
-                                  String output, String error) {
+                                  String output, String error, boolean contextScoped) {
+    public SubagentReportEvent(String hubId, String title, long execId, String status,
+                               String output, String error) {
+        this(hubId, title, execId, status, output, error, false);
+    }
 }

@@ -40,6 +40,11 @@ public class KnowledgeProvider implements ContextProvider {
     }
 
     @Override
+    public List<ContextFragment> fragments(ContextRequest req) {
+        return ContextFragment.evidence("local_knowledge", systemSuffix(req));
+    }
+
+    @Override
     public String systemSuffix(ContextRequest req) {
         /* 只服务前台会话：子代理 / 潜意识各有自己的检索链路（见 STEP 6-③） */
         if (req.surface() != ContextRequest.Surface.CHAT) {

@@ -237,7 +237,9 @@ public class RoundtableContextBuilder {
     }
 
     private List<String> transcriptLines(String sessionId, int budget) {
-        List<RoundtableMessageStore.MessageRow> all = maMessages.bySession(sessionId);
+        List<RoundtableMessageStore.MessageRow> all = maMessages.bySession(sessionId).stream()
+                .filter(message -> !RoundtableMessageStore.KIND_AGENT_MESSAGE_SENT.equals(message.eventKind()))
+                .toList();
         if (all.isEmpty()) {
             return List.of();
         }

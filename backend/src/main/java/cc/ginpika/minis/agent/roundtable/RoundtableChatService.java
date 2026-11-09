@@ -26,6 +26,9 @@ import cc.ginpika.minis.agent.roundtable.RoundtableTopicStore;
 import cc.ginpika.minis.agent.roundtable.RoundtableTopicStore.TopicRow;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.ToolSurface;
+import cc.ginpika.minis.ai.core.tool.agentmessage.ListAgentsTool;
+import cc.ginpika.minis.ai.core.tool.agentmessage.ReadAgentMessageTool;
+import cc.ginpika.minis.ai.core.tool.agentmessage.SendAgentMessageTool;
 import cc.ginpika.minis.ai.core.tool.graph.ReadMyAnchorTool;
 import cc.ginpika.minis.ai.core.tool.multiagent.AddTodoTool;
 import cc.ginpika.minis.ai.core.tool.multiagent.AskUserTool;
@@ -823,6 +826,7 @@ public class RoundtableChatService implements ChatExecution {
     @Override
     public List<ChatMessageStore.MessageRow> history(HubRow row) {
         return maMessages.bySession(row.id()).stream()
+                .filter(m -> !RoundtableMessageStore.KIND_AGENT_MESSAGE_SENT.equals(m.eventKind()))
                 /* 私聊的历史里只有人的话与它的回答；万一这张桌子原本是多人（成员被删后只剩一位），
                    旧的状态动作行也不该混进来当 assistant 回放 */
                 .filter(m -> !isSolo() || !RoundtableMessageStore.ROLE_EVENT.equals(m.role()))
@@ -1001,6 +1005,9 @@ public class RoundtableChatService implements ChatExecution {
         String name = call.path("function").path("name").asText("");
         if (!allowedToolNames().contains(name)) {
             if(conversationInput.get()!=null)return "本条是普通问答，不改变当前工作；该操作未执行。需要调整工作请使用明确的任务调整入口。";
+            if (SendAgentMessageTool.NAME.equals(name)) {
+                return "当前协作项目通过共享任务板派工。请在任务板上指派成员。";
+            }
             if(TERMINAL_TOOLS.contains(name))
                 return "你没有可用的工作空间授权；请用户在成员能力页绑定工作空间后重试。";
             if(SUBAGENT_TOOLS.contains(name) && plans.find(speakSession.get()).isPresent())
@@ -1222,14 +1229,30 @@ public class RoundtableChatService implements ChatExecution {
     private ArrayNode toolSchemas() {
         ArrayNode out = om.createArrayNode();
         boolean core = AgentDirectory.isBuiltin(speakPeer.get());
+        boolean answeringUser = conversationInput.get() != null;
+        var plan = plans.find(speakSession.get()).orElse(null);
+        boolean canSendAgentMessage = !answeringUser && plan == null;
         /* 逐份并入时必须按名字去重：默认只读工具集与成员「额外工具」的候选清单本就重叠
            （候选来自 grantableTools(CHAT)，其中非写工具正是默认就给的），同名进两次会被供应商判为非法请求 */
         Set<String> seen = new HashSet<>();
-        append(out, seen, core ? tools.toolsOf(ToolSurface.CHAT) : tools.readOnlyToolsOf(ToolSurface.CHAT));
+        ArrayNode chatTools = core ? tools.toolsOf(ToolSurface.CHAT) : tools.readOnlyToolsOf(ToolSurface.CHAT);
+        // 主 Agent 的全量工具也必须遵守本次圆桌的派工边界。
+        if (core && !canSendAgentMessage) {
+            for (int i = 0; i < chatTools.size(); i++) {
+                if (SendAgentMessageTool.NAME.equals(chatTools.get(i).path("function").path("name").asText())) {
+                    chatTools.remove(i);
+                    break;
+                }
+            }
+        }
+        append(out, seen, chatTools);
+        append(out, seen, tools.grantedToolsOf(canSendAgentMessage
+                ? List.of(ListAgentsTool.NAME, ReadAgentMessageTool.NAME, SendAgentMessageTool.NAME)
+                : List.of(ListAgentsTool.NAME, ReadAgentMessageTool.NAME), ToolSurface.CHAT));
         append(out, seen, tools.toolsOf(List.of("read_project_knowledge"), ToolSurface.PEER));
-        if (conversationInput.get() != null) {
+        if (answeringUser) {
             append(out, seen, tools.grantedToolsOf(List.of(ReadMyAnchorTool.NAME), ToolSurface.CHAT));
-            if(plans.find(speakSession.get()).isPresent())
+            if(plan != null)
                 append(out,seen,tools.grantedToolsOf(List.of(ControlCollaborationTool.NAME),ToolSurface.PEER));
             return out;
         }
@@ -1242,10 +1265,10 @@ public class RoundtableChatService implements ChatExecution {
         /* 执行态的个人 Plan & Execute：成员埋头做自己那条活时，可把它拆成可跟踪的小步。
            刻意只在执行态给——讨论态是「说」不是「做」；用 grantedToolsOf 绕过 agentsMayCall
            （write_todos 默认不给成员，这里对它单独放行） */
-        if (workTodo.get() != null && plans.find(speakSession.get()).isEmpty()) {
+        if (workTodo.get() != null && plan == null) {
             append(out, seen, tools.grantedToolsOf(List.of(WriteTodosTool.NAME), ToolSurface.CHAT));
         }
-        if(plans.find(speakSession.get()).isPresent()) append(out,seen,tools.grantedToolsOf(List.of("coding_task"),ToolSurface.CHAT));
+        if(plan != null) append(out,seen,tools.grantedToolsOf(List.of("coding_task"),ToolSurface.CHAT));
         if (!isSolo() || workTodo.get() != null) {
             /* 执行态的入口：共享任务区读写 + 开工 / 请讨论（只在圆桌给，私聊没有任务区）。
                讨论态与执行态都给：执行中也可加条目 / 标完成 / 请再议 */
@@ -1267,7 +1290,6 @@ public class RoundtableChatService implements ChatExecution {
         if (core || !directory.declaredTerminals(peer).isEmpty()) {
             append(out, seen, tools.grantedToolsOf(TERMINAL_TOOLS, ToolSurface.CHAT));
         }
-        var plan = plans.find(speakSession.get()).orElse(null);
         if (plan != null) {
             var todo = workTodo.get();
             Set<String> allowed = todo != null ? ("checking".equals(todo.status())

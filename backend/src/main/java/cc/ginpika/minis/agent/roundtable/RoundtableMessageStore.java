@@ -1,5 +1,6 @@
 package cc.ginpika.minis.agent.roundtable;
 
+import cc.ginpika.minis.agent.chat.store.ChatMessageStore;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -29,6 +30,7 @@ public class RoundtableMessageStore {
     public static final String ROLE_PEER = "peer";
     /** 角色：状态机的一条动作（内容是一句自述式文案，不是某个人说的话） */
     public static final String ROLE_EVENT = "event";
+    public static final String KIND_AGENT_MESSAGE_SENT = ChatMessageStore.KIND_AGENT_MESSAGE_SENT;
 
     /**
      * 系统提示的一种（{@link #ROLE_EVENT} 的 event_kind）：全桌已收到某位成员的受阻 / 报告信号、
@@ -58,10 +60,12 @@ public class RoundtableMessageStore {
     public List<ActivityRow> recentActivity(String sessionId, int limit) {
         return jdbc.query("SELECT id, role, peer_id, peer_name, substr(content,1,280) AS content, "
                         + "event_kind, created_at FROM chat_message WHERE session_id = ? "
+                        + "AND (event_kind IS NULL OR event_kind <> ?) "
                         + "ORDER BY id DESC LIMIT ?",
                 (rs, n) -> new ActivityRow(rs.getLong("id"), rs.getString("role"),
                         rs.getString("peer_id"), rs.getString("peer_name"), rs.getString("content"),
-                        rs.getString("event_kind"), rs.getLong("created_at")), sessionId, limit);
+                        rs.getString("event_kind"), rs.getLong("created_at")),
+                sessionId, KIND_AGENT_MESSAGE_SENT, limit);
     }
 
     /**

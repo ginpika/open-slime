@@ -125,6 +125,15 @@ public class MemoryRetractionStore {
             jdbc.update("INSERT OR IGNORE INTO memory_retracted_source(ref, retracted_at) VALUES(?,?)",
                     ref, System.currentTimeMillis());
         }
+        // Delegated extraction can be linked only by a task reference. Fence queued and leased jobs here.
+        var jobs = jdbc.query("SELECT id, source_refs FROM graph_ingest_job WHERE state IN ('pending','running')",
+                (rs, n) -> new IngestSource(rs.getString(1), rs.getString(2)));
+        for (IngestSource job : jobs) {
+            if (intersects(job.refs(), refs)) {
+                jdbc.update("UPDATE graph_ingest_job SET state='retracted', lease_token=NULL, lease_until=NULL WHERE id=?",
+                        job.id());
+            }
+        }
         if(graph!=null) graph.retractSources(refs);
         for (Source event : events) {
             if (refs.contains("memory_event:" + event.id())) {
@@ -140,4 +149,5 @@ public class MemoryRetractionStore {
 
     private record Source(long id, String ref) { }
     private record Work(long id, long task, String ref, long createdAt) { }
+    private record IngestSource(String id, String refs) { }
 }
