@@ -409,68 +409,6 @@
 
 .ad-pick__desc { color: var(--sl-muted); font-size: .75rem; line-height: 1.55; }
 
-.ad-mono {
-  font-family: ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
-  font-size: .75rem;
-}
-
-.ad-chips { display: flex; flex-wrap: wrap; gap: .375rem; }
-
-.ad-chips button {
-  display: inline-flex;
-  align-items: center;
-  gap: .375rem;
-  min-height: 2rem;
-  padding: .25rem .625rem;
-  border: 1px solid var(--sl-line);
-  border-radius: 999px;
-  color: var(--sl-muted);
-  font-size: .75rem;
-  line-height: 1.5;
-}
-
-.ad-chips button:hover { border-color: var(--sl-line-strong); color: var(--sl-fg); }
-
-.ad-chips button[aria-pressed='true'] {
-  border-color: var(--sl-accent);
-  background: var(--sl-accent-soft);
-  color: var(--sl-fg);
-}
-
-.ad-switch-label {
-  display: inline-flex;
-  align-items: center;
-  gap: .5rem;
-  color: var(--sl-muted);
-  font-size: .75rem;
-  cursor: pointer;
-}
-
-.ad-switch {
-  position: relative;
-  flex: none;
-  width: 1.75rem;
-  height: 1rem;
-  border: 1px solid var(--sl-line-strong);
-  border-radius: 999px;
-  background: var(--sl-side);
-}
-
-.ad-switch span {
-  position: absolute;
-  top: 50%;
-  left: 1px;
-  width: .75rem;
-  height: .75rem;
-  border-radius: 50%;
-  background: var(--sl-muted);
-  transform: translateY(-50%);
-  transition: left 130ms ease, background 130ms ease;
-}
-
-.ad-switch.is-on { border-color: var(--sl-accent); background: var(--sl-accent); }
-.ad-switch.is-on span { left: calc(100% - .8125rem); background: var(--sl-on-accent); }
-
 .ad-empty {
   margin: 0;
   padding: .75rem 1rem;

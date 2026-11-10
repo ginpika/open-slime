@@ -41,7 +41,7 @@ public class AgentSeeder {
         }
         long now = System.currentTimeMillis();
         store.insert(new AgentStore.AgentRow(AgentDirectory.BUILTIN_ID, BUILTIN_NAME, true,
-                null, null, null, 0, null, null, null, now, now, null, null));
+                null, null, 0, null, null, null, now, now, null, null));
         log.info("已播种内置 Agent「{}」：首页对话与心跳的调度者，不可删除", BUILTIN_NAME);
     }
 }

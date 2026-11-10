@@ -116,11 +116,20 @@ public class ToolManager {
         return out;
     }
 
-    /** 可被人显式授予的工具（某工具面上、可由 agent 调用的那些）：成员页「额外工具」的候选清单 */
-    public List<AiTool> grantableTools(ToolSurface surface) {
-        return availableTools(surface).stream()
-                .filter(AiTool::agentsMayCall)
-                .toList();
+    /**
+     * 某个工具面上全部可由 agent 调用的工具定义：多智能体成员统一拿到这一份。
+     *
+     * <p>工具不再逐成员授权；{@link AiTool#agentsMayCall()} 只用于挡掉「不该自动交给 agent」的
+     * 管理类工具，其余全部开放。终端工具仍由工作空间绑定单独授予，不在本清单里。
+     */
+    public ArrayNode agentToolsOf(ToolSurface surface) {
+        ArrayNode out = om.createArrayNode();
+        for (AiTool tool : tools) {
+            if (tool.available() && tool.surfaces().contains(surface) && tool.agentsMayCall()) {
+                out.add(tool.schema(om));
+            }
+        }
+        return out;
     }
 
     /** 是否属于会写知识库（文档 / 图谱）的工具：调用后应记入写库清单 */

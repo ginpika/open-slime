@@ -85,8 +85,8 @@ import org.springframework.web.server.ResponseStatusException;
  *       多智能体与其他体系隔离）；</li>
  *   <li>{@link #requestBody}——system 换成「成员人格 + 协作规程」（对同一成员恒定），
  *       全部历史压成唯一一条 user「公开记录 + 此刻局面」（请求里没有 assistant 历史）；
- *       工具面换成只读检索 + 发言工具 + 状态机工具（{@link ToolSurface#PEER}），
- *       再加上这位成员自己声明的额外工具与它绑定了工作空间时的终端工具；</li>
+ *       工具面换成全部可用的对话工具 + 发言工具 + 状态机工具（{@link ToolSurface#PEER}），
+ *       再加上绑定了工作空间时的终端工具；</li>
  *   <li>{@link #runTool}——多接一条发言工具 / 状态机工具 / 终端工具的分发
  *       （终端只在它绑定的工作空间上执行，见 {@link #terminalTool}）。</li>
  * </ul>
@@ -1219,9 +1219,9 @@ public class RoundtableChatService implements ChatExecution {
     }
 
     /**
-     * 成员这次能用的工具：只读检索（与子代理同一套窄工具集）+ 发言工具 + 状态机工具
-     * + 它自己点名的额外工具 + （绑定了工作空间时）终端工具。
-     * 主 Agent 直接获得全部 CHAT 工具，不经过普通成员的工具授权与工作空间绑定限制。
+     * 成员这次能用的工具：全部可用的对话工具 + 发言工具 + 状态机工具
+     * +（绑定了工作空间时）终端工具。
+     * 工具不再逐成员授权，所有 Agent 一律开放全部工具。
      *
      * <p>私聊时去掉发言工具与状态机工具：正文就是回答本身，不需要 speak 那层信封，
      * 也没有话题可以让 propose_end / go_silent 去改。
@@ -1232,10 +1232,10 @@ public class RoundtableChatService implements ChatExecution {
         boolean answeringUser = conversationInput.get() != null;
         var plan = plans.find(speakSession.get()).orElse(null);
         boolean canSendAgentMessage = !answeringUser && plan == null;
-        /* 逐份并入时必须按名字去重：默认只读工具集与成员「额外工具」的候选清单本就重叠
-           （候选来自 grantableTools(CHAT)，其中非写工具正是默认就给的），同名进两次会被供应商判为非法请求 */
+        /* 逐份并入时必须按名字去重：默认对话工具集与上下文工具可能重叠，
+           同名进两次会被供应商判为非法请求 */
         Set<String> seen = new HashSet<>();
-        ArrayNode chatTools = core ? tools.toolsOf(ToolSurface.CHAT) : tools.readOnlyToolsOf(ToolSurface.CHAT);
+        ArrayNode chatTools = tools.agentToolsOf(ToolSurface.CHAT);
         // 主 Agent 的全量工具也必须遵守本次圆桌的派工边界。
         if (core && !canSendAgentMessage) {
             for (int i = 0; i < chatTools.size(); i++) {
@@ -1279,10 +1279,6 @@ public class RoundtableChatService implements ChatExecution {
             append(out, seen, tools.grantedToolsOf(SUBAGENT_TOOLS, ToolSurface.CHAT));
         }
         AgentRow peer = speakingPeer();
-        List<String> extra = directory.declaredTools(peer);
-        if (!core && !extra.isEmpty()) {
-            append(out, seen, tools.toolsOf(extra, ToolSurface.CHAT));
-        }
         /* 成员自己的人格锚点：属于「当前发言的成员」，圆桌与私聊都该给，也不需人勾选——
            恒定授予（grantedToolsOf 不过 agentsMayCall，它挡的正是这类只给成员的只读工具，见 ReadMyAnchorTool） */
         append(out, seen, tools.grantedToolsOf(List.of(ReadMyAnchorTool.NAME), ToolSurface.CHAT));

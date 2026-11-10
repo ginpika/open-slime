@@ -531,13 +531,13 @@ CREATE INDEX IF NOT EXISTS idx_changeset_item ON changeset_item(changeset_id, id
 -- builtin=1 的是内置 Agent（不可删除、默认存在）——它同时是首页对话的应答者与心跳的调度者，
 -- 由 AgentSeeder 启动播种；其余由人在「智能体」页配置，不由大模型自建。
 -- 每位智能体自己那套提示词存在 agent_prompt_*（见下），未配的位回退到内置（全局提示词）。
--- 能力面逐成员配：tools 是额外可调的工具，terminals 是它能碰的工作空间（term_target.id）——
--- 两者都是「在默认只读检索之上追加」，空/未配即没有这层额外能力。
+-- 能力面逐成员配工作空间：terminals 是它能碰的工作空间（term_target.id）——
+-- 绑定了即授予 run_command / list_terminals，且只在绑定的目标上可用。
+-- 工具本身不逐成员授权：所有智能体都自动获得全部可用的对话工具。
 CREATE TABLE IF NOT EXISTS agent (
   id          TEXT PRIMARY KEY,               -- uuid（内置 Agent 用固定 id）
   name        TEXT NOT NULL,                  -- 展示名；也是发言时被 @ 的名字
   builtin     INTEGER NOT NULL DEFAULT 0,     -- 1=内置 Agent（不可删除、默认存在）
-  tools       TEXT,                           -- JSON：额外允许调用的工具名数组；NULL=默认只读检索
   terminals   TEXT,                           -- JSON：绑定给它的工作空间（term_target.id 数组）；
                                               --    非空即授予 run_command / list_terminals，且只在绑定的目标上可用
   model_id    TEXT,                           -- 该智能体的模型（llm_model.id / 'env'）；NULL=设置页默认

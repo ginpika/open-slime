@@ -6,7 +6,7 @@
  * 提示词、后台、语音、编程任务等既有功能面板按原样嵌入，避免功能回退。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import {
   ApiError,
   createMaPeer,
@@ -17,11 +17,9 @@ import {
   getSettings,
   getTerminal,
   listMaPeers,
-  listMaTools,
   updateMaPeer,
   type MaPeer,
   type MaPeerAnchor,
-  type MaToolOption,
   type ModelView,
   type TerminalTarget,
 } from '../../api/client'
@@ -63,7 +61,6 @@ type Draft = {
   role: string
   roleColor: string
   avatar: string | null
-  tools: string[]
   terminals: string[]
 }
 
@@ -126,21 +123,6 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function Switch({ on, label, onToggle }: { on: boolean; label: string; onToggle: (next: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      className={`ad-switch${on ? ' is-on' : ''}`}
-      onClick={() => onToggle(!on)}
-    >
-      <span aria-hidden="true" />
-    </button>
-  )
-}
-
 function RoleColorPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <label className="ad-color" title="角色标签颜色">
@@ -160,7 +142,6 @@ function PickCard({
   title,
   badge,
   description,
-  mono,
   locked,
   lockedReason,
   onToggle,
@@ -169,7 +150,6 @@ function PickCard({
   title: string
   badge?: string
   description?: string
-  mono?: boolean
   locked?: boolean
   lockedReason?: string
   onToggle: () => void
@@ -189,7 +169,7 @@ function PickCard({
       </span>
       <span className="ad-pick__body">
         <span className="ad-pick__title">
-          <span className={mono ? 'ad-mono' : undefined}>{title}</span>
+          <span>{title}</span>
           {badge && <span className="ad-tag">{badge}</span>}
         </span>
         {description && <span className="ad-pick__desc">{description}</span>}
@@ -311,7 +291,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
   const [peer, setPeer] = useState<MaPeer | null>(null)
   const [loading, setLoading] = useState(true)
   const [models, setModels] = useState<ModelView[]>([])
-  const [toolOptions, setToolOptions] = useState<MaToolOption[]>([])
   const [workspaceOptions, setWorkspaceOptions] = useState<TerminalTarget[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
 
@@ -319,8 +298,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
   const initializeDraft = draftState.initialize
   const [savingProfile, setSavingProfile] = useRememberedState(`agent:${peerId}:saving`, false)
   const [tab, setTab] = useRememberedState<RightTab>(`agent:${peerId}:tab`, isNew ? 'cap' : 'prompt')
-  const [toolDomain, setToolDomain] = useState<string | null>(null)
-  const [showAllTools, setShowAllTools] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const loadedIdRef = useRef<string | null>(null)
 
@@ -347,13 +324,12 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
 
   const loadCapabilityOptions = useCallback(async () => {
     try {
-      const [terminal, toolList] = await Promise.all([getTerminal(), listMaTools(isNew ? undefined : peerId)])
+      const terminal = await getTerminal()
       setWorkspaceOptions(terminal.targets)
-      setToolOptions(toolList)
     } catch (error) {
       notify(errMsg(error), 'err')
     }
-  }, [notify, isNew, peerId])
+  }, [notify])
 
   useEffect(() => {
     void (async () => {
@@ -366,7 +342,7 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
     if (isNew) {
       initializeDraft({
         name: '', modelId: '', note: '', role: '', roleColor: DEFAULT_ROLE_COLOR,
-        avatar: null, tools: [], terminals: [],
+        avatar: null, terminals: [],
       })
       return
     }
@@ -379,7 +355,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
       role: peer.role ?? '',
       roleColor: peer.roleColor ?? DEFAULT_ROLE_COLOR,
       avatar: peer.avatar,
-      tools: peer.tools ?? [],
       terminals: peer.terminals ?? [],
     })
   }, [peer, isNew, initializeDraft])
@@ -396,30 +371,12 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
     }
   }
 
-  const togglePick = (key: 'tools' | 'terminals', id: string) =>
+  const toggleTerminal = (id: string) =>
     setDraft((current) => {
       if (!current || coreAgent) return current
-      const values = current[key]
-      return { ...current, [key]: values.includes(id) ? values.filter((item) => item !== id) : [...values, id] }
+      const values = current.terminals
+      return { ...current, terminals: values.includes(id) ? values.filter((item) => item !== id) : [...values, id] }
     })
-
-  const visibleTools = useMemo(
-    () => (coreAgent || showAllTools ? toolOptions : toolOptions.filter((tool) => !tool.defaultGranted)),
-    [toolOptions, showAllTools, coreAgent],
-  )
-
-  const toolGroups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; tools: MaToolOption[] }>()
-    for (const tool of visibleTools) {
-      const group = map.get(tool.domain) ?? { key: tool.domain, label: tool.domainLabel, tools: [] }
-      group.tools.push(tool)
-      map.set(tool.domain, group)
-    }
-    return [...map.values()]
-  }, [visibleTools])
-
-  const activeToolGroup = toolGroups.find((group) => group.key === toolDomain) ?? toolGroups[0] ?? null
-  const toolOn = (tool: MaToolOption) => coreAgent || tool.defaultGranted || (draft?.tools ?? []).includes(tool.name)
 
   const saveProfile = async () => {
     if (!draft || savingProfile) return
@@ -438,7 +395,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
           role: draft.role,
           roleColor: draft.roleColor,
           avatar: draft.avatar ?? '',
-          tools: coreAgent ? undefined : draft.tools,
           terminals: coreAgent ? undefined : draft.terminals,
         })
         draftState.accept({ ...draft, name }, draft)
@@ -452,7 +408,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
           role: draft.role,
           roleColor: draft.roleColor,
           avatar: draft.avatar ?? undefined,
-          tools: draft.tools,
           terminals: draft.terminals,
         })
         draftState.accept(null, draft)
@@ -647,8 +602,8 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
                 <div className="ad-sections">
                   <p className="ad-desc">
                     {coreAgent
-                      ? '内置 Agent 是系统主控，直接代表软件向你负责，协调其他 Agent 并检查交付。全部能力、工具和工作空间自动开放，无需逐项授权；新增工具和工作空间自动继承。'
-                      : '在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
+                      ? '内置 Agent 是系统主控，直接代表软件向你负责，协调其他 Agent 并检查交付。全部能力、工具和工作空间自动开放，无需逐项授权。'
+                      : '所有智能体默认获得全部可用工具（圆桌发言时另有 speak / 状态机工具）。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
                   </p>
 
                   <section className="ad-section">
@@ -669,72 +624,13 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
                             title={target.name}
                             badge={target.kind}
                             description={target.enabled ? undefined : '未启用'}
-                            onToggle={() => togglePick('terminals', target.id)}
+                            onToggle={() => toggleTerminal(target.id)}
                           />
                         ))}
                       </div>
                     )}
                     <p className="ad-hint">
                       {coreAgent ? '全部工作空间自动纳入访问范围；连接与启用状态在工作空间页管理。' : '勾选即授予 run_command / list_terminals，且只在这几台上执行。'}
-                    </p>
-                  </section>
-
-                  <section className="ad-section">
-                    <div className="ad-section-head">
-                      <h2>可用工具</h2>
-                      {coreAgent ? <span className="ad-tag">全部开放</span> : (
-                        <label className="ad-switch-label">
-                          显示所有工具
-                          <Switch on={showAllTools} label="显示所有工具" onToggle={setShowAllTools} />
-                        </label>
-                      )}
-                    </div>
-                    {toolGroups.length === 0 ? (
-                      <p className="ad-empty">
-                        {coreAgent || showAllTools
-                          ? '没有可授予的工具。'
-                          : '没有可额外授予的工具。打开「显示所有工具」可查看默认订阅的只读工具。'}
-                      </p>
-                    ) : (
-                      <>
-                        <div className="ad-chips" role="group" aria-label="工具领域">
-                          {toolGroups.map((group) => {
-                            const selected = group.tools.filter(toolOn).length
-                            const active = group.key === activeToolGroup?.key
-                            return (
-                              <button
-                                key={group.key}
-                                type="button"
-                                aria-pressed={active}
-                                onClick={() => setToolDomain(group.key)}
-                              >
-                                {group.label}
-                                <span className="ad-mono">{selected}/{group.tools.length}</span>
-                              </button>
-                            )
-                          })}
-                        </div>
-                        <div className="ad-grid ad-grid--tools">
-                          {(activeToolGroup?.tools ?? []).map((tool) => (
-                            <PickCard
-                              key={tool.name}
-                              checked={toolOn(tool)}
-                              locked={coreAgent || tool.defaultGranted}
-                              lockedReason={coreAgent ? '系统主控自动拥有全部工具，无需授权' : undefined}
-                              title={tool.name}
-                              badge={coreAgent ? '已开放' : tool.defaultGranted ? '默认' : tool.name === 'coding_task' ? '编程' : tool.writes ? '写库' : undefined}
-                              mono
-                              description={tool.description}
-                              onToggle={() => togglePick('tools', tool.name)}
-                            />
-                          ))}
-                        </div>
-                      </>
-                    )}
-                    <p className="ad-hint">
-                      {coreAgent
-                        ? '展示当前系统提供的全部对话工具；发言与任务工具按运行场景提供。可用范围随系统能力更新，保存资料不会缩减权限。'
-                        : '只读检索工具默认订阅、始终可用（圆桌发言时另有 speak / 状态机工具）；这里勾的是在它们之上额外放开的。'}
                     </p>
                   </section>
                 </div>

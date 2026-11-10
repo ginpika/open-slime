@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>为什么 agentsMayCall=false 且只落在 CHAT / HEARTBEAT 面</b>：锚点是「成员 / 某位 Agent」的概念——
  * 首页对话没有它，子代理也不该拿着别人的坐标。置 false 使它不进 {@code readOnlyToolsOf}（成员 / 子代理的默认只读
- * 工具集）与成员页候选清单（{@code grantableTools}），只由 {@code RoundtableChatService} 在成员发言时、
+ * 工具集）与成员统一工具集（{@code agentToolsOf}），只由 {@code RoundtableChatService} 在成员发言时、
  * 或 {@code HeartbeatService} 在某 Agent 心跳时显式授予。「自己」即当前发言成员 / 心跳 Agent，由编排层的
  * ThreadLocal 解出，故执行落在各自的分发里。
  */

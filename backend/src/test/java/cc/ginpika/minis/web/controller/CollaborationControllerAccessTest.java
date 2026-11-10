@@ -96,7 +96,7 @@ class CollaborationControllerAccessTest {
     @Test void manualTodoInterventionCapturesTheAuthenticatedActorForRescheduling() throws Exception {
         var work=mock(RoundtableWorkRuntime.class);
         var board=mock(RoundtableTodoStore.class);
-        var agents=new AgentController(null,null,null,null,null,null,new ObjectMapper(),null,null,null,null,null,null,null,null,null,work,board,lifecycle);
+        var agents=new AgentController(null,null,null,null,null,new ObjectMapper(),null,null,null,null,null,null,null,null,null,work,board,lifecycle);
         var agentMvc=MockMvcBuilders.standaloneSetup(agents).build();
         when(work.checkNow("todo")).thenAnswer(inv -> { assertEquals("alice",UserScope.get()); return true; });
         when(work.drop("todo")).thenAnswer(inv -> { assertEquals("alice",UserScope.get()); return true; });

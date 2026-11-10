@@ -56,7 +56,7 @@ class EconomyServiceTest {
             jdbc.execute("PRAGMA foreign_keys=ON");
             new ResourceDatabasePopulator(new ClassPathResource("economy/schema.sql")).execute(ds);
             jdbc.execute("CREATE TABLE economy_report(id TEXT,owner TEXT,kind TEXT,created_at INTEGER,body TEXT)");
-            when(agents.peer("a")).thenReturn(Optional.of(new AgentStore.AgentRow("a","分析员",false,null,null,"vision",0,null,null,null,0,0,null,null)));
+            when(agents.peer("a")).thenReturn(Optional.of(new AgentStore.AgentRow("a","分析员",false,null,"vision",0,null,null,null,0,0,null,null)));
             when(prompts.system("a")).thenReturn("成员身份");when(settings.resolveChatModel("vision")).thenReturn(target);
             when(chat.chatRaw(eq(target),any(),isNull(),anyString())).thenAnswer(call->{
                 String source=call.getArgument(3);ObjectNode body=call.getArgument(1);

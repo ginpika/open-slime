@@ -24,7 +24,7 @@ class CodingAgentMergeTest {
             var jdbc = new JdbcTemplate(source);
             var agents = new AgentStore(jdbc); new AgentSeeder(agents);
             agents.insert(new AgentStore.AgentRow(BuiltinAgents.CODING, "old-coder", true,
-                    null, null, "old-model", 1, null, null, null, 0, 0, null, null));
+                    null, "old-model", 1, null, null, null, 0, 0, null, null));
             var legacy = new AgentPromptStore(jdbc);
             legacy.insertVersion(new AgentPromptStore.VersionRow("old", BuiltinAgents.CODING,
                     "identity", "custom coding", "preserved-user-coding-rules", 0));

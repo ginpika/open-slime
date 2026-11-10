@@ -9,12 +9,10 @@
  * 竖着堆会拖成一条长栏。提示词面板与潜意识页那张「对话」tab 是同一套编排 UI，只是数据换成这位成员
  * 自己的：改这里只影响它，不碰首页对话，也不碰别的成员。
  *
- * <p>内置主 Agent 自动拥有全部工具和工作空间；能力页展示实际范围，不保存授权快照。
- * 其他成员的「能力」逐成员各一份：<b>可用工具</b>（在默认的只读检索 + 发言 / 状态机工具之上追加）与
- * <b>工作空间</b>（绑定 {@code term_target}；绑了才授予 {@code run_command} / {@code list_terminals}，
+ * <p>内置主 Agent 自动拥有全部工作空间；能力页展示实际范围，不保存授权快照。
+ * 所有智能体默认获得全部可用工具；成员的「能力」逐成员只配<b>工作空间</b>
+ * （绑定 {@code term_target}；绑了才授予 {@code run_command} / {@code list_terminals}，
  * 且只能访问绑定的这几台）。它与左侧资料共用同一份草稿，因此只有一个保存动作。
- * 「可用工具」缺省只列额外可勾的工具，打开<b>显示所有工具</b>开关才把默认订阅的只读工具也摆出来
- * （显示成已勾选 + 「默认」角标、点不动），于是「默认给了哪些」在配置面上一目了然。
  *
  * <p>三个动作各归其位：<b>返回上级</b>在页头左侧（回成员列表，取代了原先的「取消」按钮）；
  * <b>保存</b>在页头那一行的最右端（与导航同处一行，不占正文也不悬空）；
@@ -28,7 +26,7 @@
  */
 
 import { AppIcon } from '../components/AppIcon'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   createMaPeer,
@@ -39,11 +37,9 @@ import {
   getSettings,
   getTerminal,
   listMaPeers,
-  listMaTools,
   updateMaPeer,
   type MaPeer,
   type MaPeerAnchor,
-  type MaToolOption,
   type ModelView,
   type TerminalTarget,
 } from '../api/client'
@@ -95,8 +91,6 @@ type Draft = {
   /** 角色标签的颜色（#RRGGBB） */
   roleColor: string
   avatar: string | null
-  /** 额外可用工具（工具名）；空 = 只有默认的只读检索 + 发言 / 状态机工具 */
-  tools: string[]
   /** 绑定的工作空间（term_target.id）；非空才授予 run_command / list_terminals */
   terminals: string[]
 }
@@ -130,34 +124,30 @@ function RoleColorPicker({ value, onChange }: { value: string; onChange: (v: str
 }
 
 /**
- * 一项可勾选的能力卡片（工具 / 工作空间）：勾选态用色块与描边表示，整卡可点。
+ * 一项可勾选的能力卡片（工作空间）：勾选态用色块与描边表示，整卡可点。
  *
  * <p>不用 {@link Field}（它渲染 {@code <label>}）：label 会把点击转给内部第一个 labelable 元素，
  * 一格里放多个按钮时会误触第一项。这里自己写同款小标题。
  *
- * <p>{@code locked} 给「默认订阅」的工具用：它本就始终可用，勾选态固定为选上、点击不再切换
- * （见 {@link AgentDetail} 的「显示所有工具」开关）。
+ * <p>{@code locked} 给「系统主控自动拥有」的工作空间用：勾选态固定为选上、点击不再切换。
  */
 function PickCard({
   checked,
   title,
   badge,
-  mono,
   description,
   locked,
   lockedReason,
   onToggle,
 }: {
   checked: boolean
-  /** 主标题（工具名 / 工作空间名） */
+  /** 主标题（工作空间名） */
   title: string
-  /** 右上角小角标（工具用「写库」/「默认」；工作空间用 kind：docker / ssh） */
+  /** 右上角小角标（工作空间用 kind：docker / ssh） */
   badge?: string
-  /** 主标题用等宽字体（工具名） */
-  mono?: boolean
-  /** 副文本（工具用描述；工作空间用「未启用」等提示），同时作为悬停提示 */
+  /** 副文本（工作空间用「未启用」等提示），同时作为悬停提示 */
   description?: string
-  /** 锁定：默认订阅的工具，点不动（勾选态由外部定死） */
+  /** 锁定：系统主控自动拥有，点不动（勾选态由外部定死） */
   locked?: boolean
   lockedReason?: string
   onToggle: () => void
@@ -166,7 +156,7 @@ function PickCard({
   return (
     <button
       type="button"
-      title={locked ? `${lockedReason ?? '默认订阅：始终可用，无需勾选'}${description ? `\n${description}` : ''}` : description}
+      title={locked ? `${lockedReason ?? '系统主控自动拥有，无需勾选'}${description ? `\n${description}` : ''}` : description}
       onClick={locked ? undefined : onToggle}
       aria-disabled={locked || undefined}
       aria-pressed={checked}
@@ -182,9 +172,7 @@ function PickCard({
           }`}
         />
         <span
-          className={`min-w-0 flex-1 break-all text-md font-medium text-fg sm:text-base ${
-            mono ? 'font-mono' : ''
-          }`}
+          className="min-w-0 flex-1 break-all text-md font-medium text-fg sm:text-base"
         >
           {title}
         </span>
@@ -193,27 +181,6 @@ function PickCard({
       {description && (
         <span className="line-clamp-3 text-md leading-relaxed text-muted sm:text-base">{description}</span>
       )}
-    </button>
-  )
-}
-
-/** 开关：开=点缀色实底 + 滑块靠右，关=描边 + 中性底（与「后台」页那颗同款，缩小一号好和小标题同排） */
-function MiniSwitch({ on, onToggle }: { on: boolean; onToggle: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      onClick={() => onToggle(!on)}
-      className={`relative h-4 w-7 shrink-0 rounded-full border transition ${
-        on ? 'border-accent bg-accent' : 'border-line-strong bg-fg/10'
-      }`}
-    >
-      <span
-        className={`absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full transition-all ${
-          on ? 'left-[13px] bg-accent-fg' : 'left-[1px] bg-fg/30'
-        }`}
-      />
     </button>
   )
 }
@@ -417,8 +384,7 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
   const [modelOptions, setModelOptions] = useState<Option[]>([])
   /** 原始模型清单（后台心跳的模型下拉要的是 ModelView，不是 Option） */
   const [models, setModels] = useState<ModelView[]>([])
-  /** 能力面的候选：可授予的工具 与 可绑定的工作空间（都来自各自的管理页，这里只做选择） */
-  const [toolOptions, setToolOptions] = useState<MaToolOption[]>([])
+  /** 能力面的候选：可绑定的工作空间（来自工作空间管理页，这里只做选择） */
   const [workspaceOptions, setWorkspaceOptions] = useState<TerminalTarget[]>([])
   const [toast, setToast] = useState<{ msg: string; kind?: 'ok' | 'err' } | null>(null)
 
@@ -426,15 +392,8 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
   const initializeDraft = draftState.initialize
   const [savingProfile, setSavingProfile] = useRememberedState(`agent:${peerId}:saving`, false)
   /** 右栏当前显示哪一块：已有成员缺省停在「提示词」（最先要配的身份设定，放最左）；
-   *  新建成员还没有 peer，提示词无从配起，先落在「能力」把资料与工具配上 */
+   *  新建成员还没有 peer，提示词无从配起，先落在「能力」把资料与工作空间配上 */
   const [tab, setTab] = useRememberedState<RightTab>(`agent:${peerId}:tab`, isNew ? 'cap' : 'prompt')
-  /** 「可用工具」当前停在哪个业务领域 Tab（null = 默认选中第一个领域） */
-  const [toolDomain, setToolDomain] = useState<string | null>(null)
-  /**
-   * 「显示所有工具」：关（缺省）只列需要人勾的额外工具；开则把默认订阅的只读工具也摆出来
-   * （它们显示成已勾选并锁定）——「默认给了哪些」因此不再是配置面上的黑盒。
-   */
-  const [showAllTools, setShowAllTools] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   /** 草稿只在「首次载入这位成员」时初始化，之后刷新资料不覆盖用户正在改的内容 */
   const loadedIdRef = useRef<string | null>(null)
@@ -465,18 +424,16 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
   }, [notify])
 
   /**
-   * 能力面的候选清单：工具从 {@code /api/agents/tools} 取（后端已滤掉不该由名字授予的），
-   * 工作空间复用终端模块的全量目标（含未启用的，页面上标注出来）。
+   * 能力面的候选清单：工作空间复用终端模块的全量目标（含未启用的，页面上标注出来）。
    */
   const loadCapabilityOptions = useCallback(async () => {
     try {
-      const [terminal, toolList] = await Promise.all([getTerminal(), listMaTools(isNew ? undefined : peerId)])
+      const terminal = await getTerminal()
       setWorkspaceOptions(terminal.targets)
-      setToolOptions(toolList)
     } catch (e) {
       notify(errMsg(e), 'err')
     }
-  }, [notify, isNew, peerId])
+  }, [notify])
 
   useEffect(() => {
     void (async () => {
@@ -495,7 +452,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
         role: '',
         roleColor: DEFAULT_ROLE_COLOR,
         avatar: null,
-        tools: [],
         terminals: [],
       })
       return
@@ -509,7 +465,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
       role: peer.role ?? '',
       roleColor: peer.roleColor ?? DEFAULT_ROLE_COLOR,
       avatar: peer.avatar,
-      tools: peer.tools ?? [],
       terminals: peer.terminals ?? [],
     })
   }, [peer, isNew, initializeDraft])
@@ -527,37 +482,13 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
     }
   }
 
-  /** 勾选 / 取消勾选一项能力（工具或工作空间）：整份清单随成员一起保存 */
-  const togglePick = (key: 'tools' | 'terminals', id: string) =>
+  /** 勾选 / 取消勾选一项工作空间：整份清单随成员一起保存 */
+  const toggleTerminal = (id: string) =>
     setDraft((d) => {
       if (!d || coreAgent) return d
-      const cur = d[key]
-      return { ...d, [key]: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] }
+      const cur = d.terminals
+      return { ...d, terminals: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] }
     })
-
-  /**
-   * 当前摆出来的工具：缺省滤掉默认订阅的那些（它们是「本来就给」的，不在「额外勾选」里），
-   * 打开「显示所有工具」才全摆出来（见 {@link showAllTools}）。
-   */
-  const visibleTools = useMemo(
-    () => (coreAgent || showAllTools ? toolOptions : toolOptions.filter((t) => !t.defaultGranted)),
-    [toolOptions, showAllTools, coreAgent],
-  )
-
-  /** 可用工具按业务领域分组（后端已按领域序返回，这里按首次出现顺序成组） */
-  const toolGroups = useMemo(() => {
-    const map = new Map<string, { key: string; label: string; tools: MaToolOption[] }>()
-    for (const t of visibleTools) {
-      const g = map.get(t.domain) ?? { key: t.domain, label: t.domainLabel, tools: [] }
-      g.tools.push(t)
-      map.set(t.domain, g)
-    }
-    return [...map.values()]
-  }, [visibleTools])
-  const activeToolGroup = toolGroups.find((g) => g.key === toolDomain) ?? toolGroups[0] ?? null
-
-  /** 某项工具此刻是否「已生效」：默认订阅的始终算（无需勾选），其余看草稿里有没有勾 */
-  const toolOn = (t: MaToolOption) => coreAgent || t.defaultGranted || (draft?.tools ?? []).includes(t.name)
 
   const saveProfile = async () => {
     if (!draft || savingProfile) return
@@ -570,7 +501,7 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
     try {
       if (peer) {
         /* 空串是「清空」的语言：modelId 置空 = 回到跟随默认，avatar 置空 = 移除头像；
-           工具 / 工作空间传数组，空数组即清空这层额外能力 */
+           工作空间传数组，空数组即清空这层能力 */
         await updateMaPeer(peer.id, {
           name: clean,
           modelId: draft.modelId,
@@ -578,7 +509,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
           role: draft.role,
           roleColor: draft.roleColor,
           avatar: draft.avatar ?? '',
-          tools: coreAgent ? undefined : draft.tools,
           terminals: coreAgent ? undefined : draft.terminals,
         })
         draftState.accept({ ...draft, name: clean }, draft)
@@ -592,7 +522,6 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
           role: draft.role,
           roleColor: draft.roleColor,
           avatar: draft.avatar ?? undefined,
-          tools: draft.tools,
           terminals: draft.terminals,
         })
         /* 建好了就换到它自己的内部页（换掉地址而非 push，免得后退又回到新建态） */
@@ -796,12 +725,12 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
 
             <div className="p-5">
             {coreAgent && tab === 'coding' && <AgentTasks />}
-            {/* 能力：逐成员各配一份——额外可用工具（按业务领域分 Tab）+ 可访问的工作空间（绑了才给终端工具） */}
+            {/* 能力：所有智能体默认获得全部工具；逐成员可配的只有可访问的工作空间（绑了才给终端工具） */}
             {tab === 'tts' && (peer ? <TtsPanel agentId={peer.id} /> : <kit.Empty>请先保存 Agent，再配置语音档案。</kit.Empty>)}
             {tab === 'cap' && (
               <div className="flex flex-col gap-5">
                 <p className="text-md leading-relaxed text-muted">
-                  {coreAgent ? '内置 Agent 是系统主控，直接代表软件向你负责，协调其他 Agent 并检查交付。全部能力、工具和工作空间自动开放，无需逐项授权；新增工具和工作空间自动继承。' : '在默认的只读检索 + 发言 / 状态机工具之上追加。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
+                  {coreAgent ? '内置 Agent 是系统主控，直接代表软件向你负责，协调其他 Agent 并检查交付。全部能力、工具和工作空间自动开放，无需逐项授权。' : '所有智能体默认获得全部可用工具（圆桌发言时另有 speak / 状态机工具）。绑定工作空间后它才能执行命令，且只能访问绑定的这几台。'}
                 </p>
 
                 <div>
@@ -821,92 +750,13 @@ export default function AgentDetail({ peerId: requestedPeerId }: { peerId: strin
                           title={t.name}
                           badge={t.kind}
                           description={t.enabled ? undefined : '未启用'}
-                          onToggle={() => togglePick('terminals', t.id)}
+                          onToggle={() => toggleTerminal(t.id)}
                         />
                       ))}
                     </div>
                   )}
                   <span className="mt-2 block text-xs text-hint">
                     {coreAgent ? '全部工作空间自动纳入访问范围；连接与启用状态在工作空间页管理。' : '勾选即授予 run_command / list_terminals，且只在这几台上执行。'}
-                  </span>
-                </div>
-
-                <div>
-                  {/* 「显示所有工具」：默认订阅的只读工具本就勾着，关着看不到会让人以为没订阅；
-                      打开后它们以已勾选 + 「默认」角标 + 点不动的样子呈现，所见即所得 */}
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <span className="ui-label">可用工具</span>
-                    {coreAgent ? <kit.Badge>全部开放</kit.Badge> : <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-muted">
-                      显示所有工具
-                      <MiniSwitch on={showAllTools} onToggle={setShowAllTools} />
-                    </label>}
-                  </div>
-                  {toolGroups.length === 0 ? (
-                    <kit.Empty>
-                      {coreAgent || showAllTools
-                        ? '没有可授予的工具。'
-                        : '没有可额外授予的工具。打开「显示所有工具」可查看默认订阅的只读工具。'}
-                    </kit.Empty>
-                  ) : (
-                    <div className="flex flex-col gap-2.5">
-                      {/* 业务领域 Tab：角标是「已选中 / 该领域总数」（默认订阅的算已选中），一眼看出哪类还空着。
-                          选中 = 主行动钮（黄底黑字印章），计数等宽显示、空类降透明度（不另着色） */}
-                      <div role="tablist" aria-label="工具领域" className="flex flex-wrap items-center gap-1.5">
-                        {toolGroups.map((g, index) => {
-                          const selected = g.tools.filter(toolOn).length
-                          const active = g.key === activeToolGroup?.key
-                          return (
-                            <button
-                              key={g.key}
-                              type="button"
-                              role="tab"
-                              id={`tool-domain-${g.key}`}
-                              aria-selected={active}
-                              aria-controls="agent-tool-panel"
-                              tabIndex={active ? 0 : -1}
-                              onClick={() => setToolDomain(g.key)}
-                              onKeyDown={(event) => {
-                                const next = event.key === 'Home' ? 0 : event.key === 'End' ? toolGroups.length - 1
-                                  : event.key === 'ArrowRight' ? (index + 1) % toolGroups.length
-                                    : event.key === 'ArrowLeft' ? (index - 1 + toolGroups.length) % toolGroups.length : null
-                                if (next === null) return
-                                event.preventDefault()
-                                setToolDomain(toolGroups[next].key)
-                                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
-                              }}
-                              className={`ui-btn ui-btn--sm ${
-                                active ? 'ui-btn--primary' : 'ui-btn--quiet'
-                              }`}
-                            >
-                              {g.label}
-                              <span
-                                className={`font-mono ${selected > 0 ? '' : 'opacity-60'}`}
-                              >
-                                {selected}/{g.tools.length}
-                              </span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                      <div id="agent-tool-panel" role="tabpanel" aria-labelledby={`tool-domain-${activeToolGroup?.key}`} className="scrollbar-slim grid max-h-80 gap-2 overflow-y-auto pr-0.5 sm:grid-cols-2">
-                        {(activeToolGroup?.tools ?? []).map((t) => (
-                          <PickCard
-                            key={t.name}
-                            checked={toolOn(t)}
-                            locked={coreAgent || t.defaultGranted}
-                            lockedReason={coreAgent ? '系统主控自动拥有全部工具，无需授权' : undefined}
-                            title={t.name}
-                            badge={coreAgent ? '已开放' : t.defaultGranted ? '默认' : t.name === 'coding_task' ? '编程' : t.writes ? '写库' : undefined}
-                            mono
-                            description={t.description}
-                            onToggle={() => togglePick('tools', t.name)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <span className="mt-2 block text-xs text-hint">
-                    {coreAgent ? '展示当前系统提供的全部对话工具；发言与任务工具按运行场景提供。可用范围随系统能力更新，保存资料不会缩减权限。' : '只读检索工具默认订阅、始终可用（圆桌发言时另有 speak / 状态机工具）；这里勾的是在它们之上额外放开的。'}
                   </span>
                 </div>
               </div>

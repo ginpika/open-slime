@@ -2178,8 +2178,6 @@ export type MaPeer = {
   name: string
   /** 内置 Agent：不可删除、默认存在 */
   builtin: boolean
-  /** 额外允许调用的工具名；空数组 = 默认只读检索（外加状态机三件） */
-  tools: string[]
   /** 绑定的工作空间（term_target.id）；非空才授予 run_command / list_terminals，且只能访问这几台 */
   terminals: string[]
   modelId: string | null
@@ -2196,7 +2194,6 @@ export type MaPeer = {
 /** 新建 / 改写成员的请求体（改时只传要动的字段；avatar 传空串 = 移除头像） */
 export type MaPeerRequest = {
   name?: string | null
-  tools?: string[] | null
   terminals?: string[] | null
   modelId?: string | null
   sort?: number | null
@@ -2204,20 +2201,6 @@ export type MaPeerRequest = {
   role?: string | null
   roleColor?: string | null
   avatar?: string | null
-}
-
-/** 智能体的工具候选；主 Agent 包含全部对话工具，普通成员的终端工具由工作空间绑定授予。 */
-export type MaToolOption = {
-  name: string
-  description: string
-  /** 会写知识库（文档 / 图谱）的工具，页面上给出提醒 */
-  writes: boolean
-  /** 无需勾选就始终可用；主 Agent 全部为 true，普通成员仅默认的只读工具为 true。 */
-  defaultGranted: boolean
-  /** 业务领域 key（doc / graph / memory / general），页面按它分 Tab */
-  domain: string
-  /** 业务领域展示名（文档 / 图谱 / 记忆 / 其他） */
-  domainLabel: string
 }
 
 /** 图谱人格锚点：这位成员在知识图谱里的第一人称坐标——锚点实体（types 含 ANCHOR）+ 它的一跳子图；
@@ -2330,11 +2313,6 @@ export const MA_SPEAKER_STRATEGIES: { value: string; label: string }[] = [
 
 export function listMaPeers(): Promise<MaPeer[]> {
   return requestJson<MaPeer[]>('/api/agents/peers')
-}
-
-/** 可授予智能体的工具清单（成员页「可用工具」的候选） */
-export function listMaTools(peerId?: string): Promise<MaToolOption[]> {
-  return requestJson<MaToolOption[]>('/api/agents/tools' + (peerId ? `?peerId=${encodeURIComponent(peerId)}` : ''))
 }
 
 export function createMaPeer(req: MaPeerRequest): Promise<MaPeer> {

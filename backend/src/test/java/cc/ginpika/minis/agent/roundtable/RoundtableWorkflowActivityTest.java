@@ -31,7 +31,7 @@ class RoundtableWorkflowActivityTest {
     private final RoundtableWorkflowService service=new RoundtableWorkflowService(chat,directory,
             mock(RoundtableTodoStore.class),mock(TopicStateMachine.class),runtime,
             workRuns,new ObjectMapper(),List.of(activity),mock(RoundtableActivity.class));
-    private final AgentRow coding=new AgentRow(BuiltinAgents.CODING,"编码 Agent",true,"[]","[]",null,1,null,null,null,0,0,null,null);
+    private final AgentRow coding=new AgentRow(BuiltinAgents.CODING,"编码 Agent",true,"[]",null,1,null,null,null,0,0,null,null);
 
     @Test void reviewIncludesRecordedToolResultsAndToleratesLegacyCorruption() {
         for (String rounds : new String[]{"[{\"role\":\"tool\",\"tool_call_id\":\"call-1\",\"content\":\"failed: expected 2\"}]", "broken-json", "{}", "null"}) {

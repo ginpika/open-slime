@@ -59,7 +59,7 @@ class RoundtableSpeechPersistenceTest {
             var all = om.createArrayNode();
             for (String name : java.util.List.of("create_plan", "delete_node", "run_command", "delegate_subagent"))
                 all.addObject().putObject("function").put("name", name);
-            when(tools.toolsOf(cc.ginpika.minis.ai.core.tool.ToolSurface.CHAT)).thenReturn(all);
+            when(tools.agentToolsOf(cc.ginpika.minis.ai.core.tool.ToolSurface.CHAT)).thenReturn(all);
             var empty = om.createArrayNode();
             when(tools.toolsOf(anyList(), any())).thenReturn(empty);
             when(tools.grantedToolsOf(anyList(), any())).thenReturn(empty);
@@ -94,8 +94,11 @@ class RoundtableSpeechPersistenceTest {
             when(plans.find("session")).thenReturn(Optional.of(plan));
             var peer=mock(AgentRow.class);when(directory.peer("peer")).thenReturn(Optional.of(peer));
             when(directory.declaredTerminals(peer)).thenReturn(java.util.List.of("workspace"));
-            when(directory.declaredTools(peer)).thenReturn(java.util.List.of("run_command","delegate_subagent"));
-            var empty=om.createArrayNode();when(tools.readOnlyToolsOf(any())).thenReturn(empty);
+            var agentTools=om.createArrayNode();
+            for(String name:java.util.List.of("coding_task","run_command","delegate_subagent"))
+                agentTools.addObject().putObject("function").put("name",name);
+            when(tools.agentToolsOf(cc.ginpika.minis.ai.core.tool.ToolSurface.CHAT)).thenReturn(agentTools);
+            var empty=om.createArrayNode();
             org.mockito.stubbing.Answer<com.fasterxml.jackson.databind.node.ArrayNode> schemas=inv->{
                 var array=om.createArrayNode();for(String name:inv.<java.util.List<String>>getArgument(0))array.addObject().putObject("function").put("name",name);return array;
             };
@@ -133,7 +136,7 @@ class RoundtableSpeechPersistenceTest {
         when(directory.declaredTerminals(peer)).thenReturn(java.util.List.of("new-workspace"));
         when(workspaceBinding.context("session")).thenReturn("本项目目录 /new/project");
         var emptyTools = om.createArrayNode();
-        when(tools.readOnlyToolsOf(any())).thenReturn(emptyTools);
+        when(tools.agentToolsOf(any())).thenReturn(emptyTools);
         when(tools.toolsOf(anyList(), any())).thenReturn(emptyTools);
         when(tools.grantedToolsOf(anyList(), any())).thenReturn(emptyTools);
         when(messages.insert(anyString(), any(), anyString(), any(), any(), any(), any(), any(), any(), any())).thenReturn(11L);
@@ -196,7 +199,7 @@ class RoundtableSpeechPersistenceTest {
         var peer=mock(AgentRow.class);when(peer.id()).thenReturn("peer");when(peer.name()).thenReturn("主控");
         when(directory.peer("peer")).thenReturn(Optional.of(peer));when(directory.peers("session")).thenReturn(java.util.List.of(peer));
         when(plans.find("session")).thenReturn(Optional.of(mock(CollaborationPlan.Plan.class)));
-        var empty=om.createArrayNode();when(tools.readOnlyToolsOf(any())).thenReturn(empty);
+        var empty=om.createArrayNode();when(tools.agentToolsOf(any())).thenReturn(empty);
         when(tools.toolsOf(anyList(),any())).thenReturn(empty);when(tools.grantedToolsOf(anyList(),any())).thenReturn(empty);
         var control=new cc.ginpika.minis.ai.core.tool.multiagent.ControlCollaborationTool();
         var schemas=om.createArrayNode().add(control.schema(om));
@@ -239,7 +242,7 @@ class RoundtableSpeechPersistenceTest {
         when(workStatus.describe("session","peer")).thenReturn("项目已绑定新工作目录，成员已有工作空间权限；计划 planning，继续状态 paused；原条目 blocked/dropped。");
         when(directory.declaredTerminals(peer)).thenReturn(java.util.List.of("new-workspace"));
         when(workspaceBinding.context("session")).thenReturn("当前项目绑定 new-workspace /new/project，仅在此目录工作。");
-        var empty=om.createArrayNode();when(tools.readOnlyToolsOf(any())).thenReturn(empty);
+        var empty=om.createArrayNode();when(tools.agentToolsOf(any())).thenReturn(empty);
         when(tools.toolsOf(anyList(),any())).thenReturn(empty);when(tools.grantedToolsOf(anyList(),any())).thenReturn(empty);
         var control=new cc.ginpika.minis.ai.core.tool.multiagent.ControlCollaborationTool();var schemas=om.createArrayNode().add(control.schema(om));
         when(tools.grantedToolsOf(java.util.List.of(control.name()),cc.ginpika.minis.ai.core.tool.ToolSurface.PEER)).thenReturn(schemas);

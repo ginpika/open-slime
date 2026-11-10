@@ -5,9 +5,6 @@ import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.agent.roundtable.RoundtableSessionStore;
 import cc.ginpika.minis.ai.computer.terminal.store.TerminalStore;
 import cc.ginpika.minis.ai.core.BuiltinAgents;
-import cc.ginpika.minis.ai.core.tool.AiTool;
-import cc.ginpika.minis.ai.core.tool.ToolManager;
-import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -27,11 +24,11 @@ import org.springframework.stereotype.Component;
  * 由 {@link AgentPromptService} 解析（成员自己的绑定 → 全局 → 内置），在成员内部页里维护——
  * 于是成员的人设、增强、终端各归各的，与首页对话的全局提示词互不干扰。
  *
- * <p><b>能力也逐成员配</b>：额外可调的工具（{@link #declaredTools}）与可访问的工作空间
- * （{@link #declaredTerminals}，即 {@code term_target.id} 名单）都挂在成员自己那一行上；
- * 绑定了工作空间才会授予 {@code run_command} / {@code list_terminals}，且只在绑定的目标上可用
- * （见 {@code RoundtableChatService}）。
- * 内置主 Agent 是例外：按实时工具注册表和工作空间目录自动全量开放，不受上述成员名单限制。
+ * <p><b>能力逐成员配的是工作空间</b>：可访问的工作空间（{@link #declaredTerminals}，
+ * 即 {@code term_target.id} 名单）挂在成员自己那一行上；绑定了工作空间才会授予
+ * {@code run_command} / {@code list_terminals}，且只在绑定的目标上可用
+ * （见 {@code RoundtableChatService}）。工具本身不再逐成员授权——所有成员都自动获得
+ * 全部可用的对话工具；内置主 Agent 还按实时工作空间目录自动绑定全部目标。
  *
  * <p>名册由人配置（增删改都在这里），大模型只读——它没有「立一个成员」的工具：
  * 圆桌上坐着的人是产品配置，不是模型临时攒的编制。
@@ -64,16 +61,14 @@ public class AgentDirectory {
     private final AgentPromptService peerPrompts;
     /** 绑定工作空间时按 id 校验目标确实存在（删除的目标会自然失效，见 {@link #declaredTerminals}） */
     private final TerminalStore terminals;
-    private final ToolManager toolManager;
     private final ObjectMapper om;
 
     public AgentDirectory(AgentStore store, RoundtableSessionStore sessions, AgentPromptService peerPrompts,
-                         TerminalStore terminals, ObjectMapper om, ToolManager toolManager) {
+                         TerminalStore terminals, ObjectMapper om) {
         this.store = store;
         this.sessions = sessions;
         this.peerPrompts = peerPrompts;
         this.terminals = terminals;
-        this.toolManager = toolManager;
         this.om = om;
     }
 
@@ -144,14 +139,6 @@ public class AgentDirectory {
         return peer(peerId).map(AgentRow::name).orElse(peerId == null ? "" : peerId);
     }
 
-    /** 主 Agent 自动取得全部对话工具；其他成员解析各自声明的工具。 */
-    public List<String> declaredTools(AgentRow peer) {
-        if (peer != null && isBuiltin(peer.id())) {
-            return toolManager.availableTools(ToolSurface.CHAT).stream().map(AiTool::name).toList();
-        }
-        return readNames(peer == null ? null : peer.tools(), peer, "工具声明");
-    }
-
     /**
      * 成员绑定的工作空间（{@code term_target.id} 名单，JSON 数组文本解析）。
      * 主 Agent 始终返回实时目录中的全部工作空间，包括后来新增的目标。
@@ -184,8 +171,8 @@ public class AgentDirectory {
 
     // ---------- 写（人配置名册；大模型只能读） ----------
 
-    /** 新建成员：只有名字是必需的，其余留空即跟随默认（身份跟随提示词页绑定、只读检索工具、无工作空间） */
-    public AgentRow create(String name, List<String> tools, List<String> terminals,
+    /** 新建成员：只有名字是必需的，其余留空即跟随默认（身份跟随提示词页绑定、无额外工作空间） */
+    public AgentRow create(String name, List<String> terminals,
                           String modelId, String note, String avatar, String role, String roleColor) {
         String clean = requireName(name);
         List<AgentRow> all = store.peers();
@@ -193,7 +180,7 @@ public class AgentDirectory {
             throw new IllegalArgumentException("已有同名成员「" + clean + "」：换个名字（它会用在 @ 里）");
         }
         AgentRow row = new AgentRow(UUID.randomUUID().toString(), clean, false,
-                writeJsonList(tools), writeJsonList(requireTerminals(terminals)),
+                writeJsonList(requireTerminals(terminals)),
                 blankToNull(modelId), store.maxSort() + 1, blankToNull(note),
                 requireAvatar(avatar), null, System.currentTimeMillis(), System.currentTimeMillis(),
                 blankToNull(role), blankToNull(roleColor));
@@ -202,7 +189,7 @@ public class AgentDirectory {
     }
 
     /** 改写成员：只动传入的字段（null = 不改；avatar 传空串 = 移除头像） */
-    public AgentRow update(String id, String name, List<String> tools,
+    public AgentRow update(String id, String name,
                           List<String> terminals, String modelId, Integer sort, String note,
                           String avatar, String role, String roleColor) {
         AgentRow current = store.peer(id)
@@ -214,7 +201,6 @@ public class AgentDirectory {
             });
         }
         AgentRow row = new AgentRow(current.id(), nextName, current.builtin(),
-                isBuiltin(id) ? null : tools == null ? current.tools() : writeJsonList(tools),
                 isBuiltin(id) ? null : terminals == null ? current.terminals()
                         : writeJsonList(requireTerminals(terminals)),
                 modelId == null ? current.modelId() : blankToNull(modelId),

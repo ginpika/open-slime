@@ -25,7 +25,7 @@ import static org.mockito.Mockito.*;
 
 class CodingAgentIntegrationTest {
     private final ObjectMapper json=new ObjectMapper();
-    private AgentStore.AgentRow row(String model){return new AgentStore.AgentRow(BuiltinAgents.CORE,"默认助手",true,null,null,model,0,"note",null,null,0,0,null,null);}
+    private AgentStore.AgentRow row(String model){return new AgentStore.AgentRow(BuiltinAgents.CORE,"默认助手",true,null,model,0,"note",null,null,0,0,null,null);}
 
     @Test void codingUsesTheDefaultIdentityAndOnlyRequestsTheIdePrompt(){
         AgentStore agents=mock(AgentStore.class);AgentPromptService prompts=mock(AgentPromptService.class);
@@ -51,9 +51,9 @@ class CodingAgentIntegrationTest {
             new AgentSeeder(agents);
             var prompts = mock(AgentPromptService.class);
             var agent = new CodingAgent(agents, prompts);
-            var directory = new AgentDirectory(agents, null, prompts, null, json, null);
+            var directory = new AgentDirectory(agents, null, prompts, null, json);
             String avatar = "data:image/png;base64,aGVsbG8=";
-            directory.update(BuiltinAgents.CORE, "牧濑红莉栖", null, null, "character-model", null,
+            directory.update(BuiltinAgents.CORE, "牧濑红莉栖", null, "character-model", null,
                     null, avatar, "研究员", "#6b7280");
             var restarted = new CodingAgent(agents, prompts);
             assertEquals(agent.profile(), restarted.profile());

@@ -22,9 +22,6 @@ import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 import cc.ginpika.minis.agent.member.AgentDtos;
 import cc.ginpika.minis.agent.member.AgentStore.AgentRow;
 import cc.ginpika.minis.ai.core.prompt.dto.PromptDtos;
-import cc.ginpika.minis.ai.core.tool.AiTool;
-import cc.ginpika.minis.ai.core.tool.ToolManager;
-import cc.ginpika.minis.ai.core.tool.ToolSurface;
 import cc.ginpika.minis.web.sso.SsoInterceptor;
 import cc.ginpika.minis.web.sso.SsoUser;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -32,7 +29,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -97,7 +93,6 @@ public class AgentController {
     private final RoundtableTopicService topics;
     private final AgentPromptService peerPrompts;
     private final AgentAnchorService peerAnchors;
-    private final ToolManager tools;
     private final ObjectMapper om;
     /** 逐 Agent 后台：心跳调度（开关 / 节拍 / 手动敲 / 单跑职责）与逐 Agent 观测台 */
     private final HeartbeatService heartbeat;
@@ -128,7 +123,7 @@ public class AgentController {
 
     public AgentController(AgentDirectory peers, RoundtableChatService chat, RoundtableTopicService topics,
                                 AgentPromptService peerPrompts, AgentAnchorService peerAnchors,
-                                ToolManager tools, ObjectMapper om,
+                                ObjectMapper om,
                                 HeartbeatService heartbeat, PlanStore plans, ExecStore execs,
                                 TaskStore tasks, SubagentService subagent, RagRecallStore ragRecalls,
                                 RoundtableDiscussionRuntime runtime, RoundtableLiveBus liveBus,
@@ -140,7 +135,6 @@ public class AgentController {
         this.topics = topics;
         this.peerPrompts = peerPrompts;
         this.peerAnchors = peerAnchors;
-        this.tools = tools;
         this.om = om;
         this.heartbeat = heartbeat;
         this.plans = plans;
@@ -163,33 +157,9 @@ public class AgentController {
         return peers.peers().stream().map(this::toPeer).toList();
     }
 
-    /**
-     * 可授予智能体的工具清单（成员页「可用工具」的候选）。
-     * 指定内置主 Agent 时返回全部对话工具（含管理与终端），且全部标记为默认开放。
-     *
-     * <p>只列「agent 能调、且属对话面」的工具——{@code run_command} / {@code list_terminals}
-     * 不在其中：它们不由名字授予，而是绑定工作空间时连同授权名单一起给（见成员页「工作空间」）。
-     *
-     * <p>清单里既有默认订阅的只读工具、也有要人显式勾选的额外工具，由 {@code defaultGranted} 区分：
-     * 页面默认只列后者，打开「显示所有工具」才把前者也摆出来（显示成已勾选），于是
-     * 「哪些是默认给的、哪些是自己加的」在配置面上一目了然。
-     */
-    @GetMapping("/tools")
-    public List<AgentDtos.ToolOption> tools(@RequestParam(required = false) String peerId) {
-        boolean core = AgentDirectory.isBuiltin(peerId);
-        return (core ? tools.availableTools(ToolSurface.CHAT) : tools.grantableTools(ToolSurface.CHAT)).stream()
-                /* 先按业务领域（枚举序：文档 / 图谱 / 记忆 / 其他）、再按名字排序：
-                   前端据此顺序即可分 Tab 归类，无需再排 */
-                .sorted(Comparator.comparing((AiTool t) -> t.domain().ordinal())
-                        .thenComparing(AiTool::name))
-                .map(t -> toTool(t, core))
-                .toList();
-    }
-
     @PostMapping("/peers")
     public AgentDtos.AgentView createPeer(@RequestBody AgentDtos.AgentRequest req) {
         AgentRow row = peers.create(req == null ? null : req.name(),
-                req == null ? null : req.tools(),
                 req == null ? null : req.terminals(), req == null ? null : req.modelId(),
                 req == null ? null : req.note(), req == null ? null : req.avatar(),
                 req == null ? null : req.role(), req == null ? null : req.roleColor());
@@ -200,7 +170,6 @@ public class AgentController {
     public AgentDtos.AgentView updatePeer(@PathVariable String id,
                                               @RequestBody AgentDtos.AgentRequest req) {
         AgentRow row = peers.update(id, req == null ? null : req.name(),
-                req == null ? null : req.tools(),
                 req == null ? null : req.terminals(), req == null ? null : req.modelId(),
                 req == null ? null : req.sort(), req == null ? null : req.note(),
                 req == null ? null : req.avatar(),
@@ -700,15 +669,9 @@ public class AgentController {
 
     private AgentDtos.AgentView toPeer(AgentRow row) {
         return new AgentDtos.AgentView(row.id(), row.name(), row.builtin(),
-                peers.declaredTools(row), peers.declaredTerminals(row), row.modelId(), row.sort(),
+                peers.declaredTerminals(row), row.modelId(), row.sort(),
                 row.note(), row.avatar(), row.role(), row.roleColor(),
                 "CHAT");
-    }
-
-    private AgentDtos.ToolOption toTool(AiTool tool, boolean core) {
-        /* 主 Agent 全部默认开放；普通成员默认开放 READ 工具，与 readOnlyToolsOf(CHAT) 一致。 */
-        return new AgentDtos.ToolOption(tool.name(), tool.description(), tool.writes(),
-                core || tool.risk()==cc.ginpika.minis.ai.core.tool.ToolRisk.READ, tool.domain().key(), tool.domain().label());
     }
 
     // ---------- 逐 Agent 后台的映射与快照 ----------

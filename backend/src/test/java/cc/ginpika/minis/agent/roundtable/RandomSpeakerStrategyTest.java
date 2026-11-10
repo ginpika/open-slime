@@ -23,7 +23,7 @@ class RandomSpeakerStrategyTest {
     private final SpeakerStrategy strategy = new RandomSpeakerStrategy();
 
     private static AgentRow peer(String id) {
-        return new AgentRow(id, "成员" + id, false, null, null, null, 0, null, null, null, 0L, 0L,
+        return new AgentRow(id, "成员" + id, false, null, null, 0, null, null, null, 0L, 0L,
                 null, null);
     }
 

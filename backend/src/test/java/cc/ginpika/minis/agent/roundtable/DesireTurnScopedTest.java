@@ -49,7 +49,7 @@ class DesireTurnScopedTest {
     }
 
     private static AgentRow peer(String id, String name, int sort) {
-        return new AgentRow(id, name, false, null, null, null, sort, null, null, null, 0L, 0L,
+        return new AgentRow(id, name, false, null, null, sort, null, null, null, 0L, 0L,
                 null, null);
     }
 

@@ -10,7 +10,7 @@ await fs.mkdir(output, { recursive: true })
 const require = createRequire(path.join(process.env.MINIS_PLAYWRIGHT_DIR || frontend, 'package.json'))
 const { chromium } = require('playwright')
 const now = Date.now(), errors = [], requests = [], sent = [], checks = []
-const peers = ['规划成员', '研究成员', '执行成员'].map((name, i) => ({ id: ['a', 'b', 'c'][i], name, role: ['产品经理', '研究员', '工程师'][i], roleColor: '#2563eb', builtin: false, tools: [], terminals: [], modelId: null, sort: i, avatar: null, note: null }))
+const peers = ['规划成员', '研究成员', '执行成员'].map((name, i) => ({ id: ['a', 'b', 'c'][i], name, role: ['产品经理', '研究员', '工程师'][i], roleColor: '#2563eb', builtin: false, terminals: [], modelId: null, sort: i, avatar: null, note: null }))
 const agents = peers.map(p => ({ ...p, communication: 'LISTENING', execution: 'READY', working: false, pending: 1, doing: 0, done: 1 }))
 const projects = [{ id: 'p1', name: '多人塔防', kind: 'software', status: 'active', narrative: false }, { id: 'p2', name: '第二个项目', kind: 'research', status: 'active', narrative: false }]
 projects.push({ id: 'empty', name: '尚未开始的项目', kind: 'other', status: 'active', narrative: false })

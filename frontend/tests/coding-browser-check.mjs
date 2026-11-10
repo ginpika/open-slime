@@ -17,7 +17,7 @@ const project = { id: 'p1', name: 'personal-assistant-with-a-long-project-name',
 let listedProjects = [project], projectsFail = false, removeRecentFails = false
 const workspace = { id: 'w1', name: '开发工作空间', kind: 'docker', workdir: '/workspace', enabled: true }
 const codingAgent = { id: 'builtin-coding', name: '编码 Agent', modelId: 'm1' }
-let codingPeer = { ...codingAgent, builtin: true, executionKind: 'CODING', tools: ['coding_task'], terminals: [], sort: 1, note: '工作空间编码与智能体共用任务', avatar: null, role: '编码', roleColor: '#38bdf8' }
+let codingPeer = { ...codingAgent, builtin: true, executionKind: 'CODING', terminals: [], sort: 1, note: '工作空间编码与智能体共用任务', avatar: null, role: '编码', roleColor: '#38bdf8' }
 const caps = { enabled: true, localExecutionAllowed: false, dockerImage: 'node:22', maxRunMinutes: 30, isolation: 'fixture', agent: codingAgent }
 const models = [{ id: 'm1', name: '开发模型', baseUrl: 'http://fixture.invalid/v1', apiKey: 'fixture-key', model: 'coding-model', contextWindow: 262144, builtin: false, maxOutputTokens: null }, { id: 'm2', name: '推理模型', baseUrl: 'http://fixture.invalid/v1', apiKey: 'fixture-key', model: 'reasoning-model', contextWindow: 262144, builtin: false, maxOutputTokens: null }]
 const settingsView = () => ({ models, defaultModelId: 'm1', embedding: { mode: 'llm', llmModelId: 'm1', baseUrl: null, apiKey: null, model: 'embedding' }, rerank: { mode: 'off', llmModelId: null, baseUrl: null, apiKey: null, model: '' } })
@@ -50,8 +50,7 @@ await context.route('**/*', async route => {
   const method = route.request().method()
   if (url.pathname === '/api/auth/me') value = { id: 'fixture-user', username: 'fixture', nickname: '验收用户', role: 'user' }
   else if (url.pathname === '/api/terminal') value = { targets: [workspace], commands: [] }
-  else if (url.pathname === '/api/agents/tools') value = [{ name: 'coding_task', description: '委派同一编码 Agent 的项目任务', writes: false, defaultGranted: false, domain: 'coding', domainLabel: '编程' }]
-  else if (url.pathname === '/api/agents/peers') value = [{ id: 'builtin', name: '助手', builtin: true, executionKind: 'CHAT', tools: [], terminals: [], modelId: null, sort: 0, note: null, avatar: null }, codingPeer]
+  else if (url.pathname === '/api/agents/peers') value = [{ id: 'builtin', name: '助手', builtin: true, executionKind: 'CHAT', terminals: [], modelId: null, sort: 0, note: null, avatar: null }, codingPeer]
   else if (url.pathname === '/api/agents/workflow') value = { sessionId: null, title: null, topicId: null, topicStatus: null, floorPeer: null, discussing: false, advancing: false, agents: [{ id: codingPeer.id, name: codingPeer.name, communication: null, execution: workflowWorking ? 'RUNNING' : 'READY', working: workflowWorking, pending: 0, doing: workflowWorking ? 1 : 0, done: 0, role: '编码', roleColor: '#38bdf8' }], todos: [] }
   else if (url.pathname === '/api/agents/peers/builtin-coding' && method === 'PUT') {
     codingPeer = { ...codingPeer, ...route.request().postDataJSON() }

@@ -24,7 +24,7 @@ class DeepSeekWebToolsTest {
         assertEquals(0, manager.grantedToolsOf(List.of("search_web", "fetch_web"), ToolSurface.CHAT).size());
         assertEquals(1, manager.toolsOfDomains(Set.of(ToolDomain.DOC), ToolSurface.CHAT).size());
         assertEquals(1, manager.readOnlyToolsOf(ToolSurface.CHAT).size());
-        assertEquals(1, manager.grantableTools(ToolSurface.CHAT).size());
+        assertEquals(1, manager.agentToolsOf(ToolSurface.CHAT).size());
         when(settings.resolve()).thenReturn(new DeepSeekWebSettings.Config(c.baseUrl(), c.apiKey(), false, true, false, 5, 2));
         assertEquals(2, manager.toolsOf(ToolSurface.HEARTBEAT).size());
         assertEquals(1, manager.grantedToolsOf(List.of("search_web", "fetch_web"), ToolSurface.CHAT).size());

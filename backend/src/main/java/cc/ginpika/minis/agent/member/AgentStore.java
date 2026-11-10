@@ -15,22 +15,21 @@ import org.springframework.stereotype.Repository;
  * 这边是「在圆桌上坐着的人」。
  *
  * <p>身份由每位成员自己那套「对话」提示词决定（见 {@code agent_prompt_*}）；这一行只回答
- * 「是不是内置 Agent、额外能调什么工具、用哪个模型、坐第几位」。
+ * 「是不是内置 Agent、能访问哪些工作空间、用哪个模型、坐第几位」。
  */
 @Repository
 public class AgentStore {
 
     /** 一个成员：builtin=1 的是内置 Agent（不可删除、默认存在）；
-     *  tools 为 JSON 数组文本（允许调用的额外工具名），NULL=默认只读检索；
      *  terminals 为 JSON 数组文本（绑定给它的工作空间 term_target.id），NULL/空=不能用 run_command；
      *  anchorId 为该成员的图谱人格锚点（entities.id），NULL=尚未建立 */
-    public record AgentRow(String id, String name, boolean builtin, String tools, String terminals,
+    public record AgentRow(String id, String name, boolean builtin, String terminals,
                            String modelId, int sort, String note, String avatar, String anchorId,
                            long createdAt, long updatedAt, String role, String roleColor) {
     }
 
     private static final String COLS =
-            "id, name, builtin, tools, terminals, model_id, sort, note, avatar, anchor_id, "
+            "id, name, builtin, terminals, model_id, sort, note, avatar, anchor_id, "
                     + "created_at, updated_at, role, role_color";
 
     private final JdbcTemplate jdbc;
@@ -59,19 +58,19 @@ public class AgentStore {
 
     public void insert(AgentRow row) {
         long now = System.currentTimeMillis();
-        jdbc.update("INSERT INTO agent(id, name, builtin, tools, terminals, model_id, sort, "
+        jdbc.update("INSERT INTO agent(id, name, builtin, terminals, model_id, sort, "
                         + "note, avatar, anchor_id, created_at, updated_at, role, role_color) "
-                        + "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                row.id(), row.name(), row.builtin() ? 1 : 0, row.tools(), row.terminals(),
+                        + "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                row.id(), row.name(), row.builtin() ? 1 : 0, row.terminals(),
                 row.modelId(), row.sort(), row.note(), row.avatar(), row.anchorId(), now, now,
                 row.role(), row.roleColor());
     }
 
     public void update(AgentRow row) {
-        jdbc.update("UPDATE agent SET name = ?, builtin = ?, tools = ?, terminals = ?, "
+        jdbc.update("UPDATE agent SET name = ?, builtin = ?, terminals = ?, "
                         + "model_id = ?, sort = ?, note = ?, avatar = ?, anchor_id = ?, "
                         + "updated_at = ?, role = ?, role_color = ? WHERE id = ?",
-                row.name(), row.builtin() ? 1 : 0, row.tools(), row.terminals(), row.modelId(),
+                row.name(), row.builtin() ? 1 : 0, row.terminals(), row.modelId(),
                 row.sort(), row.note(), row.avatar(), row.anchorId(),
                 System.currentTimeMillis(), row.role(), row.roleColor(), row.id());
     }
@@ -94,7 +93,7 @@ public class AgentStore {
 
     private static AgentRow map(ResultSet rs, int rowNum) throws SQLException {
         return new AgentRow(rs.getString("id"), rs.getString("name"), rs.getInt("builtin") != 0,
-                rs.getString("tools"), rs.getString("terminals"), rs.getString("model_id"),
+                rs.getString("terminals"), rs.getString("model_id"),
                 rs.getInt("sort"), rs.getString("note"), rs.getString("avatar"),
                 rs.getString("anchor_id"), rs.getLong("created_at"), rs.getLong("updated_at"),
                 rs.getString("role"), rs.getString("role_color"));

@@ -19,27 +19,16 @@ public final class AgentDtos {
 
     // ---------- 名册（配置面） ----------
 
-    /** 一个成员：头像 + builtin 标记 + 额外工具 + 绑定工作空间 + 模型 + 次序（提示词在它自己的 {@code /prompts} 接口里） */
-    public record AgentView(String id, String name, boolean builtin, List<String> tools,
+    /** 一个成员：头像 + builtin 标记 + 绑定工作空间 + 模型 + 次序（提示词在它自己的 {@code /prompts} 接口里） */
+    public record AgentView(String id, String name, boolean builtin,
                            List<String> terminals, String modelId, int sort, String note,
                            String avatar, String role, String roleColor, String executionKind) {
     }
 
     /** 新建 / 改写成员的请求体（改时只动非 null 字段；avatar 传空串 = 移除头像） */
-    public record AgentRequest(String name, List<String> tools,
+    public record AgentRequest(String name,
                               List<String> terminals, String modelId, Integer sort, String note,
                               String avatar, String role, String roleColor) {
-    }
-
-    /**
-     * 一个可授予智能体的工具（成员页「可用工具」的候选；终端工具由绑定工作空间单独授予，不在此列）。
-     *
-     * <p>{@code defaultGranted} 指该工具<b>已默认开放</b>（主 Agent 全部开放，普通成员为只读检索那一批）——
-     * 页面据此把它显示成已勾选并标注，好让「默认给哪些」这件事在配置面上可见。
-     * {@code domain} / {@code domainLabel} 是工具的业务领域（{@code ToolDomain}）：页面按它分 Tab 归类展示。
-     */
-    public record ToolOption(String name, String description, boolean writes, boolean defaultGranted,
-                             String domain, String domainLabel) {
     }
 
     public record AgentDeleted(String id) {

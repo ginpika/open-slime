@@ -12,17 +12,11 @@ const require = createRequire(path.join(process.env.MINIS_PLAYWRIGHT_DIR || fron
 const { chromium } = require('playwright')
 const peers = ['builtin', 'member'].map((id, sort) => ({
   id, sort, name: ['核心助手', '专业成员'][sort], builtin: id !== 'member',
-  tools: [], terminals: [], modelId: null, avatar: null, note: null, role: null, roleColor: null,
+  terminals: [], modelId: null, avatar: null, note: null, role: null, roleColor: null,
   executionKind: 'CHAT',
 }))
-const tools = [
-  { name: 'read_doc', description: '读取文档内容。', defaultGranted: true, writes: false, domain: 'doc', domainLabel: '文档' },
-  { name: 'write_doc', description: '写入文档，保存实际成果。', defaultGranted: false, writes: true, domain: 'doc', domainLabel: '文档' },
-  { name: 'create_plan', description: '创建后台职责并安排执行。', defaultGranted: false, writes: false, domain: 'other', domainLabel: '调度' },
-  { name: 'run_command', description: '在工作空间执行命令。', defaultGranted: false, writes: false, domain: 'terminal', domainLabel: '终端' },
-]
 const targets = [{ id: 'one', name: '开发环境', kind: 'ssh', enabled: true }, { id: 'new', name: '新增环境', kind: 'docker', enabled: false }]
-const saves = [], queries = [], errors = []
+const saves = [], errors = []
 const browser = await chromium.launch({ channel: 'chrome', headless: true })
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
@@ -50,10 +44,6 @@ try {
     if (url.pathname === '/api/coding/capabilities') return json({ enabled: true, agent: peers.find(p => p.id === 'builtin') })
     if (url.pathname === '/api/coding/projects') return json([{ id: 'p1', name: '角色配置验收', workspaceId: 'one', workspaceName: '开发环境', directory: '.', kind: 'ssh', enabled: true }])
     if (url.pathname.endsWith('/files')) return json({ entries: [], path: '.' })
-    if (url.pathname === '/api/agents/tools') {
-      const id = url.searchParams.get('peerId'); queries.push(id)
-      return json(id === 'builtin' ? tools : tools.slice(0, 2))
-    }
     if (url.pathname.endsWith('/prompts')) return json({ categories: [
       { key: 'chat', name: '对话', description: '', contexts: [] },
       ...(url.pathname.includes('/builtin/') ? [{ key: 'skills', name: 'Skills · 状态化提示词', description: '仅在编程 IDE 中启用。', contexts: [{ key: 'ide', name: '编程 IDE', description: '普通聊天不加载。', parts: [{ key: 'coding_skill', name: '编程 Skill', description: 'IDE 状态规程', builtin: '保留调查、实施、验证与交付规程。', builtinSource: 'code', versions: [] }], runtime: [] }] }] : []),
@@ -69,28 +59,13 @@ try {
     await page.goto(`http://agent-capabilities.test/#/multi-agent/${id}`)
     await page.getByRole('heading', { name: peers.find(p => p.id === (id === 'builtin-coding' ? 'builtin' : id)).name, exact: true }).waitFor()
     await page.getByRole('button', { name: '能力', exact: true }).click()
-    await page.getByText('可用工具', { exact: true }).waitFor()
+    await page.getByText('工作空间', { exact: true }).waitFor()
   }
   await open('builtin')
-  await page.getByText('全部开放', { exact: true }).waitFor()
-  const firstDomain = page.getByRole('tab', { name: /文档/ })
-  await firstDomain.focus()
-  await page.keyboard.press('End')
-  assert.equal(await page.getByRole('tab', { name: /终端/ }).getAttribute('aria-selected'), 'true')
-  await page.keyboard.press('Home')
-  assert.equal(await firstDomain.getAttribute('aria-selected'), 'true')
-  assert.equal(await page.getByText('显示所有工具', { exact: true }).count(), 0)
   for (const name of ['开发环境', '新增环境']) {
     const card = page.getByRole('button', { name: new RegExp(name) })
     assert.equal(await card.getAttribute('aria-pressed'), 'true')
     assert.equal(await card.getAttribute('aria-disabled'), 'true')
-  }
-  for (const tab of await page.getByRole('tablist', { name: '工具领域' }).getByRole('tab').all()) {
-    await tab.click()
-    for (const card of await page.getByRole('tabpanel').getByRole('button').all()) {
-      assert.equal(await card.getAttribute('aria-pressed'), 'true')
-      assert.equal(await card.getAttribute('aria-disabled'), 'true')
-    }
   }
   await page.getByRole('button', { name: '保存资料', exact: true }).click()
   await page.getByText('「核心助手」的资料已保存', { exact: true }).waitFor()
@@ -98,26 +73,22 @@ try {
   assert.equal(Object.hasOwn(saves.at(-1).body, 'terminals'), false)
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 })
-    await page.getByRole('tab', { name: /文档/ }).click()
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `overflow at ${width}px`)
     await page.screenshot({ path: path.join(output, `core-${width}.png`), fullPage: true })
   }
   await page.setViewportSize({ width: 1440, height: 1000 })
   await open('member')
-  assert.equal(await page.getByText('显示所有工具', { exact: true }).count(), 1)
-  const write = page.getByRole('button', { name: /write_doc/ })
-  assert.equal(await write.getAttribute('aria-pressed'), 'false')
-  assert.equal(await write.getAttribute('aria-disabled'), null)
-  await write.click()
   await page.getByRole('button', { name: /开发环境/ }).click()
   await page.getByRole('button', { name: '保存资料', exact: true }).click()
   await page.getByText('「专业成员」的资料已保存', { exact: true }).waitFor()
-  assert.deepEqual(saves.at(-1).body.tools, ['write_doc'])
+  assert.equal(Object.hasOwn(saves.at(-1).body, 'tools'), false)
   assert.deepEqual(saves.at(-1).body.terminals, ['one'])
   await open('builtin-coding')
-  assert.equal(await page.getByText('全部开放', { exact: true }).count(), 1)
-  assert.equal(await page.getByRole('button', { name: /write_doc/ }).getAttribute('aria-pressed'), 'true')
-  assert.deepEqual(new Set(queries), new Set(['builtin', 'member']))
+  for (const name of ['开发环境', '新增环境']) {
+    const card = page.getByRole('button', { name: new RegExp(name) })
+    assert.equal(await card.getAttribute('aria-pressed'), 'true')
+    assert.equal(await card.getAttribute('aria-disabled'), 'true')
+  }
 
   await page.goto('http://agent-capabilities.test/#/coding?project=p1')
   await page.getByRole('link', { name: '编辑核心助手的头像、名字与人设', exact: true }).click()
@@ -161,7 +132,7 @@ try {
   assert.equal(await profileLink.locator('img').count(), 0)
   assert.equal(await profileLink.locator('.coding-agent-name').textContent(), '牧濑红莉栖')
   assert.deepEqual(errors, [])
-  console.log('Agent capabilities: core grants, coding profile upload/rename/save/return/reload/remove, start/studio and mobile layout passed.')
+  console.log('Agent capabilities: workspace grants, coding profile upload/rename/save/return/reload/remove, start/studio and mobile layout passed.')
 } finally {
   await browser.close()
 }
