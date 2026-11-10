@@ -66,7 +66,18 @@ public class ContextBuilder {
 
     public ContextPlan plan(ContextRequest req, int window, int outputReserve, long currentUserId,
                             Set<Long> visibleHistory, ContextPlan.Stage stage) {
-        return withScope(req, () -> planScoped(req, window, outputReserve, currentUserId, visibleHistory, stage));
+        return plan(req, window, outputReserve, currentUserId, visibleHistory, stage, List.of(), null);
+    }
+
+    /**
+     * 场景化装配（R1/R5）：{@code extras} 携带当前任务段的角色与约束片段（必带，随任务段失效），
+     * {@code bounds} 携带工作窗口与场景对照（进 Manifest）。
+     */
+    public ContextPlan plan(ContextRequest req, int window, int outputReserve, long currentUserId,
+                            Set<Long> visibleHistory, ContextPlan.Stage stage, List<ContextFragment> extras,
+                            ContextPlan.Window bounds) {
+        return withScope(req, () -> planScoped(req, window, outputReserve, currentUserId, visibleHistory,
+                stage, extras, bounds));
     }
 
     private static <T> T withScope(ContextRequest req, Supplier<T> assembly) {
@@ -80,7 +91,8 @@ public class ContextBuilder {
     }
 
     private ContextPlan planScoped(ContextRequest req, int window, int outputReserve, long currentUserId,
-                                   Set<Long> visibleHistory, ContextPlan.Stage stage) {
+                                   Set<Long> visibleHistory, ContextPlan.Stage stage, List<ContextFragment> extras,
+                                   ContextPlan.Window bounds) {
         List<ContextFragment> fragments = new ArrayList<>();
         fragments.add(ContextFragment.system(ContextFragment.Layer.INSTRUCTION, "system_base",
                 ContextFragment.Trust.INSTRUCTION, Objects.toString(req.systemBase(), "")));
@@ -118,6 +130,10 @@ public class ContextBuilder {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.CONFLICT, "本轮用户消息已不在会话中");
         }
+        if (extras != null) {
+            // R1：任务段的角色与约束先于续接摘录，均属必带片段，随任务段退出默认回放。
+            fragments.addAll(extras);
+        }
         if (stage != null) {
             fragments.add(stage.continuation());
         }
@@ -129,7 +145,7 @@ public class ContextBuilder {
             body.set("tools", req.toolSchemas());
         }
         var scope = new ContextPlan.Scope(req.sessionId(), MemoryScopeCtx.get().agentOrBuiltin(), req.projectId());
-        return new ContextPlan(body, fragments, scope, window, outputReserve, stage);
+        return new ContextPlan(body, fragments, scope, bounds, window, outputReserve, stage);
     }
 
     private ObjectNode buildScoped(ContextRequest req,List<ContextProvider> extra) {

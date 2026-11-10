@@ -44,12 +44,17 @@ import {
   sessionRawContext,
   sessionTodos,
   updateSessionConfig,
+  endScene,
+  resumeScene,
+  sessionScenes,
+  startScene,
   type ChatTodoApproval,
   type ChatTodoDecision,
   type MaPeer,
   type Project,
   type PromptsView,
   type RawContext,
+  type SceneState,
   type SessionItem,
   type SessionMessage,
   type SessionTodo,
@@ -618,6 +623,155 @@ const SubagentBubble = memo(function SubagentBubble({
   )
 })
 
+/** 任务段状态条（R1）：显示当前任务名，提供开始 / 结束 / 恢复三个动作。
+ *  开始时可填名称与可选的临时角色 / 任务约束；生成中按钮禁用（后端同样只在安全点接受切换）。 */
+const SceneBar = memo(function SceneBar({
+  state,
+  busy,
+  onStart,
+  onEnd,
+  onResume,
+}: {
+  state: SceneState | null
+  busy: boolean
+  onStart: (name: string, rolePrompt: string, constraints: string) => void
+  onEnd: (sceneId: number) => void
+  onResume: (sceneId: number) => void
+}) {
+  const [formOpen, setFormOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [rolePrompt, setRolePrompt] = useState('')
+  const [constraints, setConstraints] = useState('')
+  const [resumeOpen, setResumeOpen] = useState(false)
+  const active = state?.active ?? null
+  const resumable = state?.resumable ?? []
+
+  const closeForm = () => {
+    setFormOpen(false)
+    setName('')
+    setRolePrompt('')
+    setConstraints('')
+  }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    onStart(name.trim(), rolePrompt.trim(), constraints.trim())
+    closeForm()
+  }
+
+  return (
+    <div className="relative mb-2">
+      <div className="flex items-center gap-2 text-sm">
+        <span
+          className={`flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+            active
+              ? 'border-accent/40 bg-accent/10 font-medium text-accent'
+              : 'border-line bg-fg/[0.02] text-faint'
+          }`}
+          title={active ? `任务约束：${active.constraints || '（无）'}` : '未开始任务，普通聊天'}
+        >
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? 'bg-accent' : 'bg-faint'}`} aria-hidden="true" />
+          <span className="max-w-56 truncate">{active ? `任务 · ${active.name || '未命名'}` : '普通聊天'}</span>
+        </span>
+        {active ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onEnd(active.id)}
+            className="flex cursor-pointer items-center gap-1 rounded-full border border-line px-2.5 py-1 text-xs text-muted transition hover:border-line-strong hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <AppIcon name="stop" className="h-3 w-3" />
+            结束任务
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => { setResumeOpen(false); setFormOpen((v) => !v) }}
+              aria-expanded={formOpen}
+              className="flex cursor-pointer items-center gap-1 rounded-full border border-line px-2.5 py-1 text-xs text-muted transition hover:border-line-strong hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <AppIcon name="plus" className="h-3 w-3" />
+              开始任务
+            </button>
+            {resumable.length > 0 && (
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => { setFormOpen(false); setResumeOpen((v) => !v) }}
+                  aria-expanded={resumeOpen}
+                  className="flex cursor-pointer items-center gap-1 rounded-full border border-line px-2.5 py-1 text-xs text-muted transition hover:border-line-strong hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <AppIcon name="play" className="h-3 w-3" />
+                  恢复任务
+                </button>
+                {resumeOpen && (
+                  <div className="absolute bottom-full left-0 z-30 mb-2 max-h-64 w-72 overflow-y-auto rounded-xl border border-line bg-bg p-1.5 shadow-xl">
+                    {resumable.map((scene) => (
+                      <button
+                        key={scene.id}
+                        type="button"
+                        onClick={() => { setResumeOpen(false); onResume(scene.id) }}
+                        className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-fg transition hover:bg-fg/5"
+                      >
+                        <span className="min-w-0 flex-1 truncate">{scene.name || '未命名任务'}</span>
+                        <span className="shrink-0 text-2xs text-faint">{fmtTime(scene.createdAt)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      {formOpen && (
+        <form
+          onSubmit={submit}
+          className="absolute bottom-full left-0 z-30 mb-2 w-full max-w-lg rounded-xl border border-line bg-bg p-3 shadow-xl"
+        >
+          <p className="pb-2 text-xs font-medium uppercase tracking-[0.18em] text-faint">开始一段任务</p>
+          <div className="flex flex-col gap-2">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="任务名称（如：跑团、排查线上故障）"
+              aria-label="任务名称"
+              className="w-full rounded-lg border border-line bg-fg/[0.02] px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+            />
+            <textarea
+              value={rolePrompt}
+              onChange={(e) => setRolePrompt(e.target.value)}
+              placeholder="临时角色（可选，仅本任务生效，如：你是地下城主持人）"
+              aria-label="临时角色"
+              rows={2}
+              className="w-full resize-none rounded-lg border border-line bg-fg/[0.02] px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+            />
+            <textarea
+              value={constraints}
+              onChange={(e) => setConstraints(e.target.value)}
+              placeholder="任务约束（可选，仅本任务生效，如：只用代号青灯）"
+              aria-label="任务约束"
+              rows={2}
+              className="w-full resize-none rounded-lg border border-line bg-fg/[0.02] px-3 py-2 text-sm text-fg outline-none focus:border-accent"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={closeForm} className={`${miniBtn} border-line bg-bg text-muted hover:text-fg`}>
+                取消
+              </button>
+              <button type="submit" disabled={busy} className={`${miniBtn} border-accent bg-accent text-accent-fg hover:border-accent-hover hover:bg-accent-hover`}>
+                <AppIcon name="check" className="h-3.5 w-3.5" />
+                开始
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+    </div>
+  )
+})
+
 /** 首页：Google 式问候 + 居中搜索。检索提交跳转搜索结果页；点搜索框左侧图标切换会话模式。
  *  两页滚动模式：搜索页在上、对话页在下，进入会话时平滑滚到第 2 页，模拟搜索栏上移消失的
  *  过渡效果；滚轮拦截让两页各自锁定（搜索页不向下、对话页不外溢），拖拽选中文本期间再把
@@ -655,6 +809,9 @@ export default function Home({ connErr }: Props) {
   /** 当前会话的个人待办清单（plan-of-record）：TODO 卡片的数据源；
    *  由会话事件（kind=todo）与生成结束（busy→false）驱动刷新（见下方两个效应） */
   const [todos, setTodos] = useState<SessionTodo[]>([])
+  /** 任务段状态（R1）：当前活动段与可恢复段；随会话切换拉取，kind=scene 事件即时刷新 */
+  const [sceneState, setSceneState] = useState<SceneState | null>(null)
+  const [sceneBusy, setSceneBusy] = useState(false)
   /** 错误轻提示（message box，替代页内错误文案：发送失败 / 会话加载失败 / 后端未连通） */
   const [toast, setToast] = useState<string | null>(null)
 
@@ -981,6 +1138,63 @@ export default function Home({ connErr }: Props) {
       unsubscribe()
     }
   }, [sessionId])
+
+  /* 任务段（R1）：切会话时拉取当前活动段与可恢复段；kind=scene 事件即时刷新。
+     切换只在安全点提交——busy 时按钮已禁用，后端仍会拒绝生成中的切换。 */
+  useEffect(() => {
+    if (sessionId === null) {
+      setSceneState(null)
+      return
+    }
+    let alive = true
+    const refresh = () => {
+      void sessionScenes(sessionId)
+        .then(state => { if (alive) setSceneState(state) })
+        .catch(() => {
+          /* 静默：下次切换或事件到达时兜底 */
+        })
+    }
+    refresh()
+    const unsubscribe = subscribeSessionEvents((e) => {
+      if (e.sessionId !== sessionId || e.kind !== 'scene') return
+      refresh()
+    })
+    return () => {
+      alive = false
+      unsubscribe()
+    }
+  }, [sessionId])
+
+  /** 任务段动作的统一收口：结束后无论成败都重拉一次状态；失败给轻提示 */
+  const sceneAction = useCallback((run: () => Promise<unknown>) => {
+    if (sessionId === null) return
+    setSceneBusy(true)
+    run()
+      .catch((e: unknown) => {
+        setToast(e instanceof Error ? e.message : '任务段操作失败，请稍后重试')
+      })
+      .finally(() => {
+        setSceneBusy(false)
+        void sessionScenes(sessionId)
+          .then(setSceneState)
+          .catch(() => {
+            /* 静默：事件订阅会兜底刷新 */
+          })
+      })
+  }, [sessionId])
+
+  const onStartScene = useCallback((name: string, rolePrompt: string, constraints: string) => {
+    if (sessionId === null) return
+    sceneAction(() => startScene(sessionId, name || null, rolePrompt || null, constraints || null))
+  }, [sessionId, sceneAction])
+  const onEndScene = useCallback((sceneId: number) => {
+    if (sessionId === null) return
+    sceneAction(() => endScene(sessionId, sceneId))
+  }, [sessionId, sceneAction])
+  const onResumeScene = useCallback((sceneId: number) => {
+    if (sessionId === null) return
+    sceneAction(() => resumeScene(sessionId, sceneId))
+  }, [sessionId, sceneAction])
 
   /* 对话页滚轮只作用于消息列表：内容不足一屏或已到边界时不再外溢回搜索页 */
   useEffect(() => {
@@ -1852,6 +2066,15 @@ export default function Home({ connErr }: Props) {
 
           {/* 底部输入框：不随消息列表滚动；左侧按钮返回搜索屏并移交焦点。 */}
           <div className="mx-auto w-full max-w-2xl pb-4">
+            {sessionId !== null && (
+              <SceneBar
+                state={sceneState}
+                busy={busy || sceneBusy}
+                onStart={onStartScene}
+                onEnd={onEndScene}
+                onResume={onResumeScene}
+              />
+            )}
             <div className="flex items-center gap-2">
               <button
                 type="button"

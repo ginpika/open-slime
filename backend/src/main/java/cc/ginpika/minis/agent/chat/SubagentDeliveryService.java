@@ -63,6 +63,13 @@ public class SubagentDeliveryService {
     private final SubagentScope scope;
     private final ContextProps contextProps;
     private final TransactionTemplate transactions;
+    private ChatScenes scenes;
+
+    /** R1：报告卡按落地时的活动任务段归档；非 Spring 测试环境缺省为普通段。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setScenes(ChatScenes scenes) {
+        this.scenes = scenes;
+    }
 
     public SubagentDeliveryService(SettingsService settings, OpenAiChatClient client,
                                    HubSessionStore sessions, ChatMessageStore messages,
@@ -123,7 +130,9 @@ public class SubagentDeliveryService {
             if (!scope.visible(event.execId(), row.id()) || messages.subagentReport(row.id(), event.execId()) != null) {
                 return false;
             }
-            recordReport(row.id(), body, ChatMessageStore.KIND_SUBAGENT, metadata.toString());
+            long messageId = recordReport(row.id(), body, ChatMessageStore.KIND_SUBAGENT, metadata.toString());
+            // R3：报告卡依赖其获授权的来源引用，来源失效后报告退出模型范围（转录保留）。
+            messages.insertDependencies(messageId, event.sourceRefs());
             return true;
         }));
         if (delivered) {
@@ -183,8 +192,11 @@ public class SubagentDeliveryService {
                 return false;
             }
             if (summary != null && !summary.isBlank()) {
-                recordReport(row.id(), clip(summary, SCOPED_BATCH_SUMMARY_CHARS),
+                long batchId = recordReport(row.id(), clip(summary, SCOPED_BATCH_SUMMARY_CHARS),
                         ChatMessageStore.KIND_SUBAGENT_BATCH, metadata.toString());
+                // R3：批次归纳依赖成员报告卡；任一报告失效，归纳退出模型范围。
+                messages.insertDependencies(batchId,
+                        reports.stream().map(report -> "message:" + report.messageId()).toList());
             }
             sessions.touch(row.id(), null);
             sessions.markUnread(row.id());
@@ -214,9 +226,11 @@ public class SubagentDeliveryService {
         return List.copyOf(reports);
     }
 
-    private void recordReport(String sessionId, String body, String kind, String metadata) {
+    private long recordReport(String sessionId, String body, String kind, String metadata) {
         long messageId = messages.insert(sessionId, "assistant", body, null, null, null, kind, metadata);
-        turnStore.record(sessionId, TurnTrigger.Source.SUBAGENT_REPORT, messageId);
+        Long scene = scenes == null ? null : scenes.activeSceneId(sessionId);
+        turnStore.record(sessionId, TurnTrigger.Source.SUBAGENT_REPORT, messageId, scene);
+        return messageId;
     }
 
     /** 合成器的上下文基底：system + 本会话历史（本批各条结论气泡已排在末尾） */

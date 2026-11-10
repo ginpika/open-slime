@@ -20,8 +20,7 @@ import {
 import FloatWindow from '../components/FloatWindow'
 import GraphMini from '../components/GraphMini'
 import Toast, { type ToastKind } from '../components/Toast'
-import { btnOutline, btnPrimary } from '../components/ui'
-import { usePageKit } from '../kit'
+import './knowledge.css'
 
 /**
  * 步骤 2：知识提取（步骤条下方为左右布局）。
@@ -101,8 +100,7 @@ function trimNeighbors(g: SearchGraph, centerId: string, max: number): SearchGra
   }
 }
 
-const inputCls =
-  'w-full min-w-0 rounded-sm border border-line bg-bg px-2 py-1 text-sm text-fg outline-none transition focus:border-line-strong disabled:opacity-60'
+const inputCls = 'kn-input kn-input--sm'
 
 /** Spinner 圆环（加载中动画） */
 function Spinner({ className = 'h-4 w-4' }: { className?: string }) {
@@ -137,7 +135,6 @@ function fmtTime(ts: number): string {
 }
 
 export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
-  const kit = usePageKit()
   /** 上下文补完串（Anthropic Contextual：文档标题 + 类型 + 全文概述 + chunk 组合，与后端 chunkContext 保持一致） */
   const contextString = useMemo(() => {
     return `<document>\n<title>${ctx.docTitle}</title>\n<docType>${ctx.docType ?? 'UNKNOWN'}</docType>\n<abstract>${ctx.contextualizing}</abstract>\n</document>\n\n<chunk>\n${ctx.chunk.content}\n</chunk>`
@@ -390,13 +387,13 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-col">
-              <h2 className="ui-heading text-base">「{ctx.docTitle}」· chunk #{ctx.chunk.id}</h2>
+              <h2 className="kn-section-title">「{ctx.docTitle}」· chunk #{ctx.chunk.id}</h2>
             </div>
             <button
               type="button"
               onClick={() => void extract()}
               disabled={extracting || (!!committed && !history)}
-              className={`${btnPrimary('rounded-md')} shrink-0 gap-2`}
+              className="kn-btn kn-btn--primary shrink-0"
             >
               {extracting && <Spinner className="h-3.5 w-3.5" />}
               {extracting ? '大模型提取中 …' : history ? '重新提取' : '知识提取'}
@@ -404,13 +401,13 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
           </div>
 
           {/* 父文档摘要（LLM 生成的全文概述，提取时组装进上下文补完串） */}
-          <p className="ui-label">父文档摘要</p>
+          <p className="kn-label">父文档摘要</p>
           <div className="scrollbar-slim max-h-32 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.02] p-3 text-sm leading-relaxed text-muted">
             {ctx.contextualizing || '（暂无概述）'}
           </div>
 
           {/* Chunk 原文（横向自动换行，竖向滚动条；提取时仍组装上下文补完串送入 LLM） */}
-          <p className="ui-label">Chunk 原文</p>
+          <p className="kn-label">Chunk 原文</p>
           <div className="scrollbar-slim max-h-96 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words rounded-md border border-line bg-fg/[0.02] p-3.5 text-sm leading-relaxed text-muted">
             {ctx.chunk.content}
           </div>
@@ -419,7 +416,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
         {/* 右：提取到的三元组横长条卡片（stack）+ 提交 */}
         <div className="flex min-w-0 flex-1 flex-col gap-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="ui-heading text-base">
+            <h2 className="kn-section-title">
               三元组（{rows.length}）{history ? ' · 已提交' : ` · 勾选 ${checkedCount}`}
             </h2>
             {history ? (
@@ -451,45 +448,43 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
             </div>
           ) : (
             <div className="flex-1">
-              <kit.Empty>
+              <div className="kn-empty">
                 尚未提取到三元组——点击左侧「知识提取」，由大模型从 Chunk 原文中抽取实体与关系。
-              </kit.Empty>
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Footer：返回选择（左） / 提交 + 下一步（右），分隔线形态随 kit.Toolbar */}
-      <kit.Toolbar
-        left={
-          <button type="button" onClick={back} className={btnOutline('rounded-md')}>
+      {/* Footer：返回选择（左） / 提交 + 下一步（右） */}
+      <div className="kn-toolbar">
+        <div className="kn-toolbar__left">
+          <button type="button" onClick={back} className="kn-btn">
             ← 返回选择
           </button>
-        }
-        right={
-          <>
-            {rows.length > 0 && !committed && (
-              <button
-                type="button"
-                onClick={() => void commit()}
-                disabled={committing || rows.some(row => row.evaluating) || checkedCount === 0}
-                className={`${btnPrimary('rounded-md')} gap-2`}
-              >
-                {committing && <Spinner className="h-3.5 w-3.5" />}
-                {committing ? '提交中 …' : `提交（${checkedCount}）`}
-              </button>
-            )}
+        </div>
+        <div className="kn-toolbar__right">
+          {rows.length > 0 && !committed && (
             <button
               type="button"
-              onClick={onAdvance}
-              title="携带当前 chunk 进入 Chunk 增强（步骤 3）"
-              className={btnOutline('rounded-md')}
+              onClick={() => void commit()}
+              disabled={committing || rows.some(row => row.evaluating) || checkedCount === 0}
+              className="kn-btn kn-btn--primary"
             >
-              下一步 →
+              {committing && <Spinner className="h-3.5 w-3.5" />}
+              {committing ? '提交中 …' : `提交（${checkedCount}）`}
             </button>
-          </>
-        }
-      />
+          )}
+          <button
+            type="button"
+            onClick={onAdvance}
+            title="携带当前 chunk 进入 Chunk 增强（步骤 3）"
+            className="kn-btn"
+          >
+            下一步 →
+          </button>
+        </div>
+      </div>
 
       {/* 轻提示（message box）：提交成功 / 提取·评估·提交失败，视口顶部居中悬浮 */}
       <Toast kind={toast?.kind} message={toast?.text ?? null} onClose={() => setToast(null)} />
@@ -560,7 +555,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
                       setInspect(null)
                     }}
                     title="将该端实体名替换为疑似实体（视为同一实体合并），替换后重新消歧"
-                    className={btnPrimary('rounded-md')}
+                    className="kn-btn kn-btn--primary kn-btn--sm"
                   >
                     合并为「{inspect.targets[inspect.tab].ent.name}」
                   </button>
@@ -579,7 +574,7 @@ export default function ExtractStep({ ctx, onAdvance, onBack }: Props) {
                       pickEntity(inspect.rowKey, inspect.side, rename.trim())
                       setInspect(null)
                     }}
-                    className={`${btnOutline('rounded-md')} shrink-0`}
+                    className="kn-btn kn-btn--sm shrink-0"
                   >
                     重命名
                   </button>

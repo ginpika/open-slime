@@ -76,6 +76,54 @@ class ContextPlanTest {
         assertTrue(ContextPlan.estimateRequest(plan.body()) - fitted.selection().estimatedInputTokens() > 4096);
     }
 
+    @Test
+    void workingWindowKeepsAtMostEightTurnsBeforeBudgetPressure() {
+        List<ContextFragment> fragments = new java.util.ArrayList<>();
+        fragments.add(ContextFragment.system(Layer.INSTRUCTION, "system_base", Trust.INSTRUCTION, "rules"));
+        for (int i = 1; i <= 10; i++) {
+            fragments.add(turn(Layer.WORK, i, "第" + i + "轮内容"));
+        }
+        fragments.add(turn(Layer.TASK, 11, "current"));
+        ObjectNode body = JSON.createObjectNode().put("model", "fixture");
+        var plan = new ContextPlan(body, List.copyOf(fragments), SCOPE,
+                new ContextPlan.Window(8, 8192, 3, 2), 20_000, RESERVE, null);
+
+        var fitted = plan.fit(plan.body());
+        // 远未到预算也先按窗口收敛：最早的轮次退出默认回放，并留下可定位索引（R6）
+        assertTrue(fitted.selection().omitted().stream()
+                .anyMatch(entry -> entry.reasons().contains("working_window")
+                        && entry.refs().stream().anyMatch(ref -> ref.value().equals("message:1"))));
+        assertFalse(fitted.body().path("messages").toString().contains("第1轮内容"));
+        assertFalse(fitted.body().path("messages").toString().contains("第2轮内容"));
+        assertTrue(fitted.body().path("messages").toString().contains("第9轮内容"));
+        assertTrue(fitted.body().path("messages").toString().contains("current"));
+        assertTrue(fitted.body().path("messages").toString().contains("【历史证据索引】"));
+        assertTrue(fitted.body().path("messages").toString().contains("message:1"));
+        // R7：场景与授权代号进 Manifest 对照
+        assertEquals(3L, fitted.selection().sceneId());
+        assertEquals(2L, fitted.selection().scopeRevision());
+    }
+
+    @Test
+    void workingWindowAlsoBoundsHistoryByTokenCap() {
+        List<ContextFragment> fragments = new java.util.ArrayList<>();
+        fragments.add(ContextFragment.system(Layer.INSTRUCTION, "system_base", Trust.INSTRUCTION, "rules"));
+        for (int i = 1; i <= 4; i++) {
+            fragments.add(turn(Layer.WORK, i, "很长的第" + i + "轮过程记录。".repeat(400)));
+        }
+        fragments.add(turn(Layer.TASK, 5, "current"));
+        ObjectNode body = JSON.createObjectNode().put("model", "fixture");
+        var plan = new ContextPlan(body, List.copyOf(fragments), SCOPE,
+                new ContextPlan.Window(8, 1200, 0, 0), 20_000, RESERVE, null);
+
+        var fitted = plan.fit(plan.body());
+        // 轮数未超限，但历史正文估算超 token 上限：仍从最早轮次退出默认回放
+        assertTrue(fitted.selection().omitted().stream()
+                .anyMatch(entry -> entry.reasons().contains("working_window")));
+        assertTrue(fitted.body().path("messages").toString().contains("current"));
+        assertTrue(fitted.body().path("messages").toString().contains("【历史证据索引】"));
+    }
+
     private static int requiredWindow(ContextFragment... fragments) {
         var baseline = plan(20_000, fragments);
         return Math.toIntExact(baseline.fit(baseline.body()).selection().estimatedInputTokens()) + RESERVE + SAFETY;

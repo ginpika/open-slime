@@ -88,6 +88,10 @@ minis:
     ephemeral-chat: ${CONTEXT_EPHEMERAL_CHAT:false}     # P1 单聊试点：按完整请求预算选取上下文
     stage-continuation: ${CONTEXT_STAGE_CONTINUATION:false} # P3 单聊试点：阶段续接与历史水位
     todo-approvals: ${CONTEXT_TODO_APPROVALS:false} # P4 单聊试点：确认后完成待办
+    bounded-working-window: ${CONTEXT_BOUNDED_WORKING_WINDOW:false} # R5 默认工作窗口（独立灰度）：当前段先按轮数与正文上限收敛
+    working-window-turns: ${CONTEXT_WORKING_WINDOW_TURNS:8}         # R5：当前任务段默认回放的已完成 Turn 上限
+    working-window-token-cap: ${CONTEXT_WORKING_WINDOW_TOKEN_CAP:8192} # R5：历史正文预算下限/基准；大窗口按 窗口/32 放宽（1M≈31K），仍受 25% 占比约束
+    working-window-share-percent: ${CONTEXT_WORKING_WINDOW_SHARE_PERCENT:25} # R5：历史正文最多占可用输入预算的百分比
     compress-history: ${CONTEXT_COMPRESS_HISTORY:true}   # 逼近窗口时才降级：先丢最早的轮次，仍超再截断
     reserve-output-tokens: ${CONTEXT_RESERVE_OUTPUT_TOKENS:8192} # 给模型输出留的 token（输入输出共用窗口）
     compress-keep-turns: ${CONTEXT_COMPRESS_KEEP_TURNS:2} # 降级时至少保留最近几轮原文

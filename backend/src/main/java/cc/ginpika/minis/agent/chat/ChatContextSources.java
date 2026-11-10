@@ -25,6 +25,9 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class ChatContextSources {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(ChatContextSources.class);
+
     public static final String TOOL_NAME = "read_context_source";
 
     private static final String TOOL_ARTIFACT = "tool_result";
@@ -50,15 +53,94 @@ public class ChatContextSources {
             )
             """;
 
+    private static final String SCOPED_TASKS = """
+            SELECT t.id, t.status, ct.trigger_message_id, ct.reply_message_id
+            FROM task t JOIN source_session s ON s.id = t.session_id AND s.agent_id = t.agent_id
+            JOIN chat_turn ct ON ct.task_id = t.id AND ct.session_id = s.id
+            JOIN chat_message u ON u.id = ct.trigger_message_id AND u.session_id = s.id AND u.role = 'user'
+            WHERE t.kind = 'session' AND ct.trigger_source = 'USER_INPUT'
+              AND (ct.reply_message_id IS NULL OR EXISTS (
+                  SELECT 1 FROM chat_message m WHERE m.id = ct.reply_message_id AND m.session_id = s.id
+              ))
+              AND NOT EXISTS (
+                  SELECT 1 FROM memory_retracted_source r
+                  WHERE r.ref IN ('task:' || t.id, 'chat_message:' || u.id, 'chat_message:' || ct.reply_message_id)
+              )
+            """;
+
     private static final String MESSAGE_SCOPE = SCOPED_SESSION
-            + ", source_subagent AS (" + SubagentScope.VISIBLE_EXECUTIONS + ")\n";
+            + ", source_subagent AS (" + SubagentScope.VISIBLE_EXECUTIONS + ")\n"
+            + ", source_task AS (" + SCOPED_TASKS + """
+                UNION ALL
+                SELECT t.id, t.status, NULL, NULL FROM task t JOIN source_subagent s ON s.id = t.id
+                )
+                """;
+
+    /** A branch copy is readable only while its original session binding and source message hold. */
+    public static final String COPY_SOURCE_VALID = """
+            NOT EXISTS (
+                SELECT 1 FROM chat_message_origin o WHERE o.message_id = m.id AND NOT EXISTS (
+                    SELECT 1 FROM chat_message_origin valid
+                    JOIN hub_session os ON os.id = valid.origin_session_id
+                    JOIN chat_message om ON om.id = valid.origin_message_id
+                        AND om.session_id = valid.origin_session_id
+                    WHERE valid.message_id = m.id
+                      AND COALESCE(os.context_scope_revision, 0) = valid.origin_scope_revision
+                      AND NOT EXISTS (
+                          SELECT 1 FROM memory_retracted_source r WHERE r.ref = 'chat_message:' || om.id
+                      )
+                )
+            )
+            """;
+
+    /** A derived message stays readable only while every recorded dependency is still available. */
+    private static final String DEPENDENCIES_VALID = """
+            NOT EXISTS (
+                SELECT 1 FROM chat_message_dependency d WHERE d.message_id = m.id AND NOT (
+                    (d.ref LIKE 'message:%' AND EXISTS (
+                        SELECT 1 FROM chat_message dm
+                        WHERE dm.id = CAST(SUBSTR(d.ref, 9) AS INTEGER) AND dm.session_id = s.id
+                          AND dm.role IN ('user', 'assistant')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM memory_retracted_source r WHERE r.ref = 'chat_message:' || dm.id
+                          )
+                          AND (dm.kind IS NOT 'subagent' OR CASE
+                               WHEN NOT COALESCE(json_valid(dm.meta), 0) THEN 1
+                               WHEN json_extract(dm.meta, '$.contextScoped') IS 1
+                                   THEN json_extract(dm.meta, '$.execId') IN (SELECT id FROM source_subagent)
+                               WHEN json_extract(dm.meta, '$.execId') IS NULL THEN 1
+                               ELSE EXISTS (
+                                   SELECT 1 FROM task legacy
+                                   WHERE legacy.id = json_extract(dm.meta, '$.execId')
+                                     AND legacy.kind = 'subagent' AND legacy.session_id = s.id
+                                     AND legacy.agent_id = s.agent_id
+                                     AND NOT EXISTS (SELECT 1 FROM memory_retracted_source r
+                                         WHERE r.ref = 'task:' || legacy.id)
+                               )
+                          END)
+                    )) OR (d.ref LIKE 'artifact:%' AND EXISTS (
+                        SELECT 1 FROM task_artifact da JOIN source_task st ON st.id = da.task_id
+                        WHERE da.id = CAST(SUBSTR(d.ref, 10) AS INTEGER)
+                          AND da.kind IN ('text', 'tool_result') AND da.content IS NOT NULL
+                          AND NOT EXISTS (
+                              SELECT 1 FROM memory_retracted_source r WHERE r.ref = 'task_artifact:' || da.id
+                          )
+                    )) OR (d.ref LIKE 'subagent:%' AND EXISTS (
+                        SELECT 1 FROM source_subagent v WHERE v.id = CAST(SUBSTR(d.ref, 10) AS INTEGER)
+                    ))
+                )
+            )
+            """;
 
     private static final String SCOPED_MESSAGES = """
             FROM chat_message m JOIN source_session s ON s.id = m.session_id
             WHERE m.role IN ('user', 'assistant')
               AND NOT EXISTS (
                   SELECT 1 FROM memory_retracted_source r WHERE r.ref = 'chat_message:' || m.id
-              )
+              )"""
+            + " AND " + COPY_SOURCE_VALID
+            + " AND " + DEPENDENCIES_VALID + """
+
               AND NOT EXISTS (
                   SELECT 1 FROM chat_turn ct LEFT JOIN task t ON t.id = ct.task_id
                   WHERE ct.session_id = s.id AND ct.task_id IS NOT NULL
@@ -102,27 +184,32 @@ public class ChatContextSources {
               END
             """;
 
-    private static final String SCOPED_TASKS = """
-            SELECT t.id, t.status, ct.trigger_message_id, ct.reply_message_id
-            FROM task t JOIN source_session s ON s.id = t.session_id AND s.agent_id = t.agent_id
-            JOIN chat_turn ct ON ct.task_id = t.id AND ct.session_id = s.id
-            JOIN chat_message u ON u.id = ct.trigger_message_id AND u.session_id = s.id AND u.role = 'user'
-            WHERE t.kind = 'session' AND ct.trigger_source = 'USER_INPUT'
-              AND (ct.reply_message_id IS NULL OR EXISTS (
-                  SELECT 1 FROM chat_message m WHERE m.id = ct.reply_message_id AND m.session_id = s.id
-              ))
-              AND NOT EXISTS (
-                  SELECT 1 FROM memory_retracted_source r
-                  WHERE r.ref IN ('task:' || t.id, 'chat_message:' || u.id, 'chat_message:' || ct.reply_message_id)
-              )
-            """;
+    private static final String SCOPED_ARTIFACTS = MESSAGE_SCOPE;
 
-    private static final String SCOPED_ARTIFACTS = MESSAGE_SCOPE
-            + ", source_task AS (" + SCOPED_TASKS + """
-                UNION ALL
-                SELECT t.id, t.status, NULL, NULL FROM task t JOIN source_subagent s ON s.id = t.id
-                )
-                """;
+    /**
+     * R1 段过滤。任务段（sceneId 非空）：消息的 Turn（或其轮内补充所属 Turn）须归属该任务段。
+     * 普通段（sceneId 为空）：消息须在边界之后，且不属于任何任务段（含轮内补充的判定）。
+     */
+    private static final String SEGMENT_FILTER = """
+            AND (
+                (? IS NOT NULL AND (
+                    EXISTS (SELECT 1 FROM chat_turn st WHERE st.session_id = s.id
+                        AND (st.trigger_message_id = m.id OR st.reply_message_id = m.id) AND st.scene_id = ?)
+                    OR (m.kind IN ('steer', 'steer_reply') AND EXISTS (
+                        SELECT 1 FROM chat_turn sj JOIN chat_message su ON su.id = sj.trigger_message_id
+                            AND su.session_id = sj.session_id
+                        WHERE sj.session_id = s.id AND sj.scene_id = ? AND su.meta = m.meta))
+                ))
+                OR (? IS NULL AND m.id > ? AND NOT EXISTS (
+                    SELECT 1 FROM chat_turn st2 WHERE st2.session_id = s.id
+                      AND (st2.trigger_message_id = m.id OR st2.reply_message_id = m.id)
+                      AND st2.scene_id IS NOT NULL)
+                  AND NOT (m.kind IN ('steer', 'steer_reply') AND EXISTS (
+                      SELECT 1 FROM chat_turn st3 JOIN chat_message u3 ON u3.id = st3.trigger_message_id
+                          AND u3.session_id = st3.session_id
+                      WHERE st3.session_id = s.id AND st3.scene_id IS NOT NULL AND u3.meta = m.meta)))
+            )
+            """;
     private static final String ARTIFACT_FILTER = """
             FROM task_artifact a JOIN source_task t ON t.id = a.task_id
             WHERE a.kind IN ('text', 'tool_result') AND a.content IS NOT NULL
@@ -150,6 +237,22 @@ public class ChatContextSources {
         }
         return Set.copyOf(jdbc.query(MESSAGE_SCOPE + "SELECT m.id\n" + SCOPED_MESSAGES,
                 (rs, n) -> rs.getLong(1), scope.args()));
+    }
+
+    /**
+     * R1 段内消息：任务段活动时只含该段的 Turn（含其轮内补充）；否则只含普通段边界之后的
+     * 非任务段内容。授权与回读仍按 {@link #visibleMessageIds} 全量判定——退出默认回放的证据
+     * 仍可经显式检索找回。
+     */
+    public Set<Long> segmentMessageIds(String sessionId, String agentId, String projectId,
+                                       Long sceneId, long boundary) {
+        Scope scope = new Scope(sessionId, agentId, projectId);
+        if (!scope.valid()) {
+            return Set.of();
+        }
+        Long scene = sceneId == null || sceneId <= 0 ? null : sceneId;
+        return Set.copyOf(jdbc.query(MESSAGE_SCOPE + "SELECT m.id\n" + SCOPED_MESSAGES + SEGMENT_FILTER,
+                (rs, n) -> rs.getLong(1), scope.args(scene, scene, scene, scene, boundary)));
     }
 
     /** Recall uses only current user text visible under the same captured scope as history. */
@@ -246,7 +349,7 @@ public class ChatContextSources {
             }
             String ref = source.asText("");
             int offset = (int) integer(args, "offset", 0, 0, Integer.MAX_VALUE);
-            return switch (args.path("action").asText("")) {
+            String result = switch (args.path("action").asText("")) {
                 case "list" -> (ref.isBlank()
                         ? listMessages(scope, integer(args, "before_message_id", Long.MAX_VALUE, 1, Long.MAX_VALUE))
                         : listRelated(scope, ref, offset)).toString();
@@ -254,6 +357,12 @@ public class ChatContextSources {
                         (int) integer(args, "length", DEFAULT_LENGTH, 1, MAX_LENGTH)).toString();
                 default -> error("action 必须为 list 或 read").toString();
             };
+            if (log.isDebugEnabled()) {
+                log.debug("[ctx] readback session={} action={} source={} offset={} ok={}", scope.sessionId(),
+                        args.path("action").asText(""), ref, offset,
+                        result.contains("\"status\":\"ok\""));
+            }
+            return result;
         } catch (IllegalArgumentException invalid) {
             return error("引用或分页参数无效").toString();
         } catch (IOException invalid) {
@@ -275,7 +384,26 @@ public class ChatContextSources {
                 RETURNING id
                 """, (rs, n) -> rs.getLong(1),
                 scope.args(TOOL_ARTIFACT, toolName, content, System.currentTimeMillis(), taskId));
-        return ids.isEmpty() ? null : artifactRef(ids.getFirst());
+        String reference = ids.isEmpty() ? null : artifactRef(ids.getFirst());
+        if (reference != null && log.isDebugEnabled()) {
+            log.debug("[ctx] archive session={} task={} tool={} artifact={} chars={}", sessionId, taskId,
+                    toolName, reference, characterCount(content));
+        }
+        return reference;
+    }
+
+    /** Record the durable dependencies of a derived message (R3); any later failure revokes it. */
+    public void recordDependencies(String sessionId, String agentId, String projectId,
+                                   long messageId, Set<String> refs) {
+        Scope scope = new Scope(sessionId, agentId, projectId);
+        if (!scope.valid() || messageId <= 0 || refs == null || refs.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (String ref : refs.stream().filter(value -> value != null && !value.isBlank()).distinct().toList()) {
+            jdbc.update("INSERT OR IGNORE INTO chat_message_dependency(message_id, ref, created_at) "
+                    + "VALUES(?,?,?)", messageId, ref, now);
+        }
     }
 
     private ObjectNode listMessages(Scope scope, long before) {

@@ -16,9 +16,8 @@ import {
 import FloatWindow from '../components/FloatWindow'
 import SegmentEditor, { type EditorSegment } from '../components/SegmentEditor'
 import Toast, { type ToastKind } from '../components/Toast'
-import { btnOutline, btnPrimary } from '../components/ui'
-import { usePageKit } from '../kit'
 import type { ExtractCtx } from './ExtractStep'
+import './knowledge.css'
 
 /**
  * 步骤 3：Chunk 增强（stack 布局，自上而下）。
@@ -193,7 +192,6 @@ const fmtDate = (ms: number): string => {
 }
 
 export default function EnhanceStep({ ctx, onPrev }: Props) {
-  const kit = usePageKit()
   /** 最终提交预案的分段（初始按 chunk 快照回显留档；后续将由按钮增删部分，文本均可就地编辑） */
   const [segments, setSegments, segmentsState] = useDraftState<EditorSegment[]>(`enhance:${ctx.chunk.id}:segments`, () => planSegmentsOf(ctx.chunk))
   const initializeSegments = segmentsState.initialize
@@ -423,7 +421,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
           type="button"
           onClick={() => void genHeader()}
           disabled={headerLoading || submitting || !!submitted || preview !== null}
-          className={`${btnOutline('rounded-md')} gap-2`}
+          className="kn-btn"
         >
           {headerLoading && <Spinner className="h-3.5 w-3.5" />}
           {headerLoading ? '生成中 …' : 'Chunk Header 生成'}
@@ -432,7 +430,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
           type="button"
           onClick={() => void genQuestions()}
           disabled={questionsLoading || submitting || !!submitted || preview !== null}
-          className={`${btnOutline('rounded-md')} gap-2`}
+          className="kn-btn"
         >
           {questionsLoading && <Spinner className="h-3.5 w-3.5" />}
           {questionsLoading ? '生成中 …' : '生成假设性问题'}
@@ -442,7 +440,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
       {/* ② 最终提交预案：定制化分段文本编辑框（hover 出提示、点击编辑、点框外回预览） */}
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="ui-heading text-sm">最终提交预案</h2>
+          <h2 className="kn-section-title">最终提交预案</h2>
           <p className="mono text-2xs text-faint">
             父文档「{ctx.docTitle}」· chunk #{ctx.chunk.id} · {planChars} 字
           </p>
@@ -456,27 +454,27 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
         />
       </div>
 
-      {/* ③ Footer：左「上一步」 / 右「提交 Chunk」→ 拼接预案全文弹窗预览确认，分隔线形态随 kit.Toolbar */}
-      <kit.Toolbar
-        left={
-          onPrev ? (
-            <button type="button" onClick={onPrev} className={btnOutline('rounded-md')}>
+      {/* ③ Footer：左「上一步」 / 右「提交 Chunk」→ 拼接预案全文弹窗预览确认 */}
+      <div className="kn-toolbar">
+        <div className="kn-toolbar__left">
+          {onPrev && (
+            <button type="button" onClick={onPrev} className="kn-btn">
               ← 上一步
             </button>
-          ) : undefined
-        }
-        right={
+          )}
+        </div>
+        <div className="kn-toolbar__right">
           <button
             type="button"
             onClick={() => setPreview({ text: buildPlanText(segments, `chunk-${ctx.chunk.id}`), segments })}
             disabled={submitting || headerLoading || questionsLoading || !!submitted}
             title="拼接最终提交预案全文，预览确认后提交"
-            className={`${btnPrimary('rounded-md')} gap-2`}
+            className="kn-btn kn-btn--primary"
           >
             {submitted ? '已提交' : '提交 Chunk'}
           </button>
-        }
-      />
+        </div>
+      </div>
 
       {/* 轻提示（message box）：提交成功 / 生成·留档·提交失败，视口顶部居中悬浮 */}
       <Toast kind={toast?.kind} message={toast?.text ?? null} onClose={() => setToast(null)} />
@@ -498,7 +496,7 @@ export default function EnhanceStep({ ctx, onPrev }: Props) {
                 type="button"
                 onClick={() => void confirmSubmit()}
                 disabled={submitting || segments !== preview.segments}
-                className={`${btnPrimary('rounded-md')} gap-2`}
+                className="kn-btn kn-btn--primary"
               >
                 {submitting && <Spinner className="h-3.5 w-3.5" />}
                 {submitting ? '提交中 …' : '确认并提交'}

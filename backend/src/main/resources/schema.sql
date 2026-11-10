@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS hub_session (
   memory_off        INTEGER NOT NULL DEFAULT 0, -- 临时会话：1=本次不进记忆（memory_event 写入与提炼均跳过）；「…」菜单开关
   context_scope_revision INTEGER,             -- 单聊续接授权代号，改绑或回退时递增，NULL 等同 0
   context_stage     TEXT,                    -- 单聊阶段与 Epoch 的引用元数据（JSON）
+  active_scene_id   INTEGER,                 -- 当前活动任务段（chat_scene.id，R1）；NULL=普通工作段
+  context_segment_message_id INTEGER,         -- 普通段边界：message id 大于它者属于当前普通段（R1）
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER
 );
@@ -89,12 +91,54 @@ CREATE TABLE IF NOT EXISTS chat_turn (
   trigger_message_id INTEGER,                 -- 触发那条 chat_message.id（旁路投递时为空）
   reply_message_id   INTEGER,                 -- 这次执行的回答行 id（尚未产出为空）
   task_id            INTEGER,                 -- 归属任务（kind=session）——执行信封的挂点
+  scene_id           INTEGER,                 -- 归属任务段（chat_scene.id，R1）；NULL=普通工作段
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_turn_trigger ON chat_turn(trigger_message_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_turn_reply ON chat_turn(reply_message_id);
 CREATE INDEX IF NOT EXISTS idx_turn_session ON chat_turn(session_id, id);
+
+-- 分支复制时的来源归属（R2）：copyUpTo 复制进新会话的每一行都带一条映射——
+-- 指回原始会话与原始消息行，并记录复制时原始会话的授权代号（context_scope_revision）。
+-- 原会话随后改绑 Agent/项目或回退都会推进代号，副本随即退出模型可读范围（用户转录不受影响）；
+-- 原始消息被删除或撤回时，连接失败，副本同样失效。原始会话自己的行没有 origin 行。
+CREATE TABLE IF NOT EXISTS chat_message_origin (
+  message_id          INTEGER PRIMARY KEY REFERENCES chat_message(id) ON DELETE CASCADE,
+  origin_session_id   TEXT NOT NULL,            -- 原始会话（hub_session.id）
+  origin_message_id   INTEGER NOT NULL,         -- 原始消息行 id
+  origin_scope_revision INTEGER NOT NULL,       -- 复制时原始会话的 COALESCE(context_scope_revision, 0)
+  created_at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_msg_origin_source ON chat_message_origin(origin_session_id, origin_message_id);
+
+-- 派生内容的持久依赖（R3）：一次出站实际用过、且之后可被撤回的材料，按引用记在派生消息名下。
+-- 覆盖主答复、子代理报告、批次归纳等；任一必需来源失效（撤回/删除/改绑退出授权），
+-- 派生内容退出模型请求与回读，但保留在用户转录中。固定系统规则不记录。
+CREATE TABLE IF NOT EXISTS chat_message_dependency (
+  message_id INTEGER NOT NULL REFERENCES chat_message(id) ON DELETE CASCADE,
+  ref        TEXT NOT NULL,                     -- message:<id> | message:<id>:tool:<n> | artifact:<id> | subagent:<id>
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (message_id, ref)
+);
+CREATE INDEX IF NOT EXISTS idx_msg_dep_ref ON chat_message_dependency(ref);
+
+-- 任务段（R1 · chat_scene）：同一会话内的一段工作，可覆盖多个 Turn。拥有临时角色（如跑团主持人）、
+-- 任务约束、阶段续接（stage，每任务段一份）与自己的 Turn 集合（chat_turn.scene_id）。
+-- 会话同一时刻至多一个活动任务段（hub_session.active_scene_id）；结束任务段即开启新的普通工作段
+-- （hub_session.context_segment_message_id 记录普通段边界）。切换不改动用户有意设置的全局 Agent 提示词。
+CREATE TABLE IF NOT EXISTS chat_scene (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT NOT NULL REFERENCES hub_session(id) ON DELETE CASCADE,
+  name         TEXT,                          -- 展示名（界面显示当前任务）
+  role_prompt  TEXT,                          -- 临时角色（限本任务段；切换即退出默认回放）
+  constraints  TEXT,                          -- 用户确认的任务约束
+  status       TEXT NOT NULL DEFAULT 'active',-- active | ended
+  stage        TEXT,                          -- 本任务段的续接与 Epoch（JSON，结构同 hub_session.context_stage）
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_scene_session ON chat_scene(session_id, status, id);
 
 -- 事件回放流（SSE 游标 + 抽取源；M1 启用，M0 建表）
 CREATE TABLE IF NOT EXISTS session_events (

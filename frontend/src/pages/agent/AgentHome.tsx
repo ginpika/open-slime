@@ -15,6 +15,7 @@ import { questionTurn } from '../../components/userQuestion'
 import { attachLive, clearLive, getLive, setActiveChatSession, startChat, steerActiveChat, stopChat, useLiveChat, type ChatMsg, type LiveChat } from '../../components/chatLive'
 import { BRAND } from '../../branding'
 import AgentSidebar, { type AgentPreview } from './AgentSidebar'
+import ComposerActivity from './ComposerActivity'
 import ComposerModelPicker from './ComposerModelPicker'
 import { useDictation } from './useDictation'
 import { useWelcomeSlogan } from './useWelcomeSlogan'
@@ -422,6 +423,9 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
   const agentName = currentAgent?.name || (selectedAgentId ? 'Agent' : BRAND.name)
   const composerPlaceholder = dictation.listening ? '正在听你说…' : busy ? '继续提问或调整当前任务…' : `和 ${agentName} 一起工作`
   const agentAvatar = currentAgent?.avatar || (!selectedAgentId ? '/icon-64x64.png' : null)
+  const avatarBadge = <span className="sl-chat__agent-avatar" aria-hidden="true">
+    {agentAvatar ? <img src={agentAvatar} alt="" /> : agentName.trim()[0]?.toUpperCase()}
+  </span>
   const agentPreviews = useMemo(() => {
     const result: Record<string, AgentPreview> = {}
     const sorted = [...sessions].sort((a, b) => (Date.parse(b.updatedAt ?? '') || 0) - (Date.parse(a.updatedAt ?? '') || 0))
@@ -458,9 +462,9 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
         <header className="sl-chat__header" data-tauri-drag-region>
           <button ref={menuRef} type="button" className={`sl-chat__icon sl-chat__menubtn${sidebarOpen ? ' is-hidden' : ''}`} title="展开 Agent 列表" aria-label="展开 Agent 列表" aria-expanded={sidebarOpen} aria-controls="slime-history" onClick={() => { setHistoryOpen(false); setSidebarOpen(true) }}><PanelLeftOpen size={19} /></button>
           <div className="sl-chat__heading sl-chat__agent-heading">
-            <span className="sl-chat__agent-avatar">{agentAvatar ? <img src={agentAvatar} alt="" /> : agentName.trim()[0]?.toUpperCase()}</span>
-            <span className="sl-chat__agent-title"><strong>{agentName}</strong><small>{busy ? '正在回复…' : title ? sessionTitle(title) : '新对话'}</small></span>
-            {busy && <span className="sl-chat__running" role="status" aria-label="正在回复" />}
+            {avatarBadge}
+            <span className="sl-chat__agent-title"><strong>{agentName}</strong><small>{busy ? '处理中…' : title ? sessionTitle(title) : '新对话'}</small></span>
+            {busy && <span className="sl-chat__running" aria-hidden="true" />}
           </div>
           <div className="sl-chat__headtools">
             <SlimeAppearanceButton />
@@ -500,7 +504,7 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
                   {message.role === 'user' ? <div className="sl-chat__bubble">{message.content}</div> : <>
                     <div className="sl-chat__answer">
                       {turn ? <>{turn.before && <ChatMarkdown content={turn.before} />}<UserQuestionCard key={JSON.stringify(turn.question)} question={turn.question} active={!busy && !creating && !loading && !live?.error && index === latestTurn} onAnswer={sendText} />{turn.after && <ChatMarkdown content={turn.after} />}</>
-                        : message.streaming ? message.content ? <div className="sl-chat__stream">{message.content}</div> : <span className="sl-chat__thinking" role="status" aria-label="正在思考"><i /><i /><i /></span>
+                        : message.streaming ? message.content ? <div className="sl-chat__stream">{message.content}</div> : <span className="sl-chat__thinking" aria-hidden="true"><i /><i /><i /></span>
                         : <ChatMarkdown content={message.content} />}
                     </div>
                     {message.content && !message.streaming && <div className="sl-chat__message-actions"><button type="button" className="sl-chat__icon" aria-label={copied === index ? '已复制回复' : '复制回复'} title={copied === index ? '已复制' : '复制回复'} onClick={() => void copy(message.content, index)}>{copied === index ? <Check size={14} /> : <Copy size={14} />}</button></div>}
@@ -511,6 +515,7 @@ export default function AgentHome({ connErr, userSlot }: { connErr?: string | nu
         </div>
         {awayFromBottom && !empty && <button type="button" className="sl-chat__jump" aria-label="回到最新消息" onClick={scrollToBottom}><ArrowDown size={16} /><span>最新消息</span></button>}
         <div className="sl-chat__composearea">
+          <ComposerActivity key={sessionId} agentName={agentName} avatar={avatarBadge} live={live} />
           <form className={`sl-chat__composer${busy ? ' is-busy' : ''}`} onSubmit={event => { event.preventDefault(); void sendText(text) }}>
             <textarea ref={taRef} rows={1} value={text} onChange={event => setText(event.target.value)}
               onKeyDown={event => {

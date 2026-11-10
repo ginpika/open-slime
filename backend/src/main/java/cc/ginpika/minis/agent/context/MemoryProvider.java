@@ -54,6 +54,18 @@ public class MemoryProvider implements ContextProvider {
         this.ragRecalls = ragRecalls;
     }
 
+    /**
+     * R4 片段分类：召回记忆（条目 / 工作集 / 项目摘录）是可裁剪的资料，不是必带指令——
+     * 预算紧张时先让出空间，而不是挤掉真正可裁的历史。其中文字不能提升权限或覆盖当前指令。
+     */
+    @Override
+    public List<ContextFragment> fragments(ContextRequest req) {
+        String suffix = systemSuffix(req);
+        return suffix == null || suffix.isBlank() ? List.of()
+                : List.of(ContextFragment.system(ContextFragment.Layer.EVIDENCE, "memory",
+                        ContextFragment.Trust.DATA, suffix));
+    }
+
     @Override
     public String systemSuffix(ContextRequest req) {
         MemorySurface surface = surfaceOf(req.surface());

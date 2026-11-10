@@ -44,6 +44,9 @@ public final class ChatDtos {
     public record OutputReset(String reasoning, List<TraceSegment> trace) {
     }
 
+    public record ToolActivity(String callId, String name, String target, boolean running) {
+    }
+
     /**
      * 个人待办清单的一项（plan-of-record，由 {@code write_todos} 覆盖式写入）：
      * 会话页 TODO 卡片读取当前进度用（{@code GET /api/sessions/{id}/todos}）。
@@ -57,7 +60,8 @@ public final class ChatDtos {
      *  该会话没有在途生成时返回 running=false 的空快照 */
     public record LiveRun(String sessionId, boolean running, String userText, Long userMessageId,
                           String content, String reasoning, List<TraceSegment> trace, String error,
-                          List<SteerMessage> steers, List<InterimReply> interims, int round) {
+                          List<SteerMessage> steers, List<InterimReply> interims, int round,
+                          List<ToolActivity> activeTools) {
     }
 
     /** 补全结果（sessionId=本条消息实际落入的会话；messageId=本次提问落库的行 id，供回退定位；
@@ -158,6 +162,19 @@ public final class ChatDtos {
      *  turns=各 Turn 在 messages 中的切片（仅用于前端按 Turn 对齐、并回看某 Turn 的调用留痕，
      *  不属于请求体本身——复制 JSON 时只取 body） */
     public record RawContext(ObjectNode body, List<TurnSpan> turns) {
+    }
+
+    /** 一条任务段（R1）：id / 名称 / 临时角色 / 任务约束 / 状态（active|ended）/ 创建时间 */
+    public record SceneItem(Long id, String name, String rolePrompt, String constraints,
+                            String status, String createdAt) {
+    }
+
+    /** GET /api/sessions/{id}/scenes 返回：当前活动任务段（无则 null）+ 可恢复任务段 */
+    public record SceneState(SceneItem active, List<SceneItem> resumable) {
+    }
+
+    /** POST /api/sessions/{id}/scenes 请求体：开始任务段（名称 + 可选临时角色 / 任务约束） */
+    public record SceneStartRequest(String name, String rolePrompt, String constraints) {
     }
 
     private ChatDtos() {

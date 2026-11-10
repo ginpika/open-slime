@@ -22,11 +22,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 /** Single-chat pilot selection. Canonical input remains available to steering and the transcript. */
 public final class ContextPlan {
+    private static final Logger log = LoggerFactory.getLogger(ContextPlan.class);
     public static final String CONTINUATION_SOURCE = "context_continuation";
     public static final String CONTINUATION_TOOL = "save_context_continuation";
     private static final String STRATEGY = "personal-chat-p1/v1";
@@ -39,6 +42,23 @@ public final class ContextPlan {
 
     public record Scope(String sessionId, String agentId, String projectId) {}
 
+    /**
+     * R5 工作窗口与 R7 场景对照：当前段的默认回放上限（最多多少个已完成 Turn、历史正文估算上限），
+     * 以及本次装配的任务段与授权代号（进 Manifest）。maxTurns 与 tokenCap 均非正表示未启用窗口。
+     */
+    public record Window(int maxTurns, long tokenCap, long sceneId, long scopeRevision) {
+        public Window {
+            maxTurns = Math.max(0, maxTurns);
+            tokenCap = Math.max(0, tokenCap);
+            sceneId = Math.max(0, sceneId);
+            scopeRevision = Math.max(0, scopeRevision);
+        }
+
+        boolean enabled() {
+            return maxTurns > 0 || tokenCap > 0;
+        }
+    }
+
     public record Stage(long turnId, long stageTriggerId, long epochTurnId, long cutoff,
                         ContextFragment continuation, int keepTurns, long currentTurnId) {}
 
@@ -50,6 +70,7 @@ public final class ContextPlan {
 
     public record Selection(String strategy, int contextWindow, long reservedOutputTokens, long safetyTokens,
                             long estimatedInputTokens, long historyWatermark,
+                            Long sceneId, Long scopeRevision,
                             List<Entry> selected, List<Entry> omitted, int omittedCount, Epoch epoch) {}
 
     public record Fitted(ObjectNode body, Selection selection) {}
@@ -57,6 +78,7 @@ public final class ContextPlan {
     private final ObjectNode body;
     private final List<ContextFragment> fragments;
     private final Scope scope;
+    private final Window bounds;
     private final String strategy;
     private final int contextWindow;
     private final long outputReserve;
@@ -74,20 +96,28 @@ public final class ContextPlan {
 
     ContextPlan(ObjectNode body, List<ContextFragment> fragments, Scope scope, int window, int outputReserve,
                 Stage stage) {
-        this(body, fragments, scope, window, outputReserve, stage,
+        this(body, fragments, scope, null, window, outputReserve, stage,
+                stage == null ? STRATEGY : "personal-chat-p3/v1");
+    }
+
+    ContextPlan(ObjectNode body, List<ContextFragment> fragments, Scope scope, Window bounds,
+                int window, int outputReserve, Stage stage) {
+        this(body, fragments, scope, bounds, window, outputReserve, stage,
                 stage == null ? STRATEGY : "personal-chat-p3/v1");
     }
 
     public static ContextPlan delegated(ObjectNode body, List<ContextFragment> fragments, Scope scope,
                                         int window, int outputReserve) {
-        return new ContextPlan(body, fragments, scope, window, outputReserve, null, "personal-chat-subagent-p2/v1");
+        return new ContextPlan(body, fragments, scope, null, window, outputReserve, null,
+                "personal-chat-subagent-p2/v1");
     }
 
-    private ContextPlan(ObjectNode body, List<ContextFragment> fragments, Scope scope, int window,
-                        int outputReserve, Stage stage, String strategy) {
+    private ContextPlan(ObjectNode body, List<ContextFragment> fragments, Scope scope, Window bounds,
+                        int window, int outputReserve, Stage stage, String strategy) {
         this.body = body;
         this.fragments = List.copyOf(fragments);
         this.scope = scope;
+        this.bounds = bounds;
         this.strategy = strategy;
         this.contextWindow = window;
         this.outputReserve = Math.max(0L, outputReserve);
@@ -276,6 +306,9 @@ public final class ContextPlan {
                 remainingImages = draft.retainImages(outbound, remainingImages);
             }
         }
+        /* R5 工作窗口：不等预算告警，先按当前段的已完成 Turn 数与历史正文估算收敛；
+           被裁的轮次进入证据索引（R6），授权回读不受影响。 */
+        Set<String> evidenceIndex = applyWorkingWindow(drafts, active);
         long used = estimateRequest(outbound) + drafts.stream().mapToLong(Draft::cost).sum();
         if (used > allowance) {
             ObjectNode required = outbound.deepCopy();
@@ -298,6 +331,9 @@ public final class ContextPlan {
                 long before = draft.cost();
                 draft.stripHistoricalTools(true);
                 used -= before - draft.cost();
+                // R6：历史工具交换被裁时保留可定位引用，进证据索引。
+                draft.removedToolRefValues().stream().filter(value -> !evidenceIndex.contains(value))
+                        .forEach(evidenceIndex::add);
             }
         }
         if (canAdvance && used > highWater) {
@@ -339,13 +375,110 @@ public final class ContextPlan {
         if (used < allowance && !hints.isEmpty()) {
             addArchiveHints(outbound, drafts, hints, allowance - used);
         }
+        if (used < allowance && !evidenceIndex.isEmpty()) {
+            addEvidenceIndex(outbound, drafts, evidenceIndex, allowance - used);
+        }
         List<Entry> selected = render(outbound, drafts);
         long estimated = estimateRequest(outbound);
         checkBudget(estimated, allowance);
         List<Entry> omissions = drafts.stream().flatMap(draft -> draft.omissions(scope).stream()).toList();
         List<Entry> omitted = omissions.subList(Math.max(0, omissions.size() - OMISSION_LIMIT), omissions.size());
-        return new Fitted(outbound, new Selection(strategy, contextWindow, reserve, safety, estimated,
-                historyWatermark, selected, omitted, omissions.size(), active));
+        Long sceneId = bounds == null || bounds.sceneId() <= 0 ? null : bounds.sceneId();
+        Long scopeRevision = bounds == null || bounds.scopeRevision() <= 0 ? null : bounds.scopeRevision();
+        Selection selection = new Selection(strategy, contextWindow, reserve, safety, estimated,
+                historyWatermark, sceneId, scopeRevision, selected, omitted, omissions.size(), active);
+        trace(strategy, selection);
+        return new Fitted(outbound, selection);
+    }
+
+    /** 每轮装配的调度结果：窗口、选中/裁剪数量、裁剪原因、Epoch、任务段与授权代号。 */
+    private void trace(String strategy, Selection selection) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        log.info("[ctx] fit session={} turn={} strategy={} est={} window={} reserve={} safety={} "
+                        + "selected={} omitted={} reasons={} epoch={} scene={} rev={} watermark={}",
+                scope.sessionId(), stage == null ? 0 : stage.currentTurnId(), strategy,
+                selection.estimatedInputTokens(), selection.contextWindow(), selection.reservedOutputTokens(),
+                selection.safetyTokens(), selection.selected().size(), selection.omittedCount(),
+                reasonCounts(selection.omitted()),
+                selection.epoch() == null ? "none"
+                        : selection.epoch().id() + "/" + selection.epoch().reason(),
+                selection.sceneId() == null ? 0 : selection.sceneId(),
+                selection.scopeRevision() == null ? 0 : selection.scopeRevision(),
+                selection.historyWatermark());
+        if (log.isDebugEnabled()) {
+            for (Entry entry : selection.omitted()) {
+                log.debug("[ctx] fit.omit session={} source={} reasons={} refs={}",
+                        scope.sessionId(), entry.source(), entry.reasons(),
+                        entry.refs().stream().map(Ref::value).toList());
+            }
+        }
+    }
+
+    private static String reasonCounts(List<Entry> omitted) {
+        Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (Entry entry : omitted) {
+            for (String reason : entry.reasons()) {
+                counts.merge(reason, 1, Integer::sum);
+            }
+        }
+        return counts.isEmpty() ? "{}" : counts.toString();
+    }
+
+    /**
+     * R5：默认工作窗口。当前段的已完成用户 Turn 至多 {@code maxTurns} 个，历史正文估算另受
+     * {@code tokenCap} 限制，取更紧的一项；从最早的轮次开始退出默认回放。低水位为目标，硬预算仍是
+     * 最后的请求准入（R5.4）。
+     */
+    private Set<String> applyWorkingWindow(List<Draft> drafts, Epoch active) {
+        if (bounds == null || !bounds.enabled()) {
+            return Set.of();
+        }
+        List<Draft> history = new ArrayList<>();
+        for (Draft draft : drafts) {
+            if (draft.isHistory() && !draft.omitted && draft.userHistoryTrigger() > 0
+                    && !covered(active, draft.userHistoryTrigger())) {
+                history.add(draft);
+            }
+        }
+        long estimate = history.stream().mapToLong(Draft::cost).sum();
+        Set<String> dropped = new LinkedHashSet<>();
+        for (int i = 0; i < history.size(); i++) {
+            Draft draft = history.get(i);
+            boolean overTurns = history.size() - i > bounds.maxTurns();
+            if (!overTurns && estimate <= bounds.tokenCap()) {
+                break;
+            }
+            estimate -= draft.omit("working_window");
+            String ref = draft.userRefValue();
+            if (ref != null) {
+                dropped.add(ref);
+            }
+        }
+        return dropped;
+    }
+
+    /** R6：给退出默认回放的轮次与历史工具一个简短可定位索引（首批至多 8 条），不回放旧正文。 */
+    private static void addEvidenceIndex(ObjectNode outbound, List<Draft> drafts, Set<String> refs,
+                                         long available) {
+        List<String> listed = refs.stream().filter(value -> value != null && !value.isBlank())
+                .limit(ARCHIVE_HINTS).toList();
+        if (listed.isEmpty()) {
+            return;
+        }
+        JsonNode note = outbound.objectNode().put("role", "user").put("content",
+                "【历史证据索引】以下较早的过程材料已退出默认回放，可用 read_context_source 按引用分页读取："
+                        + String.join("、", listed));
+        if (estimateNode(note) <= available) {
+            Draft hint = new Draft(Layer.EVIDENCE, "history_index", Trust.DATA,
+                    listed.stream().map(ref -> new Ref("source", ref)).toList(), List.of(note));
+            int insertion = 0;
+            while (insertion < drafts.size() && !drafts.get(insertion).layer.required()) {
+                insertion++;
+            }
+            drafts.add(insertion, hint);
+        }
     }
 
     private List<Draft> epochCandidates(List<Draft> drafts) {
@@ -564,6 +697,14 @@ public final class ContextPlan {
         long userHistoryTrigger() { return ContextPlan.userHistoryTrigger(source, layer, refs); }
         boolean isLiveTool() { return "live_tool_exchange".equals(source); }
         boolean isSystem() { return messages.size() == 1 && "system".equals(role(messages.getFirst())); }
+
+        String userRefValue() {
+            return refs.stream().filter(ref -> "user".equals(ref.kind())).map(Ref::value).findFirst().orElse(null);
+        }
+
+        List<String> removedToolRefValues() {
+            return removedTools.stream().map(Ref::value).toList();
+        }
 
         long cost() {
             if (omitted || isSystem() && messages.getFirst().path("content").asText().isBlank()) {

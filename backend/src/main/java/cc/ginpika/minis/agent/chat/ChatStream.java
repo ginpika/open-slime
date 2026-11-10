@@ -28,6 +28,10 @@ public interface ChatStream {
     default void tool(String name, String args) {
     }
 
+    /** 一次工具执行已经开始，或者已经退出执行。target 仅含适合界面展示的参数。 */
+    default void toolActivity(String callId, String name, String target, boolean running) {
+    }
+
     /** 已保存到本轮的补充用户消息。 */
     default void steer(long messageId, String input) {
     }

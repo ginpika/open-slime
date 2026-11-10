@@ -27,6 +27,7 @@ final class ChatContextContinuation {
     private static final List<String> KINDS = List.of("confirmed", "constraint", "open", "evidence");
 
     private final HubRow session;
+    private final Long sceneId;
     private final String agentId;
     private final ObjectMapper json;
     private final ChatContextSources sources;
@@ -36,13 +37,22 @@ final class ChatContextContinuation {
     private final ContextFragment fragment;
     private List<Excerpt> pending;
 
-    ChatContextContinuation(HubRow session, ObjectMapper json, ChatContextSources sources, ChatContextStages stages) {
+    ChatContextContinuation(HubRow session, ObjectMapper json, ChatContextSources sources,
+                            ChatContextStages stages) {
+        this(session, null, json, sources, stages);
+    }
+
+    /** R1：任务段续接——每任务段一份；sceneId 为空时沿用会话级续接（旧试点路径）。 */
+    ChatContextContinuation(HubRow session, Long sceneId, ObjectMapper json, ChatContextSources sources,
+                            ChatContextStages stages) {
         this.session = session;
+        this.sceneId = sceneId == null || sceneId <= 0 ? null : sceneId;
         this.agentId = ChatSessionService.ownerOf(session.agentId());
         this.json = json;
         this.sources = sources;
         this.stages = stages;
-        State state = stages.load(session.id());
+        State state = this.sceneId == null ? stages.load(session.id())
+                : stages.loadScene(this.sceneId, session.id());
         if (state == null) {
             throw changed();
         }
@@ -61,6 +71,18 @@ final class ChatContextContinuation {
                 fragment, keepTurns, turnId);
     }
 
+    /** The excerpt sources are the revocable materials a reply built on the continuation depends on. */
+    java.util.Set<String> dependencySources() {
+        if (stage == null) {
+            return java.util.Set.of();
+        }
+        java.util.Set<String> sources = new java.util.HashSet<>();
+        for (Excerpt excerpt : stage.excerpts()) {
+            sources.add(excerpt.source());
+        }
+        return sources;
+    }
+
     void requireCurrent(boolean usesStage) {
         if (!usesStage) {
             if (!stages.current(session.id(), revision)) {
@@ -73,6 +95,11 @@ final class ChatContextContinuation {
                 || !valid(stage.excerpts())) {
             throw changed();
         }
+    }
+
+    /** R9：本轮已暂存新续接（待成功结算后保存）——审批工具据此显式延后。 */
+    boolean hasPending() {
+        return pending != null;
     }
 
     String save(JsonNode call) {
@@ -113,10 +140,13 @@ final class ChatContextContinuation {
 
     void settle(long turnId, long cutoff) {
         List<Excerpt> replacement = pending != null && valid(pending) ? pending : null;
-        if (replacement != null) {
-            stages.settle(session.id(), revision, turnId, replacement, 0);
-        } else if (cutoff > 0 && stage != null && valid(stage.excerpts())) {
-            stages.settle(session.id(), revision, turnId, null, cutoff);
+        if (replacement == null && (cutoff <= 0 || stage == null || !valid(stage.excerpts()))) {
+            return;
+        }
+        if (sceneId == null) {
+            stages.settle(session.id(), revision, turnId, replacement, cutoff);
+        } else {
+            stages.settleScene(sceneId, session.id(), revision, turnId, replacement, cutoff);
         }
     }
 

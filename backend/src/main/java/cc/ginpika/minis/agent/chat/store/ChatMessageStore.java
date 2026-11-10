@@ -138,18 +138,136 @@ public class ChatMessageStore {
      * Agent 消息发送标签只属于发出它的会话。
      * 按 id 升序插入，新行的自增 id 随之保持同一先后（读侧按 id 排序即得原顺序）。
      *
+     * <p>每一行副本同时落一条 {@code chat_message_origin} 映射（R2）：指回原始会话与原始消息行，
+     * 并记录复制时原始会话的授权代号。原会话随后改绑、回退或撤回源消息时，副本退出模型可读范围，
+     * 用户转录不受影响。
+     *
      * @return 复制的行数
      */
     public int copyUpTo(String fromSession, String toSession, long upToId) {
-        return jdbc.update(
-                "INSERT INTO chat_message(session_id, role, content, reasoning, trace, tool_rounds, "
-                        + "kind, meta, topic_id, peer_id, peer_name, context, event_seq, event_kind, "
-                        + "created_at) "
-                        + "SELECT ?, role, content, reasoning, trace, tool_rounds, kind, meta, "
-                        + "topic_id, peer_id, peer_name, context, event_seq, event_kind, created_at "
+        List<CopyRow> rows = jdbc.query(
+                "SELECT id, role, content, reasoning, trace, tool_rounds, kind, meta, topic_id, "
+                        + "peer_id, peer_name, context, event_seq, event_kind, created_at "
                         + "FROM chat_message WHERE session_id = ? AND id <= ? "
                         + "AND (kind IS NULL OR kind <> ?) AND (event_kind IS NULL OR event_kind <> ?) ORDER BY id",
-                toSession, fromSession, upToId, KIND_AGENT_MESSAGE_SENT, KIND_AGENT_MESSAGE_SENT);
+                (rs, n) -> new CopyRow(rs.getLong("id"), rs.getString("role"), rs.getString("content"),
+                        rs.getString("reasoning"), rs.getString("trace"), rs.getString("tool_rounds"),
+                        rs.getString("kind"), rs.getString("meta"), rs.getString("topic_id"),
+                        rs.getString("peer_id"), rs.getString("peer_name"), rs.getString("context"),
+                        (Long) rs.getObject("event_seq"), rs.getString("event_kind"),
+                        rs.getLong("created_at")),
+                fromSession, upToId, KIND_AGENT_MESSAGE_SENT, KIND_AGENT_MESSAGE_SENT);
+        if (rows.isEmpty()) {
+            return 0;
+        }
+        long revision = jdbc.queryForObject(
+                "SELECT COALESCE(context_scope_revision, 0) FROM hub_session WHERE id = ?",
+                Long.class, fromSession);
+        Map<Long, Long> idMapping = new java.util.HashMap<>();
+        long now = System.currentTimeMillis();
+        int copied = 0;
+        for (CopyRow row : rows) {
+            long newId = insertCopy(toSession, row);
+            if (newId > 0) {
+                jdbc.update("INSERT INTO chat_message_origin(message_id, origin_session_id, "
+                                + "origin_message_id, origin_scope_revision, created_at) VALUES(?,?,?,?,?)",
+                        newId, fromSession, row.id(), revision, now);
+                idMapping.put(row.id(), newId);
+                copied++;
+            }
+        }
+        copyDependencies(fromSession, toSession, idMapping, now);
+        return copied;
+    }
+
+    /**
+     * 派生内容的依赖随副本一起迁移（R3）：message 引用改指本会话的对应副本（副本失效时依赖随之失效），
+     * artifact/subagent 引用保持原样——它们在分支会话里本就不可用，依赖因此判失效，派生副本退出模型范围。
+     */
+    private void copyDependencies(String fromSession, String toSession, Map<Long, Long> idMapping, long now) {
+        if (idMapping.isEmpty()) {
+            return;
+        }
+        List<String[]> deps = jdbc.query(
+                "SELECT d.message_id, d.ref FROM chat_message_dependency d "
+                        + "JOIN chat_message m ON m.id = d.message_id "
+                        + "WHERE m.session_id = ? ORDER BY d.message_id, d.ref",
+                (rs, n) -> new String[]{rs.getString(1), rs.getString(2)}, fromSession);
+        for (String[] dep : deps) {
+            Long target = idMapping.get(Long.parseLong(dep[0]));
+            if (target == null) {
+                continue;
+            }
+            String ref = dep[1];
+            if (ref != null && ref.startsWith("message:")) {
+                int end = ref.indexOf(':', "message:".length());
+                try {
+                    Long original = Long.valueOf(end < 0
+                            ? ref.substring("message:".length())
+                            : ref.substring("message:".length(), end));
+                    Long mapped = idMapping.get(original);
+                    if (mapped != null) {
+                        ref = "message:" + mapped + (end < 0 ? "" : ref.substring(end));
+                    }
+                } catch (NumberFormatException ignored) {
+                    // 非 message:<id> 形态的引用保持原样
+                }
+            }
+            jdbc.update("INSERT OR IGNORE INTO chat_message_dependency(message_id, ref, created_at) "
+                    + "VALUES(?,?,?)", target, ref, now);
+        }
+    }
+
+    /** 为一条派生消息记录持久依赖（R3）：任一来源失效，该消息退出模型请求与回读。 */
+    public void insertDependencies(long messageId, java.util.Collection<String> refs) {
+        if (messageId <= 0 || refs == null || refs.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (String ref : refs.stream().filter(r -> r != null && !r.isBlank()).distinct().toList()) {
+            jdbc.update("INSERT OR IGNORE INTO chat_message_dependency(message_id, ref, created_at) "
+                    + "VALUES(?,?,?)", messageId, ref, now);
+        }
+    }
+
+    private long insertCopy(String toSession, CopyRow row) {
+        GeneratedKeyHolder key = new GeneratedKeyHolder();
+        jdbc.update(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                    "INSERT INTO chat_message(session_id, role, content, reasoning, trace, tool_rounds, "
+                            + "kind, meta, topic_id, peer_id, peer_name, context, event_seq, event_kind, "
+                            + "created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, toSession);
+            ps.setString(2, row.role());
+            ps.setString(3, row.content());
+            ps.setString(4, row.reasoning());
+            ps.setString(5, row.trace());
+            ps.setString(6, row.toolRounds());
+            ps.setString(7, row.kind());
+            ps.setString(8, row.meta());
+            ps.setString(9, row.topicId());
+            ps.setString(10, row.peerId());
+            ps.setString(11, row.peerName());
+            ps.setString(12, row.context());
+            if (row.eventSeq() == null) {
+                ps.setNull(13, java.sql.Types.INTEGER);
+            } else {
+                ps.setLong(13, row.eventSeq());
+            }
+            ps.setString(14, row.eventKind());
+            ps.setLong(15, row.createdAt());
+            return ps;
+        }, key);
+        Number id = key.getKey();
+        return id == null ? -1L : id.longValue();
+    }
+
+    /** 整行副本的载体（copyUpTo 用；含所有被复制的列） */
+    private record CopyRow(long id, String role, String content, String reasoning, String trace,
+                           String toolRounds, String kind, String meta, String topicId, String peerId,
+                           String peerName, String context, Long eventSeq, String eventKind,
+                           long createdAt) {
     }
 
     /** 删除 fromId（含）及其后的消息：会话回退到这条之前，返回删除行数 */

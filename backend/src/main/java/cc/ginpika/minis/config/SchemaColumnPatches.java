@@ -59,6 +59,10 @@ public class SchemaColumnPatches {
             new ColumnPatch("hub_session", "project_id", "TEXT"),
             new ColumnPatch("hub_session", "context_scope_revision", "INTEGER"),
             new ColumnPatch("hub_session", "context_stage", "TEXT"),
+            /* R1 任务段：会话当前活动任务段与普通段边界（message id 大于边界者属于当前普通段） */
+            new ColumnPatch("hub_session", "active_scene_id", "INTEGER"),
+            new ColumnPatch("hub_session", "context_segment_message_id", "INTEGER"),
+            new ColumnPatch("chat_turn", "scene_id", "INTEGER"),
             new ColumnPatch("roundtable_todo", "depends_on", "TEXT"),
             new ColumnPatch("roundtable_todo", "priority", "INTEGER"),
             new ColumnPatch("roundtable_todo", "block_with", "TEXT"),

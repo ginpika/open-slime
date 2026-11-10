@@ -74,16 +74,25 @@ public class HubSessionStore {
         return updated;
     }
 
-    /** 回退后的执行不能继续使用回退前的续接作用域。 */
+    /** 回退后的执行不能继续使用回退前的续接作用域；各任务段自己的续接一并失效（R1）。 */
     @Transactional
     public void invalidateContextStage(String hubId) {
         int updated = jdbc.update("""
                 UPDATE hub_session SET context_scope_revision = COALESCE(context_scope_revision, 0) + 1,
                     context_stage = NULL WHERE id = ? AND mode = 'ai'
                 """, hubId);
+        jdbc.update("UPDATE chat_scene SET stage = NULL WHERE session_id = ?", hubId);
         if (updated > 0) {
             retireTodoApprovals(hubId, false);
         }
+    }
+
+    /** 会话当前的续接授权代号（R7 Manifest 对照）；不存在按 0。 */
+    public long contextScopeRevision(String hubId) {
+        List<Long> rows = jdbc.query(
+                "SELECT COALESCE(context_scope_revision, 0) FROM hub_session WHERE id = ?",
+                (rs, n) -> rs.getLong(1), hubId);
+        return rows.isEmpty() ? 0L : rows.getFirst();
     }
 
     /** 有新消息时刷新 updated_at，并按需回填标题（首条消息截断做标题） */

@@ -7,6 +7,8 @@ import {
   steerChat,
   stopChat as apiStopChat,
   type ChatStreamReset,
+  type ChatToolActivity,
+  type ChatToolActivityEvent,
   type InterimReply,
   type LiveRun,
   type SteerMessage,
@@ -51,6 +53,8 @@ export type LiveChat = {
   content: string
   reasoning: string
   trace: TraceSegment[]
+  /** 按开始顺序排列的在途工具调用。 */
+  activeTools: ChatToolActivity[]
   /** 是否仍在生成 */
   running: boolean
   stopping?: boolean
@@ -168,7 +172,6 @@ function appendReasoning(trace: TraceSegment[], delta: string, round: number): T
 function createStreamBuffer(sessionId: string) {
   let content = ''
   let reasoning = ''
-  let resetContent = false
   let round = 0
   let frame = 0
 
@@ -177,25 +180,24 @@ function createStreamBuffer(sessionId: string) {
     frame = 0
     content = ''
     reasoning = ''
-    resetContent = false
   }
-  const flush = () => {
+  const flush = (resetContent = false) => {
     frame = 0
     if (!content && !reasoning && !resetContent) return
     patch(sessionId, cur => ({
       ...cur,
-      content: (resetContent ? '' : cur.content) + content,
+      content: resetContent ? '' : cur.content + content,
       reasoning: cur.reasoning + reasoning,
       trace: reasoning ? appendReasoning(cur.trace, reasoning, round) : cur.trace,
     }))
     discard()
   }
-  const flushNow = () => {
+  const flushNow = (resetContent = false) => {
     if (frame) cancelAnimationFrame(frame)
-    flush()
+    flush(resetContent)
   }
   const schedule = () => {
-    if (!frame) frame = requestAnimationFrame(flush)
+    if (!frame) frame = requestAnimationFrame(() => flush())
   }
 
   return {
@@ -204,10 +206,8 @@ function createStreamBuffer(sessionId: string) {
     restoreRound: (current: number) => { round = current },
     handlers: {
       onRound(next: number) {
-        flushNow()
+        flushNow(next > 0)
         round = next
-        resetContent = next > 0
-        if (resetContent) schedule()
       },
       onDelta(delta: { reasoning?: string; content?: string }) {
         reasoning += delta.reasoning ?? ''
@@ -220,6 +220,17 @@ function createStreamBuffer(sessionId: string) {
           ...cur,
           trace: [...cur.trace, { type: 'tool', text: null, name: tool.name, args: tool.args, round: tool.round ?? round }],
         }))
+      },
+      onActivity({ callId, name, target, running }: ChatToolActivityEvent) {
+        patch(sessionId, cur => {
+          if (!cur.running) return cur
+          const exists = cur.activeTools.some(tool => tool.callId === callId)
+          if (exists === running) return cur
+          const activeTools = running
+            ? [...cur.activeTools, { callId, name, target }]
+            : cur.activeTools.filter(tool => tool.callId !== callId)
+          return { ...cur, activeTools }
+        })
       },
       onSteer(message: SteerMessage) {
         flushNow()
@@ -263,6 +274,7 @@ export function startChat(o: StartArgs): void {
     content: '',
     reasoning: '',
     trace: [],
+    activeTools: [],
     running: true,
     error: null,
   })
@@ -288,7 +300,7 @@ export function startChat(o: StartArgs): void {
       )
       /* 用落库正本覆盖流式累积（与历史回放一致），并结束流式态 */
       buffer.flushNow()
-      patch(o.sessionId, (cur) => ({ ...cur, running: false, content: reply.message }))
+      patch(o.sessionId, (cur) => ({ ...cur, running: false, activeTools: [], content: reply.message }))
       emitSettled(o.sessionId)
       o.onSettled?.(o.sessionId)
     } catch (e) {
@@ -301,7 +313,7 @@ export function startChat(o: StartArgs): void {
       }
       const msg = e instanceof Error ? e.message : String(e)
       /* 失败：保留提问与已产出的半截输出（供回退重发），只落下 running 并记下原因。 */
-      patch(o.sessionId, (cur) => ({ ...cur, running: false, error: msg }))
+      patch(o.sessionId, (cur) => ({ ...cur, running: false, activeTools: [], error: msg }))
       o.onSettled?.(o.sessionId)
     } finally {
       starts.delete(o.sessionId)
@@ -338,6 +350,7 @@ function fromSnapshot(snap: LiveRun): LiveChat {
     content: snap.content ?? '',
     reasoning: snap.reasoning ?? '',
     trace: snap.trace ?? [],
+    activeTools: snap.running ? (snap.activeTools ?? []) : [],
     running: snap.running,
     error: snap.error,
   }
@@ -382,7 +395,7 @@ export async function attachLive(sessionId: string): Promise<void> {
  *  本地仓里没有该会话的条目时什么都不做——空快照不是「进度」，不能凭空造出气泡。
  *  这里不发落定通知：收尾结果未知（可能成功也可能失败），提醒交给轮询那条路（按「不再生成」判定） */
 function finishLocally(sessionId: string): void {
-  patch(sessionId, (cur) => (cur.running ? { ...cur, running: false } : cur))
+  patch(sessionId, (cur) => (cur.running ? { ...cur, running: false, activeTools: [] } : cur))
 }
 
 /** 订阅一次续传流；返回 true=收到收尾事件（done/error，进度已落定），false=流被掐断，需要重挂 */

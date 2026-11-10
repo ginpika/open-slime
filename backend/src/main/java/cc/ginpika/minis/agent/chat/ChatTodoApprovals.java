@@ -172,6 +172,50 @@ public class ChatTodoApprovals {
                 """, ChatTodoApprovals::approval, sessionId, actorId, BuiltinAgents.CORE, BuiltinAgents.CORE);
     }
 
+    /**
+     * R9：供下一次请求装配的小型结构化状态——待确认提案与最近决定（操作 ID、待办当前状态与结果）。
+     * 模型据此以当前状态为准，不再依赖转录里旧的等待话语。单用户系统，无需按 actor 过滤。
+     */
+    public String summary(String sessionId, String agentId) {
+        record Row(long operationId, String content, String status, String decision) {}
+        List<Row> rows = jdbc.query("""
+                SELECT a.operation_id, a.content, a.status, a.decision
+                FROM chat_todo_approval a
+                JOIN hub_session s ON s.id = a.session_id
+                    AND a.agent_id = COALESCE(NULLIF(s.agent_id, ''), ?)
+                WHERE a.session_id = ? AND a.agent_id = ?
+                  AND (a.status = 'pending' OR a.decided_at IS NOT NULL)
+                ORDER BY (a.status = 'pending') DESC, a.operation_id DESC
+                LIMIT 6
+                """, (rs, n) -> new Row(rs.getLong("operation_id"), rs.getString("content"),
+                        rs.getString("status"), rs.getString("decision")),
+                BuiltinAgents.CORE, sessionId, agentId);
+        if (rows.isEmpty()) {
+            return null;
+        }
+        StringBuilder text = new StringBuilder("【待办审批状态】以本状态为准（转录里更早的等待或确认话语已过时）：\n");
+        for (Row row : rows) {
+            text.append("- 操作 ").append(row.operationId()).append("「").append(clipText(row.content()))
+                    .append("」：");
+            switch (row.status() == null ? "" : row.status()) {
+                case "pending" -> text.append("待确认（等待用户批准或拒绝，请勿当作已完成）");
+                case "approved" -> text.append("已批准（该待办已由用户确认完成）");
+                case "rejected" -> text.append("已拒绝（保持未完成）");
+                default -> text.append("已失效（作用域或待办已变化，不可再操作）");
+            }
+            text.append('\n');
+        }
+        return text.toString();
+    }
+
+    private static String clipText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.codePointCount(0, value.length()) <= 40 ? value
+                : value.substring(0, value.offsetByCodePoints(0, 40)) + "…";
+    }
+
     /** Human decision, checked against the captured scope, original Turn and current checklist state. */
     public Approval decide(String sessionId, long operationId, String actorId, String decision) {
         requireActor(actorId);
@@ -180,6 +224,8 @@ public class ChatTodoApprovals {
         }
         Decision result = transactions.execute(transaction -> decideLocked(sessionId, operationId, actorId, decision));
         if (result.changed()) {
+            log.info("[ctx] approval.decided session={} operation={} decision={} status={}", sessionId,
+                    operationId, decision, result.approval().status());
             // The transaction above has committed. The UI refresh is a projection of the durable receipt.
             try {
                 sessionEvents.publish(new SessionEventBus.Event(sessionId, SessionEventBus.KIND_TODO, false, null));

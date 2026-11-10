@@ -85,7 +85,8 @@ class ChatEphemeralContextTest {
         var history = new History(messages, turns, new ChatLiveStore(), om, props);
         var sources = new ChatContextSources(jdbc, om);
         var context = new ChatContextService(sessions, messages, om, settings, prompts, tools, projects,
-                new ContextBuilder(om, List.of(history)), props, history, sources);
+                new ContextBuilder(om, List.of(history)), props, history, sources, turns,
+                new ChatScenes(jdbc, new ChatLiveStore(), mock(SessionEventBus.class)));
         var dispatcher = new ChatToolDispatcher(om, new ToolValidator(tools, om),
                 null, null, null, terminal, null, null);
         var recorder = new ToolExecutionRecorder(new ToolExecutionStore(jdbc), mock(RuntimeEventBus.class));

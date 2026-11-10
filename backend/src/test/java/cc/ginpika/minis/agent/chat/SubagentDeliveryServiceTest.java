@@ -149,6 +149,48 @@ class SubagentDeliveryServiceTest {
         assertEquals("legacy summary", messages.listBySession(SESSION).getLast().content());
     }
 
+    /**
+     * R8：同步完成与后台回报共用同一张幂等卡片（同一执行 id 只落一条），且两条终态结果
+     * 都参与该批归纳。R3：卡片记录其授权来源依赖，批次归纳记录对成员卡片的依赖。
+     */
+    @Test
+    void synchronousAndBackgroundResultsShareOneCardAndJoinTheSameBatch() throws Exception {
+        when(scope.visible(EXEC, SESSION)).thenReturn(true);
+        long user = messages.insert(SESSION, "user", "排查目标", null, null, null, null, null);
+        String source = "message:" + user;
+
+        // 同步完成（min 等待内返回）与后台回报走同一个事件：重复投递只留一张卡
+        delivery.onSubagentReport(new SubagentReportEvent(SESSION, "同步件", EXEC, "done", "同步结论",
+                null, true, List.of(source)));
+        delivery.onSubagentReport(new SubagentReportEvent(SESSION, "同步件", EXEC, "done", "同步结论",
+                null, true, List.of(source)));
+        assertEquals(1, messages.listBySession(SESSION).stream()
+                .filter(row -> ChatMessageStore.KIND_SUBAGENT.equals(row.kind())).count());
+        long card = messages.listBySession(SESSION).stream()
+                .filter(row -> ChatMessageStore.KIND_SUBAGENT.equals(row.kind()))
+                .findFirst().orElseThrow().id();
+        assertEquals(List.of(source), jdbc.queryForList(
+                "SELECT ref FROM chat_message_dependency WHERE message_id = ? ORDER BY ref",
+                String.class, card));
+
+        // 另一条后台结果进同一批：归纳成员包含两者
+        when(scope.visible(43L, SESSION)).thenReturn(true);
+        delivery.onSubagentReport(new SubagentReportEvent(SESSION, "后台件", 43L, "done", "后台结论",
+                null, true, List.of()));
+        when(client.chatRaw(eq(TARGET), any(ObjectNode.class), isNull(), eq(TokenUsageService.SOURCE_CHAT)))
+                .thenReturn(new OpenAiChatClient.RawResult(om.createObjectNode().put("content", "综合结论"), "{}"));
+        delivery.onSubagentBatchDone(new SubagentBatchDoneEvent(SESSION, "batch", List.of(EXEC, 43L), true));
+
+        var summary = messages.listBySession(SESSION).getLast();
+        assertEquals(ChatMessageStore.KIND_SUBAGENT_BATCH, summary.kind());
+        assertEquals(2, om.readTree(summary.meta()).path("execIds").size());
+        long backgroundCard = messages.listBySession(SESSION).stream()
+                .filter(row -> ChatMessageStore.KIND_SUBAGENT.equals(row.kind()) && row.id() != card)
+                .findFirst().orElseThrow().id();
+        assertTrue(jdbc.queryForList("SELECT ref FROM chat_message_dependency WHERE message_id = ?",
+                String.class, summary.id()).containsAll(List.of("message:" + card, "message:" + backgroundCard)));
+    }
+
     private void report(String content) {
         delivery.onSubagentReport(new SubagentReportEvent(SESSION, "排障", EXEC, "done", content, null, true));
     }

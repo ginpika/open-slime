@@ -33,6 +33,8 @@ public class SessionEventBus {
     public static final String KIND_TODO = "todo";
     /** 会话标题被自动生成：前端据此即时更新列表 / 会话头的标题 */
     public static final String KIND_TITLE = "title";
+    /** 任务段切换（开始 / 结束 / 恢复）：前端据此刷新当前任务名与切换入口 */
+    public static final String KIND_SCENE = "scene";
 
     /**
      * @param sessionId 归属会话

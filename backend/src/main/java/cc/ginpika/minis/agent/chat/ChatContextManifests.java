@@ -22,6 +22,8 @@ import org.springframework.web.server.ResponseStatusException;
 /** 单聊试点的进程内诊断记录。只留出站请求的结构和引用，最多 500 条、24 小时。 */
 @Service
 public class ChatContextManifests {
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(ChatContextManifests.class);
     private static final int CAPACITY = 500;
     private static final long RETENTION_MS = Duration.ofHours(24).toMillis();
 
@@ -52,6 +54,11 @@ public class ChatContextManifests {
                     fieldValues(body.path("messages"), "role"), fieldValues(body.path("tools"), "function", "name"),
                     ContextPlan.estimateRequest(body), selection);
             append(new Stored(row.id(), agentId, row.projectId(), actorId, manifest), now);
+            log.info("[ctx] outbound session={} turn={} exec={} round={} retry={} sub={} model={} bytes={} "
+                            + "est={} scene={} rev={} selected={} omitted={}",
+                    row.id(), turnId, executionId, round, retry, manifest.submission(), manifest.model(), bytes,
+                    manifest.estimatedInputTokens(), selection.sceneId(), selection.scopeRevision(),
+                    selection.selected().size(), selection.omittedCount());
         };
     }
 

@@ -213,7 +213,7 @@ export function chat(
 
 /** 流式会话的阶段回调：meta=提问已落库（拿删除区间定位用的 messageId）；
  *  round=进入新一轮补全（>0 为工具轮之后，上一轮正文需清掉）；reasoning/content=增量片段；
- *  tool=模型发起一次工具调用（name=工具名，args=调用参数 JSON） */
+ *  tool=模型发起一次工具调用（name=工具名，args=调用参数 JSON），activity=工具开始或结束执行 */
 export type ChatStreamHandlers = {
   onMeta?: (meta: { sessionId: string; messageId: number }) => void
   onSteer?: (message: SteerMessage) => void
@@ -223,11 +223,14 @@ export type ChatStreamHandlers = {
   onReasoning?: (delta: string) => void
   onContent?: (delta: string) => void
   onTool?: (tool: { name: string; args: string }) => void
+  onActivity?: (activity: ChatToolActivityEvent) => void
 }
 
 export type SteerMessage = { messageId: number; input: string }
 export type InterimReply = { messageId: number; content: string }
 export type ChatStreamReset = { reasoning: string; trace: TraceSegment[] }
+export type ChatToolActivity = { callId: string; name: string; target: string | null }
+export type ChatToolActivityEvent = ChatToolActivity & { running: boolean }
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -290,6 +293,8 @@ export async function chatStream(
       handlers.onContent?.(payload.delta as string)
     } else if (name === 'tool') {
       handlers.onTool?.(payload as unknown as { name: string; args: string })
+    } else if (name === 'activity') {
+      handlers.onActivity?.(payload as unknown as ChatToolActivityEvent)
     } else if (name === 'done') {
       reply = payload as unknown as ChatReply
     } else if (name === 'error') {
@@ -358,6 +363,7 @@ export type LiveRun = {
   content: string
   reasoning: string
   trace: TraceSegment[]
+  activeTools?: ChatToolActivity[]
   steers?: SteerMessage[]
   interims?: InterimReply[]
   round?: number
@@ -370,7 +376,7 @@ export function sessionLive(id: string): Promise<LiveRun> {
 }
 
 /** 续传流回调：snapshot=整份快照（订阅时先到一份，据此覆盖本地进度；快照即全量，不会漏增量）、
- *  round=进入新一轮（>0 时正文清空）、delta=增量片段、tool=一次工具调用、
+ *  round=进入新一轮（>0 时正文清空）、delta=增量片段、tool=一次工具调用、activity=工具开始或结束执行、
  *  terminal=收尾（done / error，payload 同为快照且 running 已是 false） */
 export type LiveStreamHandlers = {
   onSnapshot?: (run: LiveRun) => void
@@ -380,11 +386,12 @@ export type LiveStreamHandlers = {
   onRound?: (round: number) => void
   onDelta?: (delta: { reasoning: string; content: string }) => void
   onTool?: (tool: { name: string; args: string; round: number }) => void
+  onActivity?: (activity: ChatToolActivityEvent) => void
   onTerminal?: (run: LiveRun, failed: boolean) => void
 }
 
 /**
- * 订阅某会话的续传流（SSE）：先到 snapshot，随后是 round / delta / tool，收尾推 done 或 error。
+ * 订阅某会话的续传流（SSE）：先到 snapshot，随后是 round / delta / tool / activity，收尾推 done 或 error。
  * resolve 表示这条流已结束（可能只是被服务端掐断，调用方重新查快照再挂即可）。
  */
 export async function sessionLiveStream(
@@ -429,6 +436,8 @@ export async function sessionLiveStream(
       handlers.onDelta?.(payload as unknown as { reasoning: string; content: string })
     } else if (name === 'tool') {
       handlers.onTool?.(payload as unknown as { name: string; args: string; round: number })
+    } else if (name === 'activity') {
+      handlers.onActivity?.(payload as unknown as ChatToolActivityEvent)
     } else if (name === 'done') {
       handlers.onTerminal?.(payload as unknown as LiveRun, false)
     } else if (name === 'error') {
@@ -459,12 +468,13 @@ export async function sessionLiveStream(
 /* ---------- 会话事件流（STEP 4）：即时推送，取代前端定时轮询会话列表 ---------- */
 
 /** 一条会话事件：kind=delivered（有新消息投递，如子代理回报）| answered（该会话答完了）
- *  | todo（该会话的个人待办清单更新，前端据此刷新 TODO 卡片） */
+ *  | todo（该会话的个人待办清单更新，前端据此刷新 TODO 卡片）
+ *  | scene（任务段切换：前端据此刷新当前任务名与切换入口） */
 export type SessionEvent = {
   /** 事件游标（SSE id）：重连时作为 Last-Event-ID 带去，后端据此补推断线期间漏掉的 */
   id: number
   sessionId: string
-  kind: 'delivered' | 'answered' | 'todo' | 'title' | 'agent_message_sent'
+  kind: 'delivered' | 'answered' | 'todo' | 'title' | 'agent_message_sent' | 'scene'
   /** 该会话此刻是否未读（delivered 有意义：前端据此弹「有新消息」气泡） */
   unread: boolean
   /** 会话标题（便于通知直接显示，省一次列表请求） */
@@ -620,6 +630,53 @@ export type ChatTodoApproval = {
 
 export type ChatTodoDecision = 'approve' | 'reject'
 
+/* ---------- 动态上下文诊断（调试页）：出站 Manifest 与实际选取结果 ---------- */
+
+/** 一次装配中被选中或裁剪的片段（source 如 history/USER_INPUT、memory、live_tool_exchange） */
+export type ContextManifestEntry = {
+  source: string
+  layer: 'INSTRUCTION' | 'TASK' | 'WORK' | 'EVIDENCE'
+  trust: string
+  refs: { kind: string; value: string }[]
+  reasons: string[]
+}
+
+export type ContextManifest = {
+  turnId: number
+  executionId: string
+  round: number
+  retry: number
+  /** 同一尝试中的 HTTP 正文发送次数（从 1 开始） */
+  submission: number
+  submittedAt: number
+  model: string
+  bodyBytes: number
+  messageRoles: string[]
+  toolNames: string[]
+  estimatedInputTokens: number
+  selection: {
+    strategy: string
+    contextWindow: number
+    reservedOutputTokens: number
+    safetyTokens: number
+    estimatedInputTokens: number
+    historyWatermark: number
+    sceneId: number | null
+    scopeRevision: number | null
+    selected: ContextManifestEntry[]
+    omitted: ContextManifestEntry[]
+    omittedCount: number
+    epoch: { id: number; stageTurnId: number; cutoff: number; reason: string } | null
+  }
+}
+
+/** 某会话最近的实际出站记录（进程内、最多 500 条 / 24 小时；turnId 省略即全部） */
+export function sessionContextManifests(id: string, limit = 20): Promise<ContextManifest[]> {
+  return requestJson<ContextManifest[]>(
+    `/api/sessions/${encodeURIComponent(id)}/context-manifests?limit=${limit}`,
+  )
+}
+
 export function sessionTodoApprovals(id: string): Promise<ChatTodoApproval[]> {
   return requestJson<ChatTodoApproval[]>(`/api/sessions/${encodeURIComponent(id)}/todo-approvals`)
 }
@@ -628,6 +685,48 @@ export function decideSessionTodoApproval(id: string, operationId: number, decis
   return requestJson<ChatTodoApproval>(`/api/sessions/${encodeURIComponent(id)}/todo-approvals/${operationId}`, {
     method: 'POST',
     body: JSON.stringify({ decision }),
+  })
+}
+
+/** 任务段（R1）：会话内的一段工作；active 为当前活动段，resumable 为可恢复的历史段 */
+export type SceneItem = {
+  id: number
+  name: string | null
+  rolePrompt: string | null
+  constraints: string | null
+  status: 'active' | 'ended'
+  createdAt: string
+}
+
+export type SceneState = {
+  active: SceneItem | null
+  resumable: SceneItem[]
+}
+
+/** 当前活动任务段与可恢复任务段 */
+export function sessionScenes(id: string): Promise<SceneState> {
+  return requestJson<SceneState>(`/api/sessions/${encodeURIComponent(id)}/scenes`)
+}
+
+/** 开始一段任务：名称 + 可选临时角色 / 任务约束 */
+export function startScene(id: string, name: string | null, rolePrompt: string | null, constraints: string | null): Promise<SceneItem> {
+  return requestJson<SceneItem>(`/api/sessions/${encodeURIComponent(id)}/scenes`, {
+    method: 'POST',
+    body: JSON.stringify({ name, rolePrompt, constraints }),
+  })
+}
+
+/** 结束当前任务段：回到普通聊天 */
+export function endScene(id: string, sceneId: number): Promise<SceneItem> {
+  return requestJson<SceneItem>(`/api/sessions/${encodeURIComponent(id)}/scenes/${sceneId}/end`, {
+    method: 'POST',
+  })
+}
+
+/** 恢复已有任务段 */
+export function resumeScene(id: string, sceneId: number): Promise<SceneItem> {
+  return requestJson<SceneItem>(`/api/sessions/${encodeURIComponent(id)}/scenes/${sceneId}/resume`, {
+    method: 'POST',
   })
 }
 

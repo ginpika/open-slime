@@ -28,11 +28,11 @@ import org.springframework.stereotype.Repository;
 public class TurnStore {
 
     private static final String COLS = "id, session_id, trigger_source, trigger_message_id, "
-            + "reply_message_id, task_id, created_at, updated_at";
+            + "reply_message_id, task_id, scene_id, created_at, updated_at";
 
     /** 一条 Turn 的落库形态（两端都是引用，不是正文） */
     public record TurnRow(long id, String sessionId, String triggerSource, Long triggerMessageId,
-                          Long replyMessageId, Long taskId, long createdAt, long updatedAt) {
+                          Long replyMessageId, Long taskId, Long sceneId, long createdAt, long updatedAt) {
     }
 
     private final JdbcTemplate jdbc;
@@ -48,12 +48,18 @@ public class TurnStore {
      * @return 这条 Turn 的行 id
      */
     public long begin(String sessionId, TurnTrigger.Source source, long triggerMessageId, Long taskId) {
+        return begin(sessionId, source, triggerMessageId, taskId, null);
+    }
+
+    /** 带 任务段 的开 Turn：单聊试点把每个 Turn 归入开始时捕获的任务段（R1）。 */
+    public long begin(String sessionId, TurnTrigger.Source source, long triggerMessageId, Long taskId,
+                      Long sceneId) {
         long now = System.currentTimeMillis();
         GeneratedKeyHolder key = new GeneratedKeyHolder();
         jdbc.update(con -> {
             PreparedStatement ps = con.prepareStatement(
                     "INSERT OR IGNORE INTO chat_turn(session_id, trigger_source, trigger_message_id, "
-                            + "reply_message_id, task_id, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+                            + "reply_message_id, task_id, scene_id, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, sessionId);
             ps.setString(2, source.name());
@@ -64,8 +70,13 @@ public class TurnStore {
             } else {
                 ps.setLong(5, taskId);
             }
-            ps.setLong(6, now);
+            if (sceneId == null) {
+                ps.setNull(6, Types.INTEGER);
+            } else {
+                ps.setLong(6, sceneId);
+            }
             ps.setLong(7, now);
+            ps.setLong(8, now);
             return ps;
         }, key);
         Number id = key.getKey();
@@ -89,10 +100,23 @@ public class TurnStore {
 
     /** 旁路投递一次落定（没有「先生成后补」的过程）：子代理结论、潜意识投递这类写入 */
     public void record(String sessionId, TurnTrigger.Source source, long replyMessageId) {
+        record(sessionId, source, replyMessageId, null);
+    }
+
+    /** 带任务段的旁路投递：子代理报告按落地时的活动任务段归档（R1）。 */
+    public void record(String sessionId, TurnTrigger.Source source, long replyMessageId, Long sceneId) {
         long now = System.currentTimeMillis();
         jdbc.update("INSERT OR IGNORE INTO chat_turn(session_id, trigger_source, trigger_message_id, "
-                        + "reply_message_id, task_id, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
-                sessionId, source.name(), null, replyMessageId, null, now, now);
+                        + "reply_message_id, task_id, scene_id, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                sessionId, source.name(), null, replyMessageId, null, sceneId, now, now);
+    }
+
+    /** 某 Turn 归属的任务段（R1）；无任务段（普通段或旧数据）返回 null。 */
+    public Long sceneOf(String sessionId, long turnId) {
+        List<Long> rows = jdbc.query(
+                "SELECT scene_id FROM chat_turn WHERE session_id = ? AND id = ?",
+                (rs, n) -> nullableLong(rs, "scene_id"), sessionId, turnId);
+        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     /** 本会话的 Turn，按落库顺序 */
@@ -122,6 +146,7 @@ public class TurnStore {
                 nullableLong(rs, "trigger_message_id"),
                 nullableLong(rs, "reply_message_id"),
                 nullableLong(rs, "task_id"),
+                nullableLong(rs, "scene_id"),
                 rs.getLong("created_at"),
                 rs.getLong("updated_at"));
     }

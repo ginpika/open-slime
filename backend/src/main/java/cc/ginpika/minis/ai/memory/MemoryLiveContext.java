@@ -14,6 +14,8 @@ import org.springframework.stereotype.Component;
 /** 普通内容使用轮初快照；权限、撤销与指令在每次模型/工具边界重新校验。 */
 @Component
 public class MemoryLiveContext {
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(MemoryLiveContext.class);
     public static final String START = "<minis-memory>";
     public static final String END = "</minis-memory>";
     private static final ThreadLocal<MemorySnapshot> CURRENT = new ThreadLocal<>();
@@ -58,8 +60,9 @@ public class MemoryLiveContext {
         if (initial == null || exec == null) { return; }
         List<MemoryItemStore.ItemRow> allowed = new ArrayList<>();
         for (MemoryItemStore.ItemRow old : initial.items()) {
-            if (!"directive".equals(old.scope()) && items.visibleById(exec, old.id()).isPresent()) {
-                allowed.add(old);
+            // R4：刷新使用通过校验的当前记录正文与版本——同 ID 原位编辑后不再渲染旧快照。
+            if (!"directive".equals(old.scope())) {
+                items.visibleById(exec, old.id()).ifPresent(allowed::add);
             }
         }
         items.protectedVisible(exec).stream().filter(it -> "directive".equals(it.scope())).forEach(allowed::add);
@@ -78,16 +81,25 @@ public class MemoryLiveContext {
                         || (w.taskId() != null && w.taskId().equals(exec.taskId())))
                     && (w.expiresAt() == null || w.expiresAt() > System.currentTimeMillis()))
                     .ifPresent(w -> {
-                        String line=MemorySnapshotBuilder.workLine(old,maxChars);
+                        String line=MemorySnapshotBuilder.workLine(w,maxChars);
                         if(cc.ginpika.minis.stats.TokenUsageService.estimateTokens(text+"\n"+line)<=props.getBudget().getTotal()) text.append('\n').append(line);
                     });
         }
         if (progress!=null) {
             for (var p : initial.progress()) {
+                // R4：项目摘录按当前来源重新读取，不只验证 ID 存在后继续渲染旧快照。
                 if (java.util.Objects.equals(p.projectId(),exec.projectId()) && progress.allowed(exec,p.sourceSessionId())) {
-                    text.append('\n').append(cc.ginpika.minis.project.ProjectProgressStore.render(p));
+                    var current = progress.read(p.sourceSessionId());
+                    if (current != null) {
+                        text.append('\n').append(cc.ginpika.minis.project.ProjectProgressStore.render(current));
+                    }
                 }
             }
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("[ctx] memory.refresh session={} turn={} items={}/{} work={} progress={}",
+                    exec.sessionId(), exec.turnId(), allowed.size(), initial.items().size(),
+                    initial.work().size(), initial.progress().size());
         }
         String rendered = START + "\n当前可用记忆（含实时权限与指令校验）：\n" + text + "\n" + END;
         for (int i = 0; i < messages.size(); i++) {

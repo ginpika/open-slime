@@ -3,6 +3,7 @@ import { loginUrlOf, logout, me, type SsoUser } from './api/client'
 import { isDesktopShell, backToLauncher, openDesktopHome } from './api/desktop'
 import AgentHome from './pages/agent/AgentHome'
 import AgentConversation from './pages/agent/AgentConversation'
+import ContextDebug from './pages/ContextDebug'
 import Dashboard from './pages/Dashboard'
 import Knowledge from './pages/Knowledge'
 import Economy from './pages/Economy'
@@ -212,7 +213,7 @@ function UserMenu({
 }
 
 /** 页面自管滚动、外壳不再套容器的路由 */
-const FULL_BLEED = ['/graph', '/collaboration', '/roundtable', '/workflow', '/coding', '/economy/research', '/economy/database']
+const FULL_BLEED = ['/collaboration', '/roundtable', '/workflow', '/coding', '/economy/research', '/economy/database']
 
 function App() {
   const route = useHashRoute()
@@ -271,36 +272,9 @@ function App() {
           <PageSlot route="search" props={{}} fallback={<Search />} />
         </div>
       )}
-      {route === '/graph' && (
-        <div data-page="graph" className="h-full">
-          <PageSlot route="graph" props={{}} fallback={<Graph />} />
-        </div>
-      )}
-      {route === '/articles' && (
-        <div data-page="articles">
-          <PageSlot route="articles" props={{}} fallback={<Articles />} />
-        </div>
-      )}
-      {articleMatch && (
-        <div data-page="article">
-          <PageSlot
-            route="article"
-            props={{ url: decodeURIComponent(articleMatch[1]) }}
-            fallback={<ArticleDetailPage url={decodeURIComponent(articleMatch[1])} />}
-          />
-        </div>
-      )}
-      {route === '/import' && (
-        <div data-page="import">
-          <PageSlot route="import" props={{}} fallback={<Import />} />
-        </div>
-      )}
-      {(route === '/snapshots' || snapshotMatch) && (
-        <div data-page="snapshots"><Snapshots key={snapshotMatch?.[1] ?? 'new'} id={snapshotMatch?.[1]} /></div>
-      )}
-      {route === '/analyze' && (
-        <div data-page="analyze">
-          <PageSlot route="analyze" props={{}} fallback={<Analyze />} />
+      {route === '/debug' && (
+        <div data-page="debug">
+          <ContextDebug />
         </div>
       )}
       {route === '/memory' && (
@@ -395,6 +369,42 @@ function App() {
         </SlimePage>
       )
       break
+    /* 知识库子页与起始页 / Dashboard 同一套独立窗口：极简页头 + 返回知识库 */
+    case '/articles':
+      standalone = (
+        <SlimePage key={route} title="文档" backHref="#/knowledge" backLabel="返回知识库">
+          <div data-page="articles"><PageSlot route="articles" props={{}} fallback={<Articles />} /></div>
+        </SlimePage>
+      )
+      break
+    case '/import':
+      standalone = (
+        <SlimePage key={route} title="文档导入" backHref="#/knowledge" backLabel="返回知识库">
+          <div data-page="import"><PageSlot route="import" props={{}} fallback={<Import />} /></div>
+        </SlimePage>
+      )
+      break
+    case '/analyze':
+      standalone = (
+        <SlimePage key={route} title="文档分析" backHref="#/knowledge" backLabel="返回知识库">
+          <div data-page="analyze"><PageSlot route="analyze" props={{}} fallback={<Analyze />} /></div>
+        </SlimePage>
+      )
+      break
+    case '/graph':
+      standalone = (
+        <SlimePage key={route} title="知识图谱" backHref="#/knowledge" backLabel="返回知识库">
+          <div data-page="graph" className="h-full"><PageSlot route="graph" props={{}} fallback={<Graph />} /></div>
+        </SlimePage>
+      )
+      break
+    case '/snapshots':
+      standalone = (
+        <SlimePage key={route} title="网页快照" backHref="#/knowledge" backLabel="返回知识库">
+          <div data-page="snapshots"><Snapshots /></div>
+        </SlimePage>
+      )
+      break
     case '/agent-conversation':
       standalone = <AgentConversation />
       break
@@ -417,6 +427,27 @@ function App() {
         </SlimePage>
       )
       break
+  }
+
+  /* 文档详情与快照详情跟随所属列表页：独立页面、极简页头 */
+  if (articleMatch && !standalone) {
+    const articleUrl = decodeURIComponent(articleMatch[1])
+    standalone = (
+      <SlimePage key={articleUrl} title="文档" backHref="#/articles" backLabel="返回文档列表">
+        <div data-page="article">
+          <PageSlot route="article" props={{ url: articleUrl }} fallback={<ArticleDetailPage url={articleUrl} />} />
+        </div>
+      </SlimePage>
+    )
+  }
+
+  if (snapshotMatch && !standalone) {
+    const snapshotId = snapshotMatch[1]
+    standalone = (
+      <SlimePage key={snapshotId} title="网页快照" backHref="#/snapshots" backLabel="返回快照库">
+        <div data-page="snapshots"><Snapshots id={snapshotId} /></div>
+      </SlimePage>
+    )
   }
 
   /* 智能体详情与成员名册一致：独立页面、极简页头，不再套外壳导航与页脚 */

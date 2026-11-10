@@ -32,6 +32,13 @@ public class TodoService {
     private final HubSessionStore sessions;
     private final ObjectMapper om;
     private final SessionEventBus events;
+    private cc.ginpika.minis.config.ContextProps contextProps;
+
+    /** R9 审批门禁依赖试点开关；非 Spring 测试环境缺省关闭（沿用普通清单写入）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setContextProps(cc.ginpika.minis.config.ContextProps contextProps) {
+        this.contextProps = contextProps;
+    }
 
     public TodoService(TodoStore todos, HubSessionStore sessions, ObjectMapper om,
                        SessionEventBus events) {
@@ -61,6 +68,15 @@ public class TodoService {
         }
         /* 覆盖式写入的软护栏：先取旧清单，写入后比对出「未完成却消失」的步骤回显给模型 */
         List<TodoStore.TodoItem> before = todos.list(hubId, owner);
+        /* R9：启用审批的单聊试点里，未完成 → 已完成的转换必须经过审批——直接新建已完成项、
+           整表替换、重排或删除再添加绕过现有项同样不允许；已有已完成项可原样保留。 */
+        String violation = approvalViolation(hubId, before, items);
+        if (violation != null) {
+            return "清单未写入：待办「" + violation + "」此前不是已完成状态。本会话启用待办审批后，"
+                    + "把一项未完成待办标记为完成必须经用户审批——不能由 write_todos 直接完成，"
+                    + "也不能通过整表替换、重排或删除再添加绕过。请保留其未完成状态，"
+                    + "改用 request_todo_completion 单独提交完成提案。";
+        }
         todos.replace(hubId, owner, items);
         /* 首页会话（mode='ai'）才推：会话页 TODO 卡片据此即时刷新，与归属 Agent 是谁无关。
            圆桌会话（mode='multi-agent'）的成员个人清单不对首页可见，不推（避免无谓推送） */
@@ -68,6 +84,32 @@ public class TodoService {
             events.publish(new SessionEventBus.Event(hubId, SessionEventBus.KIND_TODO, false, null));
         }
         return echo(items, dropped(before, items));
+    }
+
+    /** R9：启用 P4 的单聊会话才拦截；关闭后沿用普通清单写入，已有待审批项仍按其授权处理。 */
+    private boolean approvalsRequired(String hubId) {
+        if (contextProps == null || !contextProps.isEphemeralChat() || !contextProps.isTodoApprovals()) {
+            return false;
+        }
+        return sessions.findById(hubId).map(row -> "ai".equals(row.mode())).orElse(false);
+    }
+
+    /** 新清单里「旧清单不存在或本就未完成」的已完成项即为绕过审批的越界转换；无则返回 null。 */
+    private String approvalViolation(String hubId, List<TodoStore.TodoItem> before,
+                                      List<TodoStore.TodoItem> after) {
+        if (!approvalsRequired(hubId)) {
+            return null;
+        }
+        Set<String> doneBefore = before.stream()
+                .filter(item -> TodoStore.ST_DONE.equals(item.status()))
+                .map(TodoStore.TodoItem::content)
+                .collect(Collectors.toSet());
+        for (TodoStore.TodoItem item : after) {
+            if (TodoStore.ST_DONE.equals(item.status()) && !doneBefore.contains(item.content())) {
+                return item.content();
+            }
+        }
+        return null;
     }
 
     /** 读取某会话、某归属 Agent 的个人清单（首页会话 TODO 卡片用）：转成界面 DTO */

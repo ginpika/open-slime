@@ -15,6 +15,9 @@ import cc.ginpika.minis.ai.memory.MemoryStage;
 import cc.ginpika.minis.ai.core.tool.ToolManager;
 import cc.ginpika.minis.ai.core.tool.chat.RequestTodoCompletionTool;
 import cc.ginpika.minis.ai.core.tool.chat.RequestUserInputTool;
+import cc.ginpika.minis.ai.core.tool.doc.FetchWebTool;
+import cc.ginpika.minis.ai.core.tool.doc.ReadDocumentTool;
+import cc.ginpika.minis.ai.core.tool.doc.WebBrowserTool;
 import cc.ginpika.minis.ai.core.MemoryExec;
 import cc.ginpika.minis.ai.core.tool.subagent.DelegateSubagentTool;
 import cc.ginpika.minis.ai.core.tool.subagent.ReadSubagentRunTool;
@@ -30,10 +33,12 @@ import cc.ginpika.minis.agent.chat.store.ChatMessageStore.MessageRow;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore;
 import cc.ginpika.minis.agent.chat.store.HubSessionStore.HubRow;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -128,6 +133,15 @@ public class ChatTurnRunner implements ChatExecution {
         this.contextSources = sources;
         this.contextManifests = manifests;
     }
+
+    /** 回复与受控证据依赖同事务发布（R3）；非 Spring 测试环境缺省退化为直接写入。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTransactionManager(org.springframework.transaction.PlatformTransactionManager manager) {
+        this.transactions = manager == null ? null
+                : new org.springframework.transaction.support.TransactionTemplate(manager);
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate transactions;
 
     public ChatDtos.ChatReply chat(String hubId, String input, String modelId, String promptId) {
         return chat(hubId, input, modelId, promptId, null);
@@ -283,7 +297,10 @@ public class ChatTurnRunner implements ChatExecution {
         String taskAgentId = AgentScope.get() != null ? AgentScope.get() : agentOf(row);
         boolean pilotEnabled = exec == this && "ai".equals(row.mode()) && taskAgentId.equals(agentOf(row))
                 && chatContext.ephemeralContextEnabled();
-        ChatContextContinuation continuation = pilotEnabled ? chatContext.continuation(row) : null;
+        /* R1：Turn 开始前捕获当前任务段——每个 Turn 归入开始时的任务段；任务段活动期间，
+           临时角色与确认约束随装配进入，普通段与已结束任务段不默认回放。 */
+        Long turnScene = pilotEnabled ? chatContext.activeSceneId(row.id()) : null;
+        ChatContextContinuation continuation = pilotEnabled ? chatContext.continuation(row, turnScene) : null;
         var approvalScope = pilotEnabled && chatContext.todoApprovalsEnabled() && actorId != null && !actorId.isBlank()
                 ? todoApprovals.capture(row, actorId) : null;
         long taskId = exec.taskTracked()
@@ -298,7 +315,7 @@ public class ChatTurnRunner implements ChatExecution {
            （见 ChatExecution#turnTracked）。回答还没出来，先只有触发端；答完（或取消）再补上输出端 */
         long turnId = exec.turnTracked()
                 ? turnStore.begin(row.id(), TurnTrigger.Source.USER_INPUT, userMsgId,
-                        taskId > 0 ? taskId : null)
+                        taskId > 0 ? taskId : null, turnScene)
                 : 0L;
 
         ChatSteering steering = steerable ? new ChatSteering(userMsgId, input, sink, stopFlag,
@@ -466,12 +483,36 @@ public class ChatTurnRunner implements ChatExecution {
                                 }
                             }
                         }
-                        /* 每次工具调用都落一条生命周期记录（running → done/failed）并发事件：
-                           工具的副作用因此可查、可审计，而不只是塞回模型上下文（设计一 §五-2） */
-                        String name = call.path("function").path("name").asText();
+                        JsonNode function = call.path("function");
+                        String name = function.path("name").asText();
+                        if (sink == null || exec != ChatTurnRunner.this) {
+                            return execute(call, name);
+                        }
+                        String callId = UUID.randomUUID().toString();
+                        String activityTarget = toolActivityTarget(name, function.path("arguments").asText());
+                        sink.toolActivity(callId, name, activityTarget, true);
+                        try {
+                            return execute(call, name);
+                        } finally {
+                            sink.toolActivity(callId, name, activityTarget, false);
+                        }
+                    }
+
+                    private String execute(JsonNode call, String name) {
                         if (RequestTodoCompletionTool.NAME.equals(name)) {
                             if (approvalScope == null) {
                                 return "当前执行没有启用待办确认。";
+                            }
+                            /* R9 P3/P4 显式延后：本轮已暂存新续接或产生待提交 Epoch 时，审批不写提案，
+                               本轮走正常结算，下一轮可重新提出——避免暂停分支丢弃待保存的续接。 */
+                            if (continuation != null && (continuation.hasPending()
+                                    || (contextRun != null && contextRun.hasSubmittedEpoch()))) {
+                                log.info("[ctx] approval.deferred session={} turn={} reason={}", row.id(), turnId,
+                                        continuation.hasPending() ? "staged_continuation" : "submitted_epoch");
+                                return om.createObjectNode().put("status", "deferred")
+                                        .put("detail", "本轮已暂存阶段续接或水位，待办审批延后：本轮正常结算，"
+                                                + "下一轮可重新提出完成提案。")
+                                        .toString();
                             }
                             proposedApproval[0] = null;
                             try {
@@ -487,6 +528,7 @@ public class ChatTurnRunner implements ChatExecution {
                         if (continuation != null && ContextPlan.CONTINUATION_TOOL.equals(name)) {
                             return contextRun.saveContinuation(call);
                         }
+                        /* 工具副作用落生命周期记录（running → done/failed），供回查与审计。 */
                         if (contextRun != null && SUBAGENT_TOOLS.contains(name)) {
                             return toolExecs.record(row.id(), Long.toString(taskId), subagentBatch[0], call,
                                     () -> contextRun.runSubagent(call,
@@ -565,7 +607,7 @@ public class ChatTurnRunner implements ChatExecution {
                 state.trace().add(new ChatDtos.TraceSegment(ChatTrace.SEG_REASONING, partialReason,
                         null, null, currentRound[0]));
             }
-            long partialReplyId = recordTurnReply(exec, row, partial, state, turnKey, contextRun);
+            long partialReplyId = settleReply(exec, row, partial, state, turnKey, contextRun);
             persistCalls(exec, partialReplyId, state);
             turnStore.complete(turnId, partialReplyId);
             exec.touchSession(row, null);
@@ -607,7 +649,7 @@ public class ChatTurnRunner implements ChatExecution {
             String reply = result.content();
             try {
                 todoApprovals.suspend(approvalScope, pause.draft(), taskId, turnId, () -> {
-                    long replyId = recordTurnReply(exec, row, reply, state, turnKey, contextRun, false);
+                    long replyId = settleReply(exec, row, reply, state, turnKey, contextRun, false);
                     if (replyId <= 0) {
                         throw new IllegalStateException("待办确认回复保存失败");
                     }
@@ -624,7 +666,7 @@ public class ChatTurnRunner implements ChatExecution {
             return new ChatDtos.ChatReply(row.id(), userMsgId, reply, result.rawResponse(), true, null);
         }
 
-        long replyId = recordTurnReply(exec, row, result.content(), state, turnKey, contextRun);
+        long replyId = settleReply(exec, row, result.content(), state, turnKey, contextRun);
         persistCalls(exec, replyId, state);
         turnStore.complete(turnId, replyId);
         exec.touchSession(row, null);
@@ -640,6 +682,34 @@ public class ChatTurnRunner implements ChatExecution {
 
         return new ChatDtos.ChatReply(row.id(), userMsgId, result.content(), result.rawResponse(),
                 true, null);
+    }
+
+    /** Only display selected identifiers, never command lines or whole URLs. */
+    private String toolActivityTarget(String name, String arguments) {
+        String field = switch (name) {
+            case FetchWebTool.NAME, WebBrowserTool.NAME -> "url";
+            case ReadDocumentTool.NAME -> "doc_id";
+            default -> null;
+        };
+        if (field == null) {
+            return null;
+        }
+        try {
+            JsonNode args = om.readTree(arguments);
+            if (args == null || !args.hasNonNull(field)) {
+                return null;
+            }
+            JsonNode value = args.get(field);
+            if (ReadDocumentTool.NAME.equals(name)) {
+                return value.isIntegralNumber() && value.canConvertToLong() && value.asLong() > 0
+                        ? "#" + value.asLong() : null;
+            }
+            URI url = URI.create(value.asText());
+            return url.getUserInfo() == null && ("https".equalsIgnoreCase(url.getScheme())
+                    || "http".equalsIgnoreCase(url.getScheme())) ? url.getHost() : null;
+        } catch (JsonProcessingException | IllegalArgumentException invalid) {
+            return null;
+        }
     }
 
     // ---------- 会话域门面：外围模块（潜意识 / 子代理）对 chat 数据的写入入口
@@ -670,6 +740,35 @@ public class ChatTurnRunner implements ChatExecution {
     private long recordTurnReply(ChatExecution exec, HubRow row, String content,
                                  AgentRuntime.RunState state, String turnKey, ChatContextRun contextRun) {
         return recordTurnReply(exec, row, content, state, turnKey, contextRun, true);
+    }
+
+    /** 回复与其受控证据依赖在同一结算中发布（R3）：没有依赖可记时走原路径，行为不变。 */
+    private long settleReply(ChatExecution exec, HubRow row, String content, AgentRuntime.RunState state,
+                             String turnKey, ChatContextRun contextRun) {
+        return settleReply(exec, row, content, state, turnKey, contextRun, true);
+    }
+
+    private long settleReply(ChatExecution exec, HubRow row, String content, AgentRuntime.RunState state,
+                             String turnKey, ChatContextRun contextRun, boolean captureAssistant) {
+        if (contextRun == null) {
+            return recordTurnReply(exec, row, content, state, turnKey, null, captureAssistant);
+        }
+        if (transactions == null) {
+            // 无事务模板（非 Spring 装配）：仍记录依赖，只是不保证与正文同事务发布。
+            long id = recordTurnReply(exec, row, content, state, turnKey, contextRun, captureAssistant);
+            if (id > 0) {
+                contextRun.persistDependencies(id);
+            }
+            return id;
+        }
+        Long replyId = transactions.execute(tx -> {
+            long id = recordTurnReply(exec, row, content, state, turnKey, contextRun, captureAssistant);
+            if (id > 0) {
+                contextRun.persistDependencies(id);
+            }
+            return id;
+        });
+        return replyId == null ? -1L : replyId;
     }
 
     private long recordTurnReply(ChatExecution exec, HubRow row, String content,

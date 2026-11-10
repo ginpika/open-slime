@@ -4,8 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { articleDetail, loginUrlOf, type ArticleDetail } from '../api/client'
 import Toast from '../components/Toast'
 import TocRail, { type TocItem } from '../components/TocRail'
-import { usePageKit } from '../kit'
-import { useThemeState } from '../theme/store'
+import './knowledge.css'
 
 /** 渲染前预处理：剥离 hexo/hugo front-matter 头部块与 <!--more--> 摘要分割标记（原文存储不动） */
 function preprocess(markdown: string): string {
@@ -25,65 +24,65 @@ function preprocess(markdown: string): string {
   return md.replace(/<!--\s*more\s*-->/gi, '').replace(/^\s+/, '')
 }
 
-/** markdown 元素 → 主题令牌样式（主题自动跟随）；标题挂 scroll-mt 供目录锚点定位留白 */
+/**
+ * react-markdown 会把自身的 AST node 一并传给自定义组件；整个展开到 DOM 会产生
+ * node="[object Object]" 这类非法属性，这里统一剔除后再透传。
+ */
+function domProps(p: object): object {
+  const { node: _node, ...rest } = p as { node?: unknown } & Record<string, unknown>
+  return rest
+}
+
+/** markdown 元素 → 令牌样式（颜色随知识库表面）；标题挂 scroll-mt 供目录锚点定位留白 */
 const MD = {
   h1: (p: object) => (
-    <h2 className="mb-3 mt-8 scroll-mt-6 text-lg font-bold text-accent underline decoration-accent/40 decoration-1 underline-offset-[6px]" {...p} />
+    <h2 className="mb-3 mt-8 scroll-mt-6 text-lg font-semibold leading-snug text-fg" {...domProps(p)} />
   ),
   h2: (p: object) => (
-    <h2 className="mb-3 mt-8 scroll-mt-6 text-md font-bold text-accent underline decoration-accent/40 decoration-1 underline-offset-[6px]" {...p} />
+    <h2 className="mb-3 mt-8 scroll-mt-6 text-md font-semibold leading-snug text-fg" {...domProps(p)} />
   ),
   h3: (p: object) => (
-    <h3 className="mb-2 mt-6 scroll-mt-6 text-base font-bold text-accent underline decoration-accent/40 decoration-1 underline-offset-4" {...p} />
+    <h3 className="mb-2 mt-6 scroll-mt-6 text-base font-semibold leading-snug text-fg" {...domProps(p)} />
   ),
-  p: (p: object) => <p className="my-4 text-md leading-7 text-fg" {...p} />,
+  p: (p: object) => <p className="my-4 text-md leading-7 text-fg" {...domProps(p)} />,
   a: (p: object) => (
     <a
       className="text-accent underline decoration-accent/40 underline-offset-2 transition hover:decoration-accent"
       target="_blank"
       rel="noreferrer"
-      {...p}
+      {...domProps(p)}
     />
   ),
-  ul: (p: object) => <ul className="my-4 list-disc space-y-1 pl-5 text-md leading-7" {...p} />,
+  ul: (p: object) => <ul className="my-4 list-disc space-y-1 pl-5 text-md leading-7" {...domProps(p)} />,
   ol: (p: object) => (
-    <ol className="my-4 list-decimal space-y-1 pl-5 text-md leading-7" {...p} />
+    <ol className="my-4 list-decimal space-y-1 pl-5 text-md leading-7" {...domProps(p)} />
   ),
   blockquote: (p: object) => (
-    <blockquote className="my-4 border-l border-line pl-4 text-md leading-7 text-muted" {...p} />
+    <blockquote className="my-4 border-l-2 border-line pl-4 text-md leading-7 text-muted" {...domProps(p)} />
   ),
-  code: ({ className, children, ...rest }: { className?: string; children?: React.ReactNode }) =>
+  code: ({ className, children }: { className?: string; children?: React.ReactNode }) =>
     className?.includes('language-') ? (
-      <code className="font-mono text-sm leading-6" {...rest}>
-        {children}
-      </code>
+      <code className="font-mono text-sm leading-6">{children}</code>
     ) : (
-      <code className="bg-fg/5 px-1 py-0.5 font-mono text-sm text-fg" {...rest}>
-        {children}
-      </code>
+      <code className="rounded-sm bg-fg/5 px-1 py-0.5 font-mono text-sm text-fg">{children}</code>
     ),
   pre: (p: object) => (
     <pre
-      className="scrollbar-slim my-4 overflow-x-auto border border-line bg-fg/[0.03] p-4 text-sm leading-6"
-      {...p}
+      className="scrollbar-slim my-4 overflow-x-auto rounded-md border border-line bg-fg/[0.03] p-4 text-sm leading-6"
+      {...domProps(p)}
     />
   ),
-  table: (p: object) => <table className="my-4 w-full border-collapse text-base" {...p} />,
+  table: (p: object) => <table className="my-4 w-full border-collapse text-base" {...domProps(p)} />,
   th: (p: object) => (
-    <th className="border border-line bg-fg/5 px-3 py-1.5 text-left font-semibold" {...p} />
+    <th className="border border-line bg-fg/5 px-3 py-1.5 text-left font-semibold" {...domProps(p)} />
   ),
-  td: (p: object) => <td className="border border-line px-3 py-1.5" {...p} />,
+  td: (p: object) => <td className="border border-line px-3 py-1.5" {...domProps(p)} />,
   hr: () => <hr className="my-8 border-line" />,
-  img: (p: object) => <img className="max-w-full" {...p} />,
+  img: (p: object) => <img className="max-w-full" {...domProps(p)} />,
 }
 
 /** 文档详情页：渲染 markdown 原文（data/article/{url}.md），左侧悬浮目录 */
 export default function ArticleDetailPage({ url }: { url: string }) {
-  const kit = usePageKit()
-  /** 侧边栏档：目录改挂右侧（隐藏式圆点），避免与左侧栏重叠 */
-  const theme = useThemeState()
-  const sidebar = theme.themeId === 'old' && theme.mono.sidebar
-  const observatory = theme.themeId === 'astrolabe'
   const [doc, setDoc] = useState<ArticleDetail | null>(null)
   const [loading, setLoading] = useState(true)
   /** 加载失败/文章缺失（err 有值时以错误 message box 提示，页内仅保留返回入口） */
@@ -143,73 +142,49 @@ export default function ArticleDetailPage({ url }: { url: string }) {
 
   if (loading) {
     return (
-      <section className="pt-24 text-center text-base text-hint">加载中 …</section>
+      <div className="kn-page kn-page--reading">
+        <p className="kn-hint">加载中 …</p>
+      </div>
     )
   }
 
   if (err || !doc) {
     return (
-      <section className="pt-24 text-center">
+      <div className="kn-page kn-page--reading">
         {/* 加载失败/文章缺失：错误文案经 message box 提示，页内仅保留返回入口 */}
         <Toast
           kind="error"
           message={err ?? '文章不存在。'}
           onClose={() => setErr(null)}
         />
-        <a href="#/articles" className="mt-3 inline-block text-sm text-faint transition hover:text-fg">
-          ← 返回文档列表
-        </a>
-      </section>
+        <a href="#/articles" className="kn-article__back">← 返回文档列表</a>
+      </div>
     )
   }
 
   return (
-    /* 标题区交给 kit.Page（扇区头 + 工程虚线随主题）；目录 fixed 悬浮在正文左缘外侧
-       留白区并垂直居中（2xl 视口以上左侧留白才足够容纳），不挤占文档流空间，也不受 main 裁剪。
-       right = 50% + max-w-6xl/2 − main 内边距 + 间距 = 50% + 35.5rem */
-    <kit.Page
-      title={doc.title}
-      en="ARTICLE"
-      meta={
-        <>
-          <a href="#/articles" className="text-sm text-faint transition hover:text-fg">
-            ← 返回文档列表
-          </a>
-          <span className="mono text-2xs text-faint">
-            {new Date(doc.createdAt).toLocaleDateString('zh-CN')}
-          </span>
-        </>
-      }
-    >
-      {!observatory && toc.length > 0 && (
-        <aside
-          className={
-            sidebar
-              /* 侧边栏档：贴在左侧栏右边一点点（圆点轨很窄，贴着即可，不与侧栏重叠） */
-              ? 'fixed left-[15.75rem] top-1/2 z-20 -translate-y-1/2'
-              /* 常规：正文左缘外侧的留白区（2xl 以上才够宽） */
-              : 'fixed left-[calc(50%_-_37rem)] top-1/2 z-10 hidden -translate-y-1/2 2xl:block'
-          }
-        >
+    /* 目录固定悬浮在正文左缘外侧留白区并垂直居中（超宽视口才显示），不挤占文档流空间 */
+    <div className="kn-page kn-page--reading">
+      {toc.length > 0 && (
+        <aside className="kn-article__toc">
           <TocRail items={toc} />
         </aside>
       )}
-      <div className={observatory ? `astro-reading-layout${toc.length ? ' astro-reading-layout--toc' : ''}` : undefined}>
-      {observatory && toc.length > 0 && <aside className="astro-reading-toc"><TocRail items={toc} expanded label="文档目录" scroller={() => articleRef.current?.closest('main') ?? null} /></aside>}
-      <div className="space-y-6 min-w-0">
-      {doc.summary && (
-        <p className="border-l border-line pl-3 text-sm leading-relaxed text-muted">
-          {doc.summary}
-        </p>
-      )}
+
+      <header>
+        <a href="#/articles" className="kn-article__back">← 返回文档列表</a>
+        <h1 className="kn-article__title">{doc.title}</h1>
+        <p className="kn-article__meta">{new Date(doc.createdAt).toLocaleDateString('zh-CN')}</p>
+      </header>
+
+      {doc.summary && <p className="kn-article__summary">{doc.summary}</p>}
+
       {/* Markdown 正文：内容优先，不套面板 */}
-      <article ref={articleRef} className={observatory ? 'astro-reading-body' : undefined}>
+      <article ref={articleRef} className="kn-article__body">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>
           {body}
         </ReactMarkdown>
       </article>
-      </div>
-      </div>
-    </kit.Page>
+    </div>
   )
 }

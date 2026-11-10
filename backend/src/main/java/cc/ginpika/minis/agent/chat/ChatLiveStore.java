@@ -2,6 +2,7 @@ package cc.ginpika.minis.agent.chat;
 
 import cc.ginpika.minis.agent.chat.dto.ChatDtos;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,7 @@ public class ChatLiveStore {
         private final List<ChatDtos.TraceSegment> trace = new ArrayList<>();
         private final List<ChatDtos.SteerMessage> steers = new ArrayList<>();
         private final List<ChatDtos.InterimReply> interims = new ArrayList<>();
+        private final Map<String, ChatDtos.ToolActivity> activeTools = new LinkedHashMap<>();
         /** 当前订阅者（SSE 消费者），按订阅先后保序 */
         private final Set<LiveListener> listeners = new LinkedHashSet<>();
         private final long userMessageId;
@@ -107,6 +109,21 @@ public class ChatLiveStore {
         }
     }
 
+    public boolean activity(Run run, ChatDtos.ToolActivity activity) {
+        synchronized (run) {
+            if (!run.running) {
+                return false;
+            }
+            if (activity.running()) {
+                run.activeTools.put(activity.callId(), activity);
+            } else {
+                run.activeTools.remove(activity.callId());
+            }
+            broadcast(run, "activity", activity);
+            return true;
+        }
+    }
+
     public void steer(Run run, ChatDtos.SteerMessage message) {
         synchronized (run) {
             run.steers.add(message);
@@ -145,6 +162,7 @@ public class ChatLiveStore {
                 run.content.append(finalContent);
             }
             run.running = false;
+            run.activeTools.clear();
             snapshot = snapshotOf(run);
             broadcast(run, "done", snapshot);
         }
@@ -156,6 +174,7 @@ public class ChatLiveStore {
     public void fail(Run run, String error) {
         synchronized (run) {
             run.running = false;
+            run.activeTools.clear();
             run.error = error;
             broadcast(run, "error", snapshotOf(run));
         }
@@ -227,12 +246,12 @@ public class ChatLiveStore {
     private static ChatDtos.LiveRun snapshotOf(Run run) {
         return new ChatDtos.LiveRun(run.sessionId, run.running, run.userText, run.userMessageId,
                 run.content.toString(), run.reasoning.toString(), List.copyOf(run.trace), run.error,
-                List.copyOf(run.steers), List.copyOf(run.interims), run.round);
+                List.copyOf(run.steers), List.copyOf(run.interims), run.round, List.copyOf(run.activeTools.values()));
     }
 
     private static ChatDtos.LiveRun notRunning(String sessionId) {
         return new ChatDtos.LiveRun(sessionId, false, null, null, "", "", List.of(), null,
-                List.of(), List.of(), 0);
+                List.of(), List.of(), 0, List.of());
     }
 
     private static String nullToEmpty(String s) {

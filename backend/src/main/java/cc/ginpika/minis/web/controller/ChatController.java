@@ -3,6 +3,7 @@ package cc.ginpika.minis.web.controller;
 import cc.ginpika.minis.agent.chat.ChatTurnRunner;
 import cc.ginpika.minis.agent.chat.ChatContextManifests;
 import cc.ginpika.minis.agent.chat.ChatContextService;
+import cc.ginpika.minis.agent.chat.ChatScenes;
 import cc.ginpika.minis.agent.chat.ChatSessionService;
 import cc.ginpika.minis.agent.chat.ChatLiveStore;
 import cc.ginpika.minis.agent.chat.ChatStream;
@@ -55,18 +56,21 @@ public class ChatController {
     private final ChatSessionService sessions;
     private final ChatLiveStore live;
     private final TodoService todo;
+    private final ChatScenes sceneService;
     private final ObjectMapper om;
     /** 流式会话在独立线程里跑（虚拟线程）：边收 LLM 边推前端，不占请求线程 */
     private final ExecutorService streamExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public ChatController(ChatTurnRunner turns, ChatContextService context, ChatSessionService sessions,
-                          ChatLiveStore live, TodoService todo, ObjectMapper om, ChatContextManifests manifests) {
+                          ChatLiveStore live, TodoService todo, ChatScenes sceneService, ObjectMapper om,
+                          ChatContextManifests manifests) {
         this.turns = turns;
         this.context = context;
         this.manifests = manifests;
         this.sessions = sessions;
         this.live = live;
         this.todo = todo;
+        this.sceneService = sceneService;
         this.om = om;
     }
 
@@ -175,6 +179,14 @@ public class ChatController {
         }
 
         @Override
+        public synchronized void toolActivity(String callId, String name, String target, boolean running) {
+            var activity = new ChatDtos.ToolActivity(callId, name, target, running);
+            if (live.activity(run, activity)) {
+                send("activity", activity);
+            }
+        }
+
+        @Override
         public synchronized void steer(long messageId, String input) {
             var message = new ChatDtos.SteerMessage(messageId, input);
             live.steer(run, message);
@@ -226,7 +238,7 @@ public class ChatController {
     }
 
     /**
-     * 续传流：先推一份完整快照（snapshot），再接着推后续 round / delta / tool，
+     * 续传流：先推一份完整快照（snapshot），再接着推后续 round / delta / tool / activity，
      * 收尾推 done / error（payload 同为快照，running 已是 false）。
      *
      * <p>该会话没有在途生成时只推一份 snapshot（running=false）即收尾，前端据此照常走历史加载。
@@ -365,6 +377,48 @@ public class ChatController {
     public ChatDtos.NewSession branch(@PathVariable String id,
                                       @RequestBody ChatDtos.BranchRequest req) {
         return sessions.branch(id, req == null ? null : req.messageId());
+    }
+
+    // ---------- 任务段（R1）：同一会话内显式切换工作内容 ----------
+
+    /** 当前活动任务段与可恢复任务段 */
+    @GetMapping("/api/sessions/{id}/scenes")
+    public ChatDtos.SceneState scenes(@PathVariable String id) {
+        var state = sceneService.state(id);
+        return new ChatDtos.SceneState(toItem(state.active()),
+                state.resumable().stream().map(ChatController::toItem).toList());
+    }
+
+    /** 开始一段任务：名称 + 可选临时角色 / 任务约束；只在安全点提交（生成中拒绝） */
+    @PostMapping("/api/sessions/{id}/scenes")
+    public ChatDtos.SceneItem startScene(@PathVariable String id,
+                                         @RequestBody(required = false) ChatDtos.SceneStartRequest req) {
+        return toItem(sceneService.start(id,
+                req == null ? null : req.name(),
+                req == null ? null : req.rolePrompt(),
+                req == null ? null : req.constraints()));
+    }
+
+    /** 结束当前任务段：回到普通聊天，此前的普通段与刚结束的任务段不再默认回放 */
+    @PostMapping("/api/sessions/{id}/scenes/{sceneId}/end")
+    public ChatDtos.SceneItem endScene(@PathVariable String id, @PathVariable long sceneId) {
+        return toItem(sceneService.end(id, sceneId));
+    }
+
+    /** 恢复已有任务段：仍有效的约束与续接重新装配，退出期间的其他过程不自动进入 */
+    @PostMapping("/api/sessions/{id}/scenes/{sceneId}/resume")
+    public ChatDtos.SceneItem resumeScene(@PathVariable String id, @PathVariable long sceneId) {
+        return toItem(sceneService.resume(id, sceneId));
+    }
+
+    private static ChatDtos.SceneItem toItem(ChatScenes.SceneRow row) {
+        return row == null ? null : new ChatDtos.SceneItem(row.id(), row.name(), row.rolePrompt(),
+                row.constraints(), row.status(), iso(row.createdAt()));
+    }
+
+    private static String iso(long ms) {
+        return java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ms),
+                java.time.ZoneId.systemDefault()).toString();
     }
 
     /**

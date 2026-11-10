@@ -400,7 +400,7 @@ public class SubagentService implements SubagentTool {
             }
             try {
                 AgentRunner.Outcome result = execution.outcome().get(SYNC_WAIT_SECONDS, TimeUnit.SECONDS);
-                finishScoped(handoff, batchId, execution.id(), result, false);
+                finishScoped(handoff, batchId, execution.id(), result);
                 return scope.visible(execution.id(), hubId)
                         ? handoff(handoff, result.execId(), result.status(), result.output(), result.error())
                         : error("子代理任务已不在当前作用域");
@@ -412,7 +412,7 @@ public class SubagentService implements SubagentTool {
                 Thread.currentThread().interrupt();
                 return error("当前等待已取消");
             } catch (ExecutionException failure) {
-                finishScoped(handoff, batchId, execution.id(), null, false);
+                finishScoped(handoff, batchId, execution.id(), null);
                 return error("子代理未产出结论");
             }
         } catch (IllegalArgumentException denied) {
@@ -467,19 +467,21 @@ public class SubagentService implements SubagentTool {
     private void deliverWhenReady(ScopedSubagentRun.Handoff handoff, String batchId, ScopedExecution execution) {
         batchHub.put(batchId, handoff.session().id());
         execution.outcome().whenCompleteAsync((result, failure) ->
-                finishScoped(handoff, batchId, execution.id(), result, true), POOL);
+                finishScoped(handoff, batchId, execution.id(), result), POOL);
     }
 
     private void finishScoped(ScopedSubagentRun.Handoff handoff, String batchId, long execId,
-                              AgentRunner.Outcome outcome, boolean background) {
+                              AgentRunner.Outcome outcome) {
         String hubId = handoff.session().id();
         unmarkRunning(hubId, execId);
         try {
             if (outcome == null) {
                 store.failExec(execId, "子代理未产出结论");
-            } else if (background && scope.visible(execId, hubId)) {
+            } else if (scope.visible(execId, hubId)) {
+                /* 同步完成与后台回报共用一张幂等卡片（R8）：交付侧按执行 id 去重，
+                   报告卡随授权来源记录持久依赖（R3）。 */
                 publisher.publishEvent(new SubagentReportEvent(hubId, handoff.title(), execId, outcome.status(),
-                        outcome.output(), outcome.error(), true));
+                        outcome.output(), outcome.error(), true, handoff.references()));
             }
         } finally {
             pending.get(batchId).decrementAndGet();

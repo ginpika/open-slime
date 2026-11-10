@@ -14,13 +14,11 @@ import {
   type Prop,
   type SearchGraph,
 } from '../api/client'
-import { Card } from '../components/Card'
 import GraphCanvas, { typeColorMap, type GraphSel } from '../components/GraphCanvas'
 import { edgeKey } from '../components/graphRendering'
 import PropsEditor from '../components/PropsEditor'
 import Toast from '../components/Toast'
-import { btnOutline, btnPrimary, Control } from '../components/ui'
-import { usePageKit } from '../kit'
+import './knowledge.css'
 
 /* ECharts 引擎懒加载：可选引擎，避免 echarts 体积拖累默认（自研）路径的首屏 */
 const GraphECharts = lazy(() => import('../components/GraphECharts'))
@@ -31,9 +29,8 @@ const GraphECharts = lazy(() => import('../components/GraphECharts'))
  * 点击节点或关系 fadeIn，点击空白背景 fadeOut（实体卡片内含新增关系入口）；左下角图例与谓词过滤。
  * 数据源：/api/graph/*。
  *
- * 呈现：满幅画布与悬浮玻璃胶囊（border-line + bg-bg/85 + backdrop-blur）不动；
- * 详情 / 空态卡交给主题化 Card（空态引导文案走 kit.Empty），关系行交给 kit.Row，
- * 实体类型标签走 kit.Badge，输入框包 Control 外壳，微标签走 ui-label。
+ * 呈现：满幅画布与悬浮胶囊（细描边 + 半透明底 + 背景模糊）沿用知识库子页表面；
+ * 空态卡 / 详情卡用 kn-card，实体类型标签用 kn-badge，输入框用 kn-input。
  */
 
 /** 毫秒 epoch → 本地时间（YYYY-MM-DD HH:mm），实体时间戳展示用 */
@@ -65,7 +62,7 @@ function IdRow({ id }: { id: string }) {
   }
   return (
     <div className="mt-2 flex items-center gap-2 rounded-lg border border-line bg-fg/5 px-2 py-1">
-      <span className="ui-label shrink-0">ID</span>
+      <span className="kn-label shrink-0">ID</span>
       <span title={id} className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
         {id}
       </span>
@@ -108,7 +105,6 @@ function entityFromHash(): string | null {
 }
 
 export default function Graph() {
-  const kit = usePageKit()
   const [q, setQ] = useState('')
   const [sugs, setSugs] = useState<GraphNode[] | null>(null)
   const [sugOpen, setSugOpen] = useState(false)
@@ -455,7 +451,7 @@ export default function Graph() {
   const stats = busy ? '同步中 …' : `${nodes.length} 节点 · ${visibleEdges.length} 边`
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div className="kn-surface relative h-full w-full overflow-hidden">
       {engine === 'custom' ? (
         <GraphCanvas
           nodes={visibleNodes}
@@ -506,8 +502,10 @@ export default function Graph() {
         </button>
       </div>
 
-      {/* 顶部悬浮工具栏：新增实体 / 搜索 / 跳数 / 引擎 / 物理（统计在右下角 HUD，避免数字宽度变化抖动） */}
-      <div className="absolute left-1/2 top-4 z-30 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-bg/85 py-1 pl-1.5 pr-1.5 shadow-lg backdrop-blur-md">
+      {/* 顶部悬浮工具栏：新增实体 / 搜索 / 跳数 / 引擎 / 物理（统计在右下角 HUD，避免数字宽度变化抖动）。
+          居中交给外层整宽容器，内层按内容宽度收缩并允许换行，窄视口下不会把按钮文字压成竖排 */}
+      <div className="pointer-events-none absolute inset-x-4 top-4 z-30 flex justify-center">
+      <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-lg border border-line bg-bg/85 py-1 pl-1.5 pr-1.5 whitespace-nowrap shadow-lg backdrop-blur-md">
         {/* 新增实体：打开弹窗录入名称 / 类型 */}
         <button
           type="button"
@@ -621,6 +619,7 @@ export default function Graph() {
           </span>
         </button>
       </div>
+      </div>
 
       {/* 错误轻提示（message box）：视口顶部居中悬浮，自动/点击关闭 */}
       <Toast kind="error" message={toast} onClose={() => setToast(null)} />
@@ -633,45 +632,43 @@ export default function Graph() {
           <form
             onSubmit={(ev) => void submitCreate(ev)}
             onKeyDown={(ev) => ev.key === 'Escape' && setCreateOpen(false)}
-            className="relative w-[340px] rounded-2xl border border-line bg-bg/95 p-5 backdrop-blur-md"
+            className="kn-dialog"
           >
-            <h3 className="ui-heading text-md">新增实体</h3>
-            <p className="mt-1 text-xs text-faint">
+            <h3 className="kn-section-title">新增实体</h3>
+            <p className="kn-hint mt-1">
               同名实体不会重复创建，将更新其类型。
             </p>
-            <label htmlFor="new-entity-name" className="ui-label mt-4 block">
+            <label htmlFor="new-entity-name" className="kn-label mt-4 block">
               Name
             </label>
-            <Control className="mt-1.5">
-              <input
-                id="new-entity-name"
-                autoFocus
-                value={newName}
-                onChange={(ev) => setNewName(ev.target.value)}
-                placeholder="实体名称"
-                spellCheck={false}
-              />
-            </Control>
-            <label htmlFor="new-entity-type" className="ui-label mt-3 block">
+            <input
+              id="new-entity-name"
+              autoFocus
+              value={newName}
+              onChange={(ev) => setNewName(ev.target.value)}
+              placeholder="实体名称"
+              spellCheck={false}
+              className="kn-input mt-1.5"
+            />
+            <label htmlFor="new-entity-type" className="kn-label mt-3 block">
               Type
             </label>
-            <Control className="mt-1.5">
-              <input
-                id="new-entity-type"
-                value={newType}
-                onChange={(ev) => setNewType(ev.target.value)}
-                placeholder="自由输入，留空默认 CONCEPT"
-                spellCheck={false}
-              />
-            </Control>
+            <input
+              id="new-entity-type"
+              value={newType}
+              onChange={(ev) => setNewType(ev.target.value)}
+              placeholder="自由输入，留空默认 CONCEPT"
+              spellCheck={false}
+              className="kn-input mt-1.5"
+            />
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setCreateOpen(false)} className={btnOutline()}>
+              <button type="button" onClick={() => setCreateOpen(false)} className="kn-btn kn-btn--sm">
                 取消
               </button>
               <button
                 type="submit"
                 disabled={creating || !newName.trim()}
-                className={`${btnPrimary()} disabled:cursor-not-allowed disabled:opacity-50`}
+                className="kn-btn kn-btn--sm kn-btn--primary"
               >
                 {creating ? '创建中 …' : '创建'}
               </button>
@@ -683,13 +680,14 @@ export default function Graph() {
       {/* 空态：从入口建议开始 */}
       {center === null && !busy && !err && (
         <div className="absolute inset-0 z-10 flex items-center justify-center px-4">
-          <Card className="w-[380px] text-center" pad="lg">
-            <p className="ui-heading text-md">知识图谱</p>
-            <p className="mt-1.5 text-sm leading-relaxed text-muted">
+          <div className="kn-card" style={{ width: 'min(380px, 100%)', textAlign: 'center' }}>
+            <div className="kn-card__body">
+            <p className="kn-section-title">知识图谱</p>
+            <p className="kn-hint mt-1.5">
               从关系最多的实体开始，或在上方搜索框定位任一实体。
             </p>
             {hubs.length === 0 ? (
-              <kit.Empty>知识库还没有实体——先在检索页搜索，或通过管理接口灌入知识。</kit.Empty>
+              <div className="kn-empty kn-empty--inline">知识库还没有实体——先在检索页搜索，或通过管理接口灌入知识。</div>
             ) : (
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {hubs.map((h) => (
@@ -704,7 +702,8 @@ export default function Graph() {
                 ))}
               </div>
             )}
-          </Card>
+            </div>
+          </div>
         </div>
       )}
 
@@ -723,8 +722,8 @@ export default function Graph() {
               />
               <div className="min-w-0">
                 <h3 className="truncate text-md font-bold text-fg">{cardNode.name}</h3>
-                <p className="mt-1 flex flex-wrap items-center gap-1.5 text-2xs text-faint">
-                  <kit.Badge>{cardNode.type || 'CONCEPT'}</kit.Badge>
+                <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-faint">
+                  <span className="kn-badge">{cardNode.type || 'CONCEPT'}</span>
                   <span className="mono">{degreeOf.get(cardNode.id) ?? 0} 条关系</span>
                 </p>
               </div>
@@ -761,7 +760,7 @@ export default function Graph() {
               onSave={(next) => saveNodeProps(cardNode.id, next)}
             />
             <div className="mt-3">
-              <p className="ui-label">Relations</p>
+              <p className="kn-label">Relations</p>
               {relFor === cardNode.id ? (
                 /* 内联表单：目标实体不存在时后端按 CONCEPT 自动创建 */
                 <form
@@ -775,14 +774,14 @@ export default function Graph() {
                     onChange={(ev) => setRelName(ev.target.value)}
                     placeholder="目标实体名称"
                     spellCheck={false}
-                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-sm text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
+                    className="kn-input kn-input--sm"
                   />
                   <input
                     value={relPred}
                     onChange={(ev) => setRelPred(ev.target.value)}
                     placeholder="谓词，留空默认 relates_to"
                     spellCheck={false}
-                    className="w-full rounded-xl border border-line bg-bg px-2.5 py-1.5 text-sm text-fg outline-none transition placeholder:text-hint hover:border-line-strong focus:border-accent focus:ring-2 focus:ring-accent/25"
+                    className="kn-input kn-input--sm"
                   />
                   <div className="flex justify-end gap-1.5 pt-0.5">
                     <button
@@ -804,22 +803,23 @@ export default function Graph() {
               ) : cardRels.length === 0 ? (
                 <p className="mt-1.5 text-xs text-faint">暂无关系。</p>
               ) : (
-                /* 关系行交给 kit.Row：悬停黄晕染 + 左侧读数条，行内「谓词 + 实体名」 */
-                <div className="scrollbar-accent mt-1.5 max-h-44 overflow-y-auto">
+                /* 关系行：悬停浅灰底，行内「谓词 + 实体名」 */
+                <div className="scrollbar-slim mt-1.5 max-h-44 overflow-y-auto">
                   {cardRels.map(({ node, predicate, rev }) => (
-                    <kit.Row
+                    <button
                       key={`${node.id}-${predicate}`}
+                      type="button"
                       onClick={() => setSel({ kind: 'node', id: node.id })}
-                      className="items-baseline gap-2"
+                      className="kn-rel-row"
                     >
-                      <span className="mono shrink-0 text-2xs text-faint">
+                      <span className="mono shrink-0 text-xs text-faint">
                         {predicate}
                         {rev ? ' (R)' : ''}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-right text-sm text-fg">
                         {node.name}
                       </span>
-                    </kit.Row>
+                    </button>
                   ))}
                 </div>
               )}
@@ -829,7 +829,7 @@ export default function Graph() {
 
         {cardEdge && (
           <div>
-            <p className="ui-label">Relation</p>
+            <p className="kn-label">Relation</p>
             <p className="mt-2 inline-block rounded-full bg-fg/5 px-2.5 py-1 text-base font-semibold text-fg">
               {cardEdge.predicate}
             </p>
@@ -879,7 +879,7 @@ export default function Graph() {
       {/* 左下角：类型图例 + 谓词过滤 */}
       {center !== null && (
         <div className="absolute bottom-4 left-4 z-20 w-60 rounded-2xl border border-line bg-bg/85 p-3.5 shadow-lg backdrop-blur-md">
-          <p className="ui-label">Types</p>
+          <p className="kn-label">Types</p>
           <div className="mt-1 flex gap-2.5">
             <button
               type="button"
@@ -919,7 +919,7 @@ export default function Graph() {
           </div>
           {predicateCounts.length > 0 && (
             <>
-              <p className="ui-label mt-3">Relations</p>
+              <p className="kn-label mt-3">Relations</p>
               <div className="mt-1 flex gap-2.5">
                 <button
                   type="button"

@@ -109,6 +109,11 @@ final class ChatContextRun {
         continuation.requireCurrent(usedContinuation.get());
     }
 
+    /** R9：本轮已产生待提交的 Epoch 水位——审批工具据此显式延后。 */
+    boolean hasSubmittedEpoch() {
+        return submittedCutoff.get() > 0;
+    }
+
     String runSubagent(JsonNode call, Supplier<String> dispatch) {
         requireCurrent();
         String result = dispatch.get();
@@ -121,6 +126,28 @@ final class ChatContextRun {
 
     boolean usedScopedEvidence() {
         return usedScopedEvidence.get();
+    }
+
+    /**
+     * 合并本次执行中实际使用、且此后可被撤回的材料（R3）：受保护的历史引用（子代理报告、
+     * 当前工具交换）、回读与委派带回的引用，以及实际装配过的续接摘录来源。多次模型调用合并。
+     */
+    java.util.Set<String> dependencyRefs() {
+        Set<String> refs = new HashSet<>(sentReferences);
+        toolReferences.values().forEach(refs::addAll);
+        if (continuation != null && usedContinuation.get()) {
+            refs.addAll(continuation.dependencySources());
+        }
+        return Set.copyOf(refs);
+    }
+
+    /** The reply and its dependencies are published in the caller's settlement transaction. */
+    void persistDependencies(long replyId) {
+        Set<String> refs = dependencyRefs();
+        sources.recordDependencies(session.id(), agentId, session.projectId(), replyId, refs);
+        if (!refs.isEmpty()) {
+            log.info("[ctx] deps session={} reply={} refs={} {}", session.id(), replyId, refs.size(), refs);
+        }
     }
 
     private void remember(JsonNode call, List<String> refs) {

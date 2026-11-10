@@ -29,6 +29,24 @@ public class ContextProps {
     private boolean todoApprovals = false;
 
     /**
+     * R5 默认工作窗口（独立灰度，默认关）：当前任务段至多回放 {@link #workingWindowTurns} 个已完成 Turn，
+     * 历史正文估算另受可用输入预算的 {@link #workingWindowSharePercent}% 与
+     * {@code max(workingWindowTokenCap, 窗口 / 32)} 双重限制，取更紧的一项。
+     * 关闭时沿用「贴窗口才裁」的 P1 行为。
+     */
+    private boolean boundedWorkingWindow = false;
+
+    private int workingWindowTurns = 8;
+
+    /**
+     * 历史正文预算的下限与基准（tokens）。小窗口按它兜底；大窗口按「窗口 / 32」自动放宽
+     * （1M 窗口约 31K），最终仍不超过可用输入预算的占比上限。调大它会同时抬高所有窗口的下限。
+     */
+    private long workingWindowTokenCap = 8192;
+
+    private int workingWindowSharePercent = 25;
+
+    /**
      * 贴临界裁历史（默认<b>开</b>）：组装请求体前估算 token，只有逼近「模型上下文窗口」时才降级——
      * 先从最早的轮次整条丢掉，仍超才对保留部分做截断。不到临界一行不动，普通会话完全不受影响。
      *
@@ -108,5 +126,37 @@ public class ContextProps {
 
     public void setCompressKeepTurns(int compressKeepTurns) {
         this.compressKeepTurns = compressKeepTurns;
+    }
+
+    public boolean isBoundedWorkingWindow() {
+        return boundedWorkingWindow;
+    }
+
+    public void setBoundedWorkingWindow(boolean boundedWorkingWindow) {
+        this.boundedWorkingWindow = boundedWorkingWindow;
+    }
+
+    public int getWorkingWindowTurns() {
+        return workingWindowTurns;
+    }
+
+    public void setWorkingWindowTurns(int workingWindowTurns) {
+        this.workingWindowTurns = workingWindowTurns;
+    }
+
+    public long getWorkingWindowTokenCap() {
+        return workingWindowTokenCap;
+    }
+
+    public void setWorkingWindowTokenCap(long workingWindowTokenCap) {
+        this.workingWindowTokenCap = workingWindowTokenCap;
+    }
+
+    public int getWorkingWindowSharePercent() {
+        return workingWindowSharePercent;
+    }
+
+    public void setWorkingWindowSharePercent(int workingWindowSharePercent) {
+        this.workingWindowSharePercent = workingWindowSharePercent;
     }
 }

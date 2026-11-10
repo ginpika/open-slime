@@ -44,7 +44,7 @@ class HistoryTest {
               meta TEXT,
               created_at INTEGER NOT NULL)""";
 
-    /** 与 schema.sql 的 chat_turn 同构（Turn 正本：显式配对 + 执行信封挂点） */
+    /** 与 schema.sql 的 chat_turn 同构（Turn 正本：显式配对 + 执行信封挂点 + 任务段归属） */
     private static final String CHAT_TURN_DDL = """
             CREATE TABLE chat_turn(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +53,7 @@ class HistoryTest {
               trigger_message_id INTEGER,
               reply_message_id INTEGER,
               task_id INTEGER,
+              scene_id INTEGER,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL)""";
 
